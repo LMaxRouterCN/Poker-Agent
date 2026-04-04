@@ -9,6 +9,7 @@
 // @grant        GM_getValue
 // @grant        GM_setValue
 // @grant        GM_addStyle
+// @grant        GM_setClipboard
 // @connect      localhost
 // @connect      127.0.0.1
 // ==/UserScript==
@@ -333,9 +334,47 @@ function log(type, msg) {
         } catch (_) { el.innerHTML = '<div class="ag-match ag-m-fail">✘ 语法错误</div>'; }
     }
 
-    /* ================================================================
-     * 6. Agent 核心逻辑 (修复卡死与长指令误杀版)
-     * ================================================================ */
+/* ================================================================
+ * 6. Agent 核心逻辑
+ * ================================================================ */
+let _clipboardMode = false;
+let _permissionEnabled = true;
+
+function _pollConfig() {
+    const c = cfgLoad();
+    const pollUrl = c.apiUrl.replace('/agent-exec', '/agent-config-poll');
+    GM_xmlhttpRequest({
+        method: 'GET',
+        url: pollUrl,
+        timeout: 30000,
+        onload(r) {
+            if (r.status === 200) {
+                try {
+                    const data = JSON.parse(r.responseText);
+                    const newClip = !!data.clipboard_mode;
+                    const newPerm = !!data.permission_enabled;
+                    if (newClip !== _clipboardMode) {
+                        _clipboardMode = newClip;
+                        log('INFO', `剪贴板模式: ${_clipboardMode ? '已开启' : '已关闭'}`);
+                    }
+                    if (newPerm !== _permissionEnabled) {
+                        _permissionEnabled = newPerm;
+                        log('INFO', `目录限制: ${_permissionEnabled ? '已启用' : '已禁用'}`);
+                    }
+                } catch(e) {}
+            }
+            _pollConfig();
+        },
+        onerror() {
+            setTimeout(_pollConfig, 5000);
+        },
+        ontimeout() {
+            _pollConfig();
+        }
+    });
+}
+
+
     let _pollTimer = null;
     let _fillTimeout = null;
     const _sentCmds = new Set();
@@ -407,6 +446,7 @@ function log(type, msg) {
             while ((m = re.exec(getCleanText(a))) !== null) _historyCmds.add(m[0]);
         });
         if (_historyCmds.size > 0) log('INFO', `已屏蔽 ${_historyCmds.size} 条历史指令`);
+        _pollConfig();
         log('OK', `✅ 监听已启动！`);
 
         _pollTimer = setInterval(() => {
@@ -483,7 +523,6 @@ function log(type, msg) {
     function _dispatch(cmd) {
         const c = cfgLoad();
         log('INFO', `发送至本地: ${c.apiUrl}`);
-        // 修复 LLM 把 -- 输出成 — (破折号) 的问题
         cmd = cmd.replace(/\u2014/g, '--');
         cmd = cmd.replace(/\u2013/g, '-');
 
@@ -494,6 +533,16 @@ function log(type, msg) {
             data: JSON.stringify({ command: cmd }),
             onload(r) {
                 if (r.status === 200) {
+                    // 判断是否是剪贴板文件模式（Python返回的是JSON）
+                    try {
+                        const data = JSON.parse(r.responseText);
+                        if (data.type === 'clipboard_file') {
+                            log('OK', `准备粘贴文件: ${data.filename}`);
+                            _pasteFile(data.filename, data.data);
+                            return;
+                        }
+                    } catch(e) {}
+                    // 普通文本模式
                     log('OK', `本地返回: ${r.responseText}`);
                     _fillAndSend(r.responseText);
                 } else {
@@ -508,43 +557,103 @@ function log(type, msg) {
         });
     }
 
-    function _fillAndSend(text) {
-        // 取消上一次还没执行的发送，防止新建对话后误触发
-        if (_fillTimeout) { clearTimeout(_fillTimeout); _fillTimeout = null; }
 
-        text = '[Fake Agent] ' + text;
+    function _directInput(input, text) {
+        input.focus();
+        if (input.tagName === 'TEXTAREA' || input.tagName === 'INPUT') {
+            const proto = input.tagName === 'TEXTAREA' ? HTMLTextAreaElement.prototype : HTMLInputElement.prototype;
+            const setter = Object.getOwnPropertyDescriptor(proto, 'value')?.set;
+            if (setter) setter.call(input, text);
+            input.dispatchEvent(new Event('input', { bubbles: true }));
+            input.dispatchEvent(new Event('change', { bubbles: true }));
+        } else {
+            document.execCommand('selectAll', false, null);
+            document.execCommand('insertText', false, text);
+        }
+    }
+
+    function _pasteFile(filename, b64Data) {
         const c = cfgLoad();
         const input = document.querySelector(c.selInputBox);
         const btn = document.querySelector(c.selSendButton);
-        if (!input || !btn) { log('ERR', '找不到输入框或发送按钮'); return; }
-
-        log('INFO', '正在模拟输入并发送...');
-
-        try {
-            input.focus();
-            if (input.tagName === 'TEXTAREA' || input.tagName === 'INPUT') {
-                const proto = input.tagName === 'TEXTAREA' ? HTMLTextAreaElement.prototype : HTMLInputElement.prototype;
-                const setter = Object.getOwnPropertyDescriptor(proto, 'value')?.set;
-                if (setter) setter.call(input, text);
-                input.dispatchEvent(new Event('input', { bubbles: true }));
-                input.dispatchEvent(new Event('change', { bubbles: true }));
-            } else {
-                document.execCommand('selectAll', false, null);
-                document.execCommand('insertText', false, text);
-            }
-        } catch (err) {
-            log('ERR', `输入模拟失败: ${err.message}`);
+        if (!input || !btn) {
+            log('ERR', '找不到输入框或发送按钮');
             return;
         }
+        try {
+            // base64 → Uint8Array → Blob → File（网页只认真实的File对象）
+            const byteChars = atob(b64Data);
+            const byteArr = new Uint8Array(byteChars.length);
+            for (let i = 0; i < byteChars.length; i++) {
+                byteArr[i] = byteChars.charCodeAt(i);
+            }
+            const ext = filename.split('.').pop().toLowerCase();
+            const mimeMap = {
+                'js':'text/javascript','ts':'text/typescript',
+                'html':'text/html','css':'text/css',
+                'json':'application/json','md':'text/markdown',
+                'py':'text/x-python','txt':'text/plain',
+                'xml':'text/xml','csv':'text/csv'
+            };
+            const mime = mimeMap[ext] || 'text/plain';
+            const file = new File([byteArr], filename, { type: mime });
 
-        // 250ms 太短了，改成 600ms 并追踪这个 timeout
+            input.focus();
+            const dt = new DataTransfer();
+            dt.items.add(file);
+
+            const pasteEvt = new ClipboardEvent('paste', {
+                bubbles: true, cancelable: true
+            });
+            // 强制注入包含File对象的DataTransfer，覆盖浏览器空白的默认值
+            Object.defineProperty(pasteEvt, 'clipboardData', {
+                get() { return dt; }
+            });
+            input.dispatchEvent(pasteEvt);
+            log('OK', '已触发文件粘贴事件');
+
+            // 在光标处追加提示文本（不能用全选，否则会清空刚粘贴的文件）
+            try {
+                document.execCommand('insertText', false, '[Poker Agent] 文件已上传');
+            } catch (e) {
+                try {
+                    input.dispatchEvent(new InputEvent('input', {
+                        inputType: 'insertText', data: '[Poker Agent] 文件已上传', bubbles: true
+                    }));
+                } catch (e2) {}
+            }
+
+            if (_fillTimeout) { clearTimeout(_fillTimeout); _fillTimeout = null; }
+
+            // 文件粘贴后网页可能需要一点时间渲染上传提示，等1.5秒再点发送
+            _fillTimeout = setTimeout(() => {
+                _fillTimeout = null;
+                try { btn.click(); } catch (err) { log('ERR', `点击发送失败: ${err.message}`); }
+            }, 1500);
+        } catch (err) {
+            log('ERR', `文件粘贴失败: ${err.message}`);
+        }
+    }
+
+
+    function _fillAndSend(text) {
+        if (_fillTimeout) {
+            clearTimeout(_fillTimeout);
+            _fillTimeout = null;
+        }
+        text = '[Poker Agent] ' + text;
+        const c = cfgLoad();
+        const input = document.querySelector(c.selInputBox);
+        const btn = document.querySelector(c.selSendButton);
+        if (!input || !btn) {
+            log('ERR', '找不到输入框或发送按钮');
+            return;
+        }
+        log('INFO', '正在模拟输入并发送...');
+        _directInput(input, text);
         _fillTimeout = setTimeout(() => {
             _fillTimeout = null;
-            try {
-                btn.click();
-            } catch (err) {
-                log('ERR', `点击发送失败: ${err.message}`);
-            }
+            try { btn.click(); } catch (err) { log('ERR', `点击发送失败: ${err.message}`); }
         }, 600);
     }
 

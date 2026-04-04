@@ -12,6 +12,8 @@ import urllib.error
 import re
 import inspect
 import threading
+import base64
+
 
 app = Flask(__name__)
 CORS(app)
@@ -22,6 +24,11 @@ WORK_DIR = os.path.dirname(os.path.abspath(__file__))
 HELP_FILE = os.path.join(WORK_DIR, 'commands.md')
 # 操作日志
 LOG_FILE = os.path.join(WORK_DIR, 'agent_log.txt')
+clipboard_mode = False
+_config_changed = threading.Event()
+
+def _push_config():
+    _config_changed.set()
 
 def _truncate(s, max_display=200, keep_len=100):
     if len(s) > max_display:
@@ -157,6 +164,15 @@ def execute_line(line):
         err = _check_permission('read', filepath)
         if err:
             return err
+        # 剪贴板文件模式：返回标记 + 文件名 + base64，由路由层拦截转JSON
+        if clipboard_mode and os.path.isfile(filepath):
+            try:
+                filename = os.path.basename(filepath)
+                with open(filepath, 'rb') as f:
+                    b64 = base64.b64encode(f.read()).decode('ascii')
+                return f'__CLIPBOARD_FILE__{filename}\x00{b64}'
+            except Exception as e:
+                return f'读取失败：{e}'
         try:
             with open(filepath, 'r', encoding='utf-8') as f:
                 content = f.read()
@@ -168,6 +184,7 @@ def execute_line(line):
             return f'错误：文件不存在：{filepath}'
         except Exception as e:
             return f'读取失败：{e}'
+
 
     elif cmd == 'append':
         if not arg:
@@ -387,7 +404,7 @@ KNOWN_CMDS = set(re.findall(r"cmd\s*==\s*'([^']+)'", _EXEC_SRC))
 @app.route('/agent-exec', methods=['POST', 'GET'])
 def agent_exec():
     if request.method == 'GET':
-        return jsonify({'status': 'running', 'work_dir': WORK_DIR})
+        return jsonify({'status': 'running', 'work_dir': WORK_DIR, 'clipboard_mode': clipboard_mode})
     try:
         data = request.get_json(force=True)
         command_text = data.get('command', '').strip()
@@ -413,24 +430,48 @@ def agent_exec():
         if cmd in ('create', 'append'):
             peek = i + 1
             content_lines = []
-            if peek < len(lines) and lines[peek].strip() == '【CodeSTART】':
+            has_code_start = False
+
+            # 情况1：指令行自身包含【CodeSTART】（LLM没换行）
+            if '【CodeSTART】' in lines[i]:
+                has_code_start = True
+                clean_line = lines[i].split('【CodeSTART】', 1)[0].strip()
+                parts = clean_line.split(None, 1)
+                cmd = parts[0].lower()
+                arg = parts[1] if len(parts) > 1 else ''
+            # 情况2：下一行是【CodeSTART】（标准格式）
+            elif peek < len(lines) and lines[peek].strip() == '【CodeSTART】':
+                has_code_start = True
                 peek += 1
+
+            if has_code_start:
+                # 跳过开头的 ```（如果有）
                 if peek < len(lines) and lines[peek].strip().startswith('```'):
                     peek += 1
-                while peek < len(lines) and not lines[peek].strip().startswith('【/CodeEND】'):
-                    if lines[peek].strip().startswith('```'):
+                # 提取内容直到【/CodeEND】或结尾的 ```
+                while peek < len(lines):
+                    ln = lines[peek]
+                    # 遇到【/CodeEND】，只取前面的部分（容忍没换行）
+                    if '【/CodeEND】' in ln:
+                        content_lines.append(ln.split('【/CodeEND】', 1)[0])
                         peek += 1
                         break
-                    content_lines.append(lines[peek])
+                    # 遇到结尾的 ```，跳过并结束
+                    if ln.strip().startswith('```'):
+                        peek += 1
+                        break
+                    content_lines.append(ln)
                     peek += 1
                 i = peek
             elif peek < len(lines) and lines[peek].strip().startswith('```'):
+                # 兼容没有【CodeSTART】但保留了反引号的情况
                 peek += 1
                 while peek < len(lines) and not lines[peek].strip().startswith('```'):
                     content_lines.append(lines[peek])
                     peek += 1
                 i = peek
             else:
+                # 兜底贪心模式：啥标记都没有，遇到下一条指令才截断
                 while peek < len(lines):
                     ln = lines[peek].strip()
                     if ln and ln.split(None, 1)[0].lower() in KNOWN_CMDS:
@@ -438,6 +479,7 @@ def agent_exec():
                     content_lines.append(lines[peek])
                     peek += 1
                 i = peek - 1
+
 
             while content_lines and not content_lines[0].strip():
                 content_lines.pop(0)
@@ -455,8 +497,22 @@ def agent_exec():
                 results.append(result)
         i += 1
 
+    # 拦截剪贴板文件模式，转为JSON返回（让JS能拿到真实的File对象）
+    for r in results:
+        if isinstance(r, str) and r.startswith('__CLIPBOARD_FILE__'):
+            m = re.match(r'__CLIPBOARD_FILE__(.+?)\x00([\s\S]+)', r)
+            if m:
+                log_action('READ-CLIPBOARD', m.group(1))
+                return jsonify({
+                    'type': 'clipboard_file',
+                    'filename': m.group(1),
+                    'data': m.group(2).strip()
+                })
+            break
+
     if not results:
         output = '（无可执行的指令）'
+
     elif len(results) == 1:
         output = results[0]
     else:
@@ -464,8 +520,18 @@ def agent_exec():
     log_action('RESULT', output[:200])
     return output
 
+@app.route('/agent-config-poll', methods=['GET'])
+def agent_config_poll():
+    _config_changed.wait(timeout=25)
+    _config_changed.clear()
+    return jsonify({
+        'clipboard_mode': clipboard_mode,
+        'permission_enabled': permission_mgr.enabled
+    })
+
 if __name__ == '__main__':
     permission_mgr.set_callback(_default_permission_callback)
+    _push_config()
     print(f'========================================')
     print(f' 低配版Agent 本地服务已启动')
     print(f' 监听地址：http://127.0.0.1:9966')

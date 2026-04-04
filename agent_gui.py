@@ -114,6 +114,8 @@ class AgentGUI:
 
         self._build_ui()
         agent_server.permission_mgr.set_callback(self._make_permission_callback())
+        agent_server._push_config()
+        self._apply_dark_titlebar()
         self._apply_dark_titlebar()
         self._start_log_redirect()
         self._start_server()
@@ -209,6 +211,19 @@ class AgentGUI:
             f, text="", bg=PANEL, fg=TXT2,
             font=('Consolas', 9), anchor='w')
         self.lbl_allow_count.pack(anchor='w', padx=20, pady=(0, 4))
+
+        self._sep(f)
+
+        # ── 文件读取 ──
+        tk.Label(f, text="📋 文件读取", bg=PANEL, fg=TXT2,
+                 font=FONT_UI).pack(anchor='w', padx=16, pady=(2, 2))
+        self.var_clipboard = tk.BooleanVar(value=False)
+        self.chk_clipboard = tk.Checkbutton(
+            f, text="读取文件时使用剪贴板API", variable=self.var_clipboard,
+            bg=PANEL, fg=TXT, selectcolor=BTN,
+            activebackground=PANEL, activeforeground=TXT,
+            font=FONT_UI, command=self._toggle_clipboard)
+        self.chk_clipboard.pack(anchor='w', padx=20)
 
 
     def _build_right(self):
@@ -462,6 +477,13 @@ class AgentGUI:
         agent_server.permission_mgr.reset_session()
         self.lbl_allow_count.configure(text="始终允许: 0 条")
         print('[Agent] 已清除始终允许列表')
+
+    def _toggle_clipboard(self):
+        agent_server.clipboard_mode = self.var_clipboard.get()
+        agent_server._push_config()
+        status = "已启用" if agent_server.clipboard_mode else "已禁用"
+        print(f'[Agent] 剪贴板读取模式{status}')
+
 
     def _make_permission_callback(self):
         gui_ref = self

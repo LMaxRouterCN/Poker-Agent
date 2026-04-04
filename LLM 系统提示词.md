@@ -22,6 +22,7 @@ create 测试文件.txt
 【/CodeEND】
 【/cmd】
 
+注意【CodeSTART】和【/CodeEND】之前和之后必须要换行
 注意【CodeSTART】后的第一个"```"后面不要包含任何规定此代码块格式的标识符
 
 错误示例:
