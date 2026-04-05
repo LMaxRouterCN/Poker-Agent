@@ -252,9 +252,9 @@ def execute_line(line):
             return '错误：缺少文件路径。'
         filepath = safe_path(W, tokens[0])
         flags = tokens[1:] if len(tokens) > 1 else []
-        
         ignore_case = '-i' in flags
         replace_all = '-a' in flags
+        strip_indent = '-s' in flags
         
         err = _check_permission('replace', filepath)
         if err: return err
@@ -262,9 +262,37 @@ def execute_line(line):
         try:
             with open(filepath, 'r', encoding='utf-8') as f:
                 content = f.read()
-            
             count = 0
-            if replace_all:
+            if strip_indent:
+                old_lines = old_text.split('\n')
+                file_lines = content.split('\n')
+                matches = []
+                for i in range(len(file_lines) - len(old_lines) + 1):
+                    matched = True
+                    for j in range(len(old_lines)):
+                        fl = file_lines[i + j].strip()
+                        ol = old_lines[j].strip()
+                        if ignore_case:
+                            fl = fl.lower()
+                            ol = ol.lower()
+                        if fl != ol:
+                            matched = False
+                            break
+                    if matched:
+                        matches.append(i)
+                        if not replace_all:
+                            break
+                if not matches:
+                    return '未找到要替换的文本（忽略缩进模式）。'
+                for idx in reversed(matches):
+                    indent = re.match(r'^(\s*)', file_lines[idx]).group(1)
+                    new_lines = new_text.split('\n')
+                    if indent:
+                        new_lines = [indent + l if l.strip() else l for l in new_lines]
+                    file_lines[idx:idx + len(old_lines)] = new_lines
+                    count += 1
+                new_content = '\n'.join(file_lines)
+            elif replace_all:
                 if ignore_case:
                     pattern = re.compile(re.escape(old_text), re.IGNORECASE)
                     new_content, count = pattern.subn(new_text, content)
@@ -279,13 +307,10 @@ def execute_line(line):
                 else:
                     new_content = content.replace(old_text, new_text, 1)
                     count = 1 if new_content != content else 0
-            
             if count == 0:
                 return '未找到要替换的文本。'
-            
             with open(filepath, 'w', encoding='utf-8') as f:
                 f.write(new_content)
-            
             log_action('REPLACE', f'{filepath} ({count} 处)')
             return f'已替换 {filepath} 中的 {count} 处文本。'
         except Exception as e:
@@ -357,15 +382,23 @@ def execute_line(line):
             quote = stripped[0]
             end = stripped.find(quote, 1)
             if end == -1:
-                return '错误：缺少闭合引号。用法：grep "关键词" <路径或文件>'
+                return '错误：缺少闭合引号。用法：grep [-s] "关键词" <路径或文件>'
             keyword = stripped[1:end]
-            target_str = stripped[end+1:].strip()
+            rest = stripped[end+1:].strip().split()
+            strip_indent = '-s' in rest
+            target_str = rest[-1] if rest and rest[-1] != '-s' else ''
         else:
-            parts = arg.split(None, 1)
-            if len(parts) < 2:
-                return '错误：缺少参数。用法：grep <关键词> <路径或文件> 或 grep "关键词" <路径或文件>'
-            keyword = parts[0]
-            target_str = parts[1].strip()
+            tokens = arg.split()
+            opts = [t for t in tokens if t.startswith('-')]
+            non_opts = [t for t in tokens if not t.startswith('-')]
+            strip_indent = '-s' in opts
+            if len(non_opts) < 2:
+                return '错误：缺少参数。用法：grep [-s] <关键词> <路径或文件>'
+            keyword = non_opts[0]
+            if len(keyword) >= 2 and keyword[0] in ('"', "'") and keyword[-1] == keyword[0]:
+                keyword = keyword[1:-1]
+            target_str = non_opts[-1]
+        cmp_kw = keyword.lstrip() if strip_indent else keyword
         if not target_str:
             return '错误：缺少文件路径。'
         target = safe_path(W, target_str)
@@ -379,8 +412,9 @@ def execute_line(line):
                     lines = f.readlines()
                 results = []
                 for idx, line in enumerate(lines, 1):
-                    if keyword in line:
-                        results.append(f'  行 {idx}: {line.rstrip()}')
+                    check = line.lstrip() if strip_indent else line
+                    if cmp_kw in check:
+                        results.append(f' 行 {idx}: {line.rstrip()}')
                 if results:
                     output = [f'{target}:']
                     output.extend(results)
@@ -395,7 +429,8 @@ def execute_line(line):
                         try:
                             with open(fpath, 'r', encoding='utf-8', errors='ignore') as f:
                                 for idx, line in enumerate(f, 1):
-                                    if keyword in line:
+                                    check = line.lstrip() if strip_indent else line
+                                    if cmp_kw in check:
                                         output.append(f'{fpath}:{idx}: {line.rstrip()}')
                         except:
                             pass

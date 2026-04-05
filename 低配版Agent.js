@@ -377,8 +377,9 @@ function _pollConfig() {
 
     let _pollTimer = null;
     let _fillTimeout = null;
-    const _sentCmds = new Set();
-    const _notifiedCmds = new Set();
+    let _lastAnswerEl = null;
+    const _currentRoundSent = new Set();
+
 
 
     let _heartbeatCounter = 0;
@@ -424,7 +425,8 @@ function _pollConfig() {
     function initAgent() {
         if (_pollTimer) { clearInterval(_pollTimer); _pollTimer = null; }
         if (_fillTimeout) { clearTimeout(_fillTimeout); _fillTimeout = null; }
-        _sentCmds.clear();
+        _lastAnswerEl = null;
+        _currentRoundSent.clear();
         _heartbeatCounter = 0;
 
         const c = cfgLoad();
@@ -437,19 +439,11 @@ function _pollConfig() {
             return;
         }
 
-        // 首次启动：扫描已有回答作为历史，防止重复执行
+        // 首次启动：扫描已有回答作为历史，不执行
         const existingAnswers = [...currentContainer.querySelectorAll('.answer')];
         _knownAnswers = existingAnswers;
-              // 静默记忆所有历史指令（塞进已执行+已通知，保证完全隐形）
-        existingAnswers.forEach(a => {
-            const re = /【cmd】([\s\S]*?)【\/cmd】/g;
-            const _skipMessages = [];
-            let m;
-            while ((m = re.exec(getCleanText(a))) !== null) {
-                _sentCmds.add(m[0]);
-                _notifiedCmds.add(m[0]);
-            }
-        });
+        _lastAnswerEl = null;
+        _currentRoundSent.clear();
 
         _pollConfig();
         log('OK', `✅ 监听已启动！`);
@@ -465,9 +459,9 @@ function _pollConfig() {
                     if (_fillTimeout) { clearTimeout(_fillTimeout); _fillTimeout = null; }
                     log('WARN', '🚨 检测到聊天容器被替换（新对话），重置监听状态...');
                     currentContainer = freshContainer;
-                    _sentCmds.clear();
+                    _lastAnswerEl = null;
+                    _currentRoundSent.clear();
                     _pendingSkipMsgs = [];
-                    _notifiedCmds.clear();
                     _knownAnswers = [];
                     _cmdQueue = [];
                     _prevAnswersLen = -1;
@@ -482,9 +476,9 @@ function _pollConfig() {
 
                 // 检测方式2：容器没变，但所有旧回答都消失了 → 也是新对话
                 if (_knownAnswers.length > 0 && !_knownAnswers.some(el => currentSet.has(el))) {
-                    _sentCmds.clear();
+                    _lastAnswerEl = null;
+                    _currentRoundSent.clear();
                     _pendingSkipMsgs = [];
-                    _notifiedCmds.clear();
                     _cmdQueue = [];
                     _prevAnswersLen = -1;
                     if (_fallbackTimer) { clearTimeout(_fallbackTimer); _fallbackTimer = null; }
@@ -495,27 +489,29 @@ function _pollConfig() {
 
                 // 心跳
                 if (_heartbeatCounter % 20 === 0) {
-                   log('INFO', `💓 心跳 | ${answers.length} 个回答 | 已执行${_sentCmds.size}`);
+                   log('INFO', `💓 心跳 | ${answers.length} 个回答 | 本轮${_currentRoundSent.size}`);
                 }
 
-            if (answers.length === 0) return;
-
-            const re = /【cmd】([\s\S]*?)【\/cmd】/g;
-            for (const answer of answers) {
-                const text = getCleanText(answer);
+                if (answers.length === 0) return;
+                const lastAnswer = answers[answers.length - 1];
+                if (lastAnswer !== _lastAnswerEl) {
+                    _lastAnswerEl = lastAnswer;
+                    _currentRoundSent.clear();
+                }
+                const re = /【cmd】([\s\S]*?)【\/cmd】/g;
+                const text = getCleanText(lastAnswer);
                 re.lastIndex = 0;
                 let m;
                 while ((m = re.exec(text)) !== null) {
-                    const fullMatch = m[0];
                     const cmdStr = m[1].trim();
-                    const normKey = fullMatch.replace(/[ \t]+/g, ' ').replace(/ *\n */g, '\n');
+                    const normKey = m[0].replace(/[ \t]+/g, ' ').replace(/ *\n */g, '\n');
                     const preview = cmdStr.substring(0, 100) + (cmdStr.length > 100 ? `... (共 ${cmdStr.length} 字符)` : '');
-                    if (_sentCmds.has(normKey)) continue;
+                    if (_currentRoundSent.has(normKey)) continue;
                     log('OK', `🎉 捕获指令: ${preview}`);
-                    _sentCmds.add(normKey);
+                    _currentRoundSent.add(normKey);
                     _enqueueCmd(cmdStr);
                 }
-            }
+
 
                 // 文本稳定检测：等 LLM 输出停稳再批量发送
                 const currentLen = answers.reduce((s, a) => s + getCleanText(a).length, 0);

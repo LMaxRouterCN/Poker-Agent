@@ -4325,3 +4325,259 @@ cat agent_server.py
 ---
 [指令 178] 未知指令：【/codeend】
 输入 @@help 查看可用指令列表。
+[2026-04-05 20:46:37] RECEIVED | exec echo Agent is working!
+count commands.md
+[2026-04-05 20:46:37] EXEC | echo Agent is working!
+[2026-04-05 20:46:37] COUNT | d:\Documents\my\Poker Agent\commands.md
+[2026-04-05 20:46:37] RESULT | [指令 1] Agent is working!"
+---
+[指令 2] 文件统计：d:\Documents\my\Poker Agent\commands.md
+  行数：200
+  字数（中英文混合）：971
+  字符数（含空白）：2574
+[2026-04-05 21:03:52] RECEIVED | exec echo test1
+exec echo test2
+[2026-04-05 21:03:52] EXEC | echo test1
+[2026-04-05 21:03:52] EXEC | echo test2
+[2026-04-05 21:03:52] RESULT | [指令 1] test1"
+---
+[指令 2] test2"
+[2026-04-05 21:08:58] RECEIVED | replace agent_server.py
+【CodeSTART】
+elif cmd == ‘grep’:
+stripped = arg.strip()
+if stripped and stripped[0] in (‘"’, “'”):
+quote = stripped[0]
+end = stripped.find(quote, 1)
+if end == -1:
+return ‘错误：缺少闭合引号。用法：grep “关键词” <路径或文件>’
+keyword = stripped[1:end]
+target_str = stripped[end+1:].strip()
+else:
+parts = arg.split(None, 1)
+if len(parts) < 2:
+return ‘错误：缺少参数。用法：grep <关键词> <路径或文件> 或 grep “关键词” <路径或文件>’
+keyword = parts[0]
+target_str = parts[1].strip()
+if not target_str:
+return ‘错误：缺少文件路径。’
+elif cmd == ‘grep’:
+stripped = arg.strip()
+if stripped and stripped[0] in (‘"’, “'”):
+quote = stripped[0]
+end = stripped.find(quote, 1)
+if end == -1:
+return ‘错误：缺少闭合引号。用法：grep [-s] “关键词” <路径或文件>’
+keyword = stripped[1:end]
+rest = stripped[end+1:].strip().split()
+strip_indent = ‘-s’ in rest
+target_str = rest[-1] if rest and rest[-1] != ‘-s’ else ‘’
+else:
+tokens = arg.split()
+opts = [t for t in tokens if t.startswith(‘-’)]
+non_opts = [t for t in tokens if not t.startswith(‘-’)]
+strip_indent = ‘-s’ in opts
+if len(non_opts) < 2:
+return ‘错误：缺少参数。用法：grep [-s] <关键词> <路径或文件> 或 grep [-s] “关键词” <路径或文件>’
+keyword = non_opts[0]
+target_str = non_opts[-1]
+cmp_kw = keyword.lstrip() if strip_indent else keyword
+if not target_str:
+return ‘错误：缺少文件路径。’
+【/CodeEND】
+[2026-04-05 21:08:58] RESULT | 错误：缺少分隔符。旧文本和新文本之间请用单独一行的 --- 分隔。
+[2026-04-05 21:09:07] RECEIVED | replace agent_server.py
+【CodeSTART】
+if os.path.isfile(target):
+with open(target, ‘r’, encoding=‘utf-8’) as f:
+lines = f.readlines()
+results = []
+for idx, line in enumerate(lines, 1):
+if keyword in line:
+results.append(f’ 行 {idx}: {line.rstrip()}')
+        if os.path.isfile(target):
+            with open(target, 'r', encoding='utf-8') as f:
+                lines = f.readlines()
+            results = []
+            for idx, line in enumerate(lines, 1):
+                if cmp_kw in (line.lstrip() if strip_indent else line):
+                    results.append(f' 行 {idx}: {line.rstrip()}')
+
+【/CodeEND】
+replace agent_server.py
+【CodeSTART】
+for idx, line in enumerate(f, 1):
+if keyword in line:
+output.append(f’{fpath}:{idx}: {line.rstrip()}')
+                for idx, line in enumerate(f, 1):
+                    if cmp_kw in (line.lstrip() if strip_indent else line):
+                        output.append(f'{fpath}:{idx}: {line.rstrip()}')
+
+【/CodeEND】
+replace agent_server.py
+【CodeSTART】
+flags = tokens[1:] if len(tokens) > 1 else []
+ignore_case = ‘-i’ in flags
+replace_all = ‘-a’ in flags
+flags = tokens[1:] if len(tokens) > 1 else []
+ignore_case = '-i' in flags
+replace_all = '-a' in flags
+strip_indent = '-s' in flags
+
+【/CodeEND】
+[2026-04-05 21:09:07] RESULT | [指令 1] 错误：缺少分隔符。旧文本和新文本之间请用单独一行的 --- 分隔。
+---
+[指令 2] 未知指令：【codestart】
+输入 @@help 查看可用指令列表。
+---
+[指令 3] 未知指令：for
+输入 @@help 查看可用指令列表。
+---
+[指令 4] 未知指令：if
+输入 @@help 查看可用指令列表。
+---
+[指令 5] 未知指令：output.append(f’{fpath}:{idx}:
+输入 @@help 查看可用指令列表。
+---
+[指令 6] 未知指令：for
+输入 @@help 查看可用指令列表。
+---
+[指令 7] 未知指令：if
+输入 @@help 查看可用指令列表。
+---
+[指令 8] 未知指令：output.append(f'{fpath}:{idx}:
+输入 @@help 查看可用指令列表。
+---
+[指令 9] 未知指令：【/codeend】
+输入 @@help 查看可用指令列表。
+---
+[指令 10] 错误：缺少分隔符。旧文本和新文本之间请用单独一行的 --- 分隔。
+[2026-04-05 21:09:48] RECEIVED | replace agent_server.py
+【CodeSTART】
+try:
+with open(filepath, ‘r’, encoding=‘utf-8’) as f:
+content = f.read()
+count = 0
+if replace_all:
+if ignore_case:
+pattern = re.compile(re.escape(old_text), re.IGNORECASE)
+new_content, count = pattern.subn(new_text, content)
+else:
+new_content = content.replace(old_text, new_text)
+count = content.count(old_text)
+else:
+if ignore_case:
+pattern = re.compile(re.escape(old_text), re.IGNORECASE)
+new_content = pattern.sub(new_text, content, count=1)
+count = 1 if new_content != content else 0
+else:
+new_content = content.replace(old_text, new_text, 1)
+count = 1 if new_content != content else 0
+if count == 0:
+return ‘未找到要替换的文本。’
+with open(filepath, ‘w’, encoding=‘utf-8’) as f:
+f.write(new_content)
+log_action(‘REPLACE’, f’{filepath} ({count} 处)‘)
+return f’已替换 {filepath} 中的 {count} 处文本。’
+except Exception as e:
+return f’替换失败：{e}’
+try:
+    with open(filepath, 'r', encoding='utf-8') as f:
+        content = f.read()
+    count = 0
+    if strip_indent:
+        old_lines = old_text.split('\n')
+        file_lines = content.split('\n')
+        matches = []
+        for i in range(len(file_lines) - len(old_lines) + 1):
+            matched = True
+            for j in range(len(old_lines)):
+                fl = file_lines[i+j].strip()
+                ol = old_lines[j].strip()
+                if ignore_case:
+                    fl = fl.lower()
+                    ol = ol.lower()
+                if fl != ol:
+                    matched = False
+                    break
+            if matched:
+                matches.append(i)
+                if not replace_all:
+                    break
+        if not matches:
+            return '未找到要替换的文本（忽略缩进模式）。'
+        for idx in reversed(matches):
+            indent = re.match(r'^(\s*)', file_lines[idx]).group(1)
+            new_lines = new_text.split('\n')
+            if indent:
+                new_lines = [indent + l if l.strip() else l for l in new_lines]
+            file_lines[idx:idx+len(old_lines)] = new_lines
+            count += 1
+        new_content = '\n'.join(file_lines)
+    elif replace_all:
+        if ignore_case:
+            pattern = re.compile(re.escape(old_text), re.IGNORECASE)
+            new_content, count = pattern.subn(new_text, content)
+        else:
+            new_content = content.replace(old_text, new_text)
+            count = content.count(old_text)
+    else:
+        if ignore_case:
+            pattern = re.compile(re.escape(old_text), re.IGNORECASE)
+            new_content = pattern.sub(new_text, content, count=1)
+            count = 1 if new_content != content else 0
+        else:
+            new_content = content.replace(old_text, new_text, 1)
+            count = 1 if new_content != content else 0
+    if count == 0:
+        return '未找到要替换的文本。'
+    with open(filepath, 'w', encoding='utf-8') as f:
+        f.write(new_content)
+    log_action('REPLACE', f'{filepath} ({count} 处)')
+    return f'已替换 {filepath} 中的 {count} 处文本。'
+except Exception as e:
+    return f'替换失败：{e}'
+
+【/CodeEND】
+[2026-04-05 21:09:48] RESULT | 错误：缺少分隔符。旧文本和新文本之间请用单独一行的 --- 分隔。
+[2026-04-05 21:43:19] RECEIVED | grep -s “strip_indent” agent_server.py
+exec echo all good
+[2026-04-05 21:43:19] EXEC | echo all good
+[2026-04-05 21:43:19] RESULT | [指令 1] d:\Documents\my\Poker Agent\agent_server.py: 无匹配
+---
+[指令 2] all good"
+[2026-04-05 21:43:40] RECEIVED | grep “strip_indent” agent_server.py
+[2026-04-05 21:43:40] RESULT | d:\Documents\my\Poker Agent\agent_server.py: 无匹配
+[2026-04-05 21:45:53] RECEIVED | grep -s “strip_indent” agent_server.py
+[2026-04-05 21:45:53] RESULT | d:\Documents\my\Poker Agent\agent_server.py: 无匹配
+[2026-04-05 21:46:33] RECEIVED | grep -s strip_indent agent_server.py
+[2026-04-05 21:46:33] RESULT | d:\Documents\my\Poker Agent\agent_server.py:
+ 行 257:         strip_indent = '-s' in flags
+ 行 266:             if strip_indent:
+ 行 388:             strip_indent = '-s' in rest
+ 行 394:             strip_indent = '-s' in opts
+ 行 399:         cmp_kw = keyword.lstrip() if strip_indent else keyword
+ 行 413:                     check = line.lstrip() if strip_indent else line
+ 行 430:                                     check = line.lstrip() if strip_indent else line
+[2026-04-05 21:47:56] RECEIVED | replace agent_server.py
+【CodeSTART】
+keyword = non_opts[0]
+target_str = non_opts[-1]
+    keyword = non_opts[0]
+    if len(keyword) >= 2 and keyword[0] in ('"', "'") and keyword[-1] == keyword[0]:
+        keyword = keyword[1:-1]
+    target_str = non_opts[-1]
+
+【/CodeEND】
+[2026-04-05 21:47:56] RESULT | 错误：缺少分隔符。旧文本和新文本之间请用单独一行的 --- 分隔。
+[2026-04-05 21:49:25] RECEIVED | replace agent_server.py
+【CodeSTART】
+keyword = non_opts[0]
+target_str = non_opts[-1]
+    keyword = non_opts[0]
+    if len(keyword) >= 2 and keyword[0] in ('"', "'") and keyword[-1] == keyword[0]:
+        keyword = keyword[1:-1]
+    target_str = non_opts[-1]
+
+【/CodeEND】
+[2026-04-05 21:49:25] RESULT | 错误：缺少分隔符。旧文本和新文本之间请用单独一行的 --- 分隔。
