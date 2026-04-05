@@ -30,7 +30,7 @@ _config_changed = threading.Event()
 def _push_config():
     _config_changed.set()
 
-def _truncate(s, max_display=200, keep_len=100):
+def _truncate(s, max_display=20000, keep_len=100):
     if len(s) > max_display:
         return s[:keep_len] + f"... (共 {len(s)} 字符)"
     return s
@@ -132,6 +132,313 @@ def execute_line(line):
             with open(HELP_FILE, 'r', encoding='utf-8') as f:
                 return f.read()
         return 'commands.md 文件未找到，请确认它与此脚本在同一目录下。'
+
+    # ========== 精确内容操作 ==========
+    elif cmd == 'count':
+        if not arg.strip():
+            return '错误：缺少文件路径。用法：count <路径>'
+        filepath = safe_path(W, arg.strip())
+        err = _check_permission('count', filepath)
+        if err: return err
+        try:
+            with open(filepath, 'r', encoding='utf-8') as f:
+                content = f.read()
+            lines = content.splitlines()
+            chars = len(content)
+            words = len(re.findall(r'[\u4e00-\u9fff]|[a-zA-Z0-9]+', content))
+            log_action('COUNT', filepath)
+            return (f'文件统计：{filepath}\n'
+                    f'  行数：{len(lines)}\n'
+                    f'  字数（中英文混合）：{words}\n'
+                    f'  字符数（含空白）：{chars}')
+        except Exception as e:
+            return f'统计失败：{e}'
+
+    elif cmd == 'find':
+        if '\x00' in arg:
+            sep = arg.split('\x00', 1)
+            opts_str = sep[0].strip()
+            search_text = sep[1]
+        else:
+            all_tokens = arg.split()
+            if len(all_tokens) < 2:
+                return '错误：缺少查找内容。用法：find <路径> [选项] 换行查找内容'
+            j = 1
+            while j < len(all_tokens) and all_tokens[j] in ('-i', '-w'):
+                j += 1
+            opts_str = ' '.join(all_tokens[:j])
+            search_text = ' '.join(all_tokens[j:])
+
+            
+        tokens = opts_str.split()
+        if not tokens:
+            return '错误：缺少文件路径。'
+        filepath = safe_path(W, tokens[0])
+        flags = tokens[1:] if len(tokens) > 1 else []
+        
+        ignore_case = '-i' in flags
+        whole_word = '-w' in flags
+        
+        err = _check_permission('find', filepath)
+        if err: return err
+        
+        try:
+            with open(filepath, 'r', encoding='utf-8') as f:
+                lines = f.readlines()
+            
+            results = []
+            is_multi = '\n' in search_text
+            if is_multi:
+                search_comp = search_text.lower() if ignore_case else search_text
+                full_text = ''.join(lines)
+                full_comp = full_text.lower() if ignore_case else full_text
+                
+                start_idx = 0
+                while True:
+                    pos = full_comp.find(search_comp, start_idx)
+                    if pos == -1: break
+                    line_no = full_text[:pos].count('\n') + 1
+                    context_start = max(0, full_text.rfind('\n', 0, pos) + 1)
+                    context_end = full_text.find('\n', pos + len(search_text))
+                    if context_end == -1: context_end = len(full_text)
+                    context = full_text[context_start:context_end].rstrip()
+                    results.append((line_no, context))
+                    start_idx = pos + 1
+            else:
+                search_comp = search_text.strip().lower() if ignore_case else search_text.strip()
+                for idx, line in enumerate(lines, 1):
+                    line_comp = line.lower() if ignore_case else line
+                    if whole_word:
+                        pattern = r'\b' + re.escape(search_comp) + r'\b'
+                        if re.search(pattern, line_comp):
+                            results.append((idx, line.rstrip()))
+                    else:
+                        if search_comp in line_comp:
+                            results.append((idx, line.rstrip()))
+            
+            if not results:
+                opt_desc = []
+                if ignore_case: opt_desc.append('忽略大小写')
+                if whole_word: opt_desc.append('全词匹配')
+                opt_str = f' ({", ".join(opt_desc)})' if opt_desc else ''
+                preview = search_text[:50] + '...' if len(search_text)>50 else search_text
+                return f'在 {filepath} 中未找到 "{preview}"{opt_str}'
+            
+            output = [f'在 {filepath} 中找到 {len(results)} 处匹配：\n']
+            for line_no, line_text in results:
+                output.append(f'  行 {line_no}: {line_text}')
+            
+            log_action('FIND', f'{filepath} -> {len(results)} 处')
+            return '\n'.join(output)
+        except Exception as e:
+            return f'查找失败：{e}'
+
+    elif cmd == 'replace':
+        if '\x00' not in arg:
+            return '错误：缺少参数。用法：replace <路径> [选项] 换行用 --- 分隔新旧内容'
+        sep = arg.split('\x00', 1)
+        opts_str = sep[0].strip()
+        combined = sep[1]
+        
+        if '\n---\n' not in combined:
+            return '错误：缺少分隔符。旧文本和新文本之间请用单独一行的 --- 分隔。'
+        
+        parts = combined.split('\n---\n', 1)
+        old_text = parts[0].strip('\n')
+        new_text = parts[1].strip('\n') if len(parts) > 1 else ''
+        
+        tokens = opts_str.split()
+        if not tokens:
+            return '错误：缺少文件路径。'
+        filepath = safe_path(W, tokens[0])
+        flags = tokens[1:] if len(tokens) > 1 else []
+        
+        ignore_case = '-i' in flags
+        replace_all = '-a' in flags
+        
+        err = _check_permission('replace', filepath)
+        if err: return err
+        
+        try:
+            with open(filepath, 'r', encoding='utf-8') as f:
+                content = f.read()
+            
+            count = 0
+            if replace_all:
+                if ignore_case:
+                    pattern = re.compile(re.escape(old_text), re.IGNORECASE)
+                    new_content, count = pattern.subn(new_text, content)
+                else:
+                    new_content = content.replace(old_text, new_text)
+                    count = content.count(old_text)
+            else:
+                if ignore_case:
+                    pattern = re.compile(re.escape(old_text), re.IGNORECASE)
+                    new_content = pattern.sub(new_text, content, count=1)
+                    count = 1 if new_content != content else 0
+                else:
+                    new_content = content.replace(old_text, new_text, 1)
+                    count = 1 if new_content != content else 0
+            
+            if count == 0:
+                return '未找到要替换的文本。'
+            
+            with open(filepath, 'w', encoding='utf-8') as f:
+                f.write(new_content)
+            
+            log_action('REPLACE', f'{filepath} ({count} 处)')
+            return f'已替换 {filepath} 中的 {count} 处文本。'
+        except Exception as e:
+            return f'替换失败：{e}'
+
+    elif cmd == 'insert':
+        if '\x00' not in arg:
+            return '错误：缺少参数。用法：insert <路径> -after <行号或文本> 换行插入内容'
+        sep = arg.split('\x00', 1)
+        opts_str = sep[0].strip()
+        insert_text = sep[1]
+        
+        tokens = opts_str.split(None, 1)
+        if not tokens:
+            return '错误：缺少文件路径。'
+        filepath = safe_path(W, tokens[0])
+        opts = tokens[1] if len(tokens) > 1 else ''
+        
+        m = re.match(r'-(after|before)\s+["\']?(.+?)["\']?\s*$', opts)
+        if not m:
+            return '错误：选项格式不正确。示例：-after 10 或 -before "目标文本"'
+        pos_type = m.group(1)
+        pos_val = m.group(2)
+        
+        err = _check_permission('insert', filepath)
+        if err: return err
+        
+        try:
+            with open(filepath, 'r', encoding='utf-8') as f:
+                lines = f.readlines()
+            
+            insert_idx = -1
+            if pos_val.isdigit():
+                line_no = int(pos_val)
+                if line_no < 1 or line_no > len(lines) + 1:
+                    return f'错误：行号 {line_no} 超出文件范围 (1-{len(lines)+1})'
+                if pos_type == 'after':
+                    insert_idx = line_no
+                else:
+                    insert_idx = line_no - 1
+            else:
+                found_idx = -1
+                for idx, line in enumerate(lines):
+                    if pos_val in line:
+                        found_idx = idx
+                        break
+                if found_idx == -1:
+                    return f'未找到定位文本：{pos_val}'
+                if pos_type == 'after':
+                    insert_idx = found_idx + 1
+                else:
+                    insert_idx = found_idx
+            
+            if not insert_text.endswith('\n'):
+                insert_text += '\n'
+            lines.insert(insert_idx, insert_text)
+            
+            with open(filepath, 'w', encoding='utf-8') as f:
+                f.writelines(lines)
+                
+            log_action('INSERT', f'{filepath} 行 {insert_idx+1}')
+            return f'已在 {filepath} 的第 {insert_idx+1} 行处插入内容。'
+        except Exception as e:
+            return f'插入失败：{e}'
+
+    elif cmd == 'grep':
+        stripped = arg.strip()
+        if stripped and stripped[0] in ('"', "'"):
+            quote = stripped[0]
+            end = stripped.find(quote, 1)
+            if end == -1:
+                return '错误：缺少闭合引号。用法：grep "关键词" <路径或文件>'
+            keyword = stripped[1:end]
+            target_str = stripped[end+1:].strip()
+        else:
+            parts = arg.split(None, 1)
+            if len(parts) < 2:
+                return '错误：缺少参数。用法：grep <关键词> <路径或文件> 或 grep "关键词" <路径或文件>'
+            keyword = parts[0]
+            target_str = parts[1].strip()
+        if not target_str:
+            return '错误：缺少文件路径。'
+        target = safe_path(W, target_str)
+        
+        err = _check_permission('grep', target)
+        if err: return err
+        
+        try:
+            if os.path.isfile(target):
+                with open(target, 'r', encoding='utf-8') as f:
+                    lines = f.readlines()
+                results = []
+                for idx, line in enumerate(lines, 1):
+                    if keyword in line:
+                        results.append(f'  行 {idx}: {line.rstrip()}')
+                if results:
+                    output = [f'{target}:']
+                    output.extend(results)
+                    return '\n'.join(output)
+                return f'{target}: 无匹配'
+                
+            elif os.path.isdir(target):
+                output = []
+                for root, dirs, files in os.walk(target):
+                    for fname in files:
+                        fpath = os.path.join(root, fname)
+                        try:
+                            with open(fpath, 'r', encoding='utf-8', errors='ignore') as f:
+                                for idx, line in enumerate(f, 1):
+                                    if keyword in line:
+                                        output.append(f'{fpath}:{idx}: {line.rstrip()}')
+                        except:
+                            pass
+                if output:
+                    return '\n'.join(output)
+                return f'在目录 {target} 中未找到匹配。'
+            else:
+                return f'错误：路径不存在 {target}'
+        except Exception as e:
+            return f'搜索失败：{e}'
+
+    elif cmd == 'head':
+        parts = arg.split()
+        if not parts:
+            return '错误：缺少文件路径。用法：head <路径> [行数]'
+        filepath = safe_path(W, parts[0])
+        n = int(parts[1]) if len(parts) > 1 and parts[1].isdigit() else 10
+        err = _check_permission('head', filepath)
+        if err: return err
+        try:
+            with open(filepath, 'r', encoding='utf-8') as f:
+                lines = [f.readline().rstrip() for _ in range(n)]
+            log_action('HEAD', filepath)
+            return '\n'.join(lines) if any(lines) else '（文件为空）'
+        except Exception as e:
+            return f'读取失败：{e}'
+
+    elif cmd == 'tail':
+        parts = arg.split()
+        if not parts:
+            return '错误：缺少文件路径。用法：tail <路径> [行数]'
+        filepath = safe_path(W, parts[0])
+        n = int(parts[1]) if len(parts) > 1 and parts[1].isdigit() else 10
+        err = _check_permission('tail', filepath)
+        if err: return err
+        try:
+            with open(filepath, 'r', encoding='utf-8') as f:
+                lines = f.readlines()
+            tail_lines = [l.rstrip() for l in lines[-n:]]
+            log_action('TAIL', filepath)
+            return '\n'.join(tail_lines) if tail_lines else '（文件为空）'
+        except Exception as e:
+            return f'读取失败：{e}'
 
     # ========== 文件操作 ==========
     elif cmd == 'create':
@@ -412,7 +719,7 @@ def agent_exec():
         return '无法解析请求体', 400
     if not command_text:
         return '空的指令', 400
-    log_action('RECEIVED', command_text[:200])
+    log_action('RECEIVED', command_text[:20000])
 
     lines = command_text.split('\n')
     i = 0
@@ -427,7 +734,7 @@ def agent_exec():
         cmd = parts[0].lower()
         arg = parts[1] if len(parts) > 1 else ''
 
-        if cmd in ('create', 'append'):
+        if cmd in ('create', 'append', 'replace', 'insert', 'find'):
             peek = i + 1
             content_lines = []
             has_code_start = False
@@ -517,7 +824,7 @@ def agent_exec():
         output = results[0]
     else:
         output = '\n---\n'.join(f'[指令 {idx+1}] {r}' for idx, r in enumerate(results))
-    log_action('RESULT', output[:200])
+    log_action('RESULT', output[:20000])
     return output
 
 @app.route('/agent-config-poll', methods=['GET'])

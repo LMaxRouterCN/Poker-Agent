@@ -378,7 +378,6 @@ function _pollConfig() {
     let _pollTimer = null;
     let _fillTimeout = null;
     const _sentCmds = new Set();
-    const _historyCmds = new Set();
     const _notifiedCmds = new Set();
 
 
@@ -398,7 +397,8 @@ function _pollConfig() {
             'button, [class*="copy"], [class*="operate"], [class*="action"], [class*="toolbar"]'
         );
         uiNodes.forEach(n => n.remove());
-
+        const codeNodes = clone.querySelectorAll('pre');
+            codeNodes.forEach(n => { if(n.closest('.answer')?.textContent.includes('\u3010CodeSTART\u3011')) return; n.remove(); });
         // 【关键修复】textContent 不会在块级元素之间插入换行
         // 浏览器渲染后，相邻的 <p>、<div>、<pre> 等元素文本会被拼接成一行
         // 必须手动在每个块级元素前插入换行符
@@ -440,12 +440,17 @@ function _pollConfig() {
         // 首次启动：扫描已有回答作为历史，防止重复执行
         const existingAnswers = [...currentContainer.querySelectorAll('.answer')];
         _knownAnswers = existingAnswers;
+              // 静默记忆所有历史指令（塞进已执行+已通知，保证完全隐形）
         existingAnswers.forEach(a => {
             const re = /【cmd】([\s\S]*?)【\/cmd】/g;
+            const _skipMessages = [];
             let m;
-            while ((m = re.exec(getCleanText(a))) !== null) _historyCmds.add(m[0]);
+            while ((m = re.exec(getCleanText(a))) !== null) {
+                _sentCmds.add(m[0]);
+                _notifiedCmds.add(m[0]);
+            }
         });
-        if (_historyCmds.size > 0) log('INFO', `已屏蔽 ${_historyCmds.size} 条历史指令`);
+
         _pollConfig();
         log('OK', `✅ 监听已启动！`);
 
@@ -461,9 +466,13 @@ function _pollConfig() {
                     log('WARN', '🚨 检测到聊天容器被替换（新对话），重置监听状态...');
                     currentContainer = freshContainer;
                     _sentCmds.clear();
-                    _historyCmds.clear();
+                    _pendingSkipMsgs = [];
                     _notifiedCmds.clear();
                     _knownAnswers = [];
+                    _cmdQueue = [];
+                    _prevAnswersLen = -1;
+                    if (_fallbackTimer) { clearTimeout(_fallbackTimer); _fallbackTimer = null; }
+
                     log('OK', `✅ 已切换至新容器，继续监听...`);
                     return;
                 }
@@ -474,53 +483,78 @@ function _pollConfig() {
                 // 检测方式2：容器没变，但所有旧回答都消失了 → 也是新对话
                 if (_knownAnswers.length > 0 && !_knownAnswers.some(el => currentSet.has(el))) {
                     _sentCmds.clear();
-                    _historyCmds.clear();
+                    _pendingSkipMsgs = [];
                     _notifiedCmds.clear();
+                    _cmdQueue = [];
+                    _prevAnswersLen = -1;
+                    if (_fallbackTimer) { clearTimeout(_fallbackTimer); _fallbackTimer = null; }
+
                     log('WARN', '🚨 检测到对话被清空（新对话），重置监听状态...');
                 }
                 _knownAnswers = answers;
 
                 // 心跳
                 if (_heartbeatCounter % 20 === 0) {
-                    log('INFO', `💓 心跳 | ${answers.length} 个回答 | 已执行 ${_sentCmds.size} | 历史 ${_historyCmds.size}`);
+                   log('INFO', `💓 心跳 | ${answers.length} 个回答 | 已执行${_sentCmds.size}`);
                 }
 
-                if (answers.length === 0) return;
+            if (answers.length === 0) return;
 
-                const re = /【cmd】([\s\S]*?)【\/cmd】/g;
-                for (const answer of answers) {
-                    const text = getCleanText(answer);
-                    let m;
-                    while ((m = re.exec(text)) !== null) {
-                        const fullMatch = m[0];
-                        const cmdStr = m[1].trim();
-                        const preview = cmdStr.substring(0, 100) + (cmdStr.length > 100 ? `... (共 ${cmdStr.length} 字符)` : '');
-
-                        if (_historyCmds.has(fullMatch)) continue;
-
-                        if (_sentCmds.has(fullMatch)) {
-                            if (!_notifiedCmds.has(fullMatch)) {
-                                _notifiedCmds.add(fullMatch);
-                                log('INFO', `⏭️ 跳过重复指令: ${cmdStr.substring(0, 50)}...`);
-                                _fillAndSend('检测到重复指令，已忽略。');
-                            }
-                            continue;
-                        }
-
-                        log('OK', `🎉 捕获指令: ${preview}`);
-                        _sentCmds.add(fullMatch);
-                        _historyCmds.add(fullMatch);
-                        _dispatch(cmdStr);
-                    }
+            const re = /【cmd】([\s\S]*?)【\/cmd】/g;
+            for (const answer of answers) {
+                const text = getCleanText(answer);
+                re.lastIndex = 0;
+                let m;
+                while ((m = re.exec(text)) !== null) {
+                    const fullMatch = m[0];
+                    const cmdStr = m[1].trim();
+                    const normKey = fullMatch.replace(/[ \t]+/g, ' ').replace(/ *\n */g, '\n');
+                    const preview = cmdStr.substring(0, 100) + (cmdStr.length > 100 ? `... (共 ${cmdStr.length} 字符)` : '');
+                    if (_sentCmds.has(normKey)) continue;
+                    log('OK', `🎉 捕获指令: ${preview}`);
+                    _sentCmds.add(normKey);
+                    _enqueueCmd(cmdStr);
                 }
+            }
+
+                // 文本稳定检测：等 LLM 输出停稳再批量发送
+                const currentLen = answers.reduce((s, a) => s + getCleanText(a).length, 0);
+                if (_cmdQueue.length > 0 && currentLen === _prevAnswersLen) {
+                    if (_fallbackTimer) { clearTimeout(_fallbackTimer); _fallbackTimer = null; }
+                    const batch = _cmdQueue.join('\n');
+                    _cmdQueue = [];
+                    _dispatch(batch);
+                }
+                _prevAnswersLen = currentLen;
+
             } catch (err) {
                 console.error('[Agent-ERR] 轮询异常（已恢复）:', err);
             }
         }, 1500);
     }
 
+let _cmdQueue = [];
+let _pendingSkipMsgs = [];
+let _prevAnswersLen = -1;
+let _fallbackTimer = null;
 
-    function _dispatch(cmd) {
+function _enqueueCmd(cmdStr) {
+    _cmdQueue.push(cmdStr);
+    if (!_fallbackTimer) {
+        _fallbackTimer = setTimeout(() => {
+            _fallbackTimer = null;
+            if (_cmdQueue.length > 0) {
+                const batch = _cmdQueue.join('\n');
+                _cmdQueue = [];
+               _dispatch(batch, _pendingSkipMsgs);
+                _pendingSkipMsgs = [];
+            }
+        }, 6000);
+    }
+}
+
+
+    function _dispatch(cmd, skipMsgs = []) {
         const c = cfgLoad();
         log('INFO', `发送至本地: ${c.apiUrl}`);
         cmd = cmd.replace(/\u2014/g, '--');
@@ -543,8 +577,10 @@ function _pollConfig() {
                         }
                     } catch(e) {}
                     // 普通文本模式
-                    log('OK', `本地返回: ${r.responseText}`);
-                    _fillAndSend(r.responseText);
+                    let resultText = r.responseText;
+                    if (skipMsgs.length > 0) resultText = skipMsgs.join('\n') + '\n\n' + resultText;
+                    log('OK', `本地返回: ${resultText}`);
+                    _fillAndSend(resultText);
                 } else {
                     log('ERR', `HTTP ${r.status}`);
                     _fillAndSend(`[Agent 错误] HTTP ${r.status}`);
@@ -624,6 +660,7 @@ function _pollConfig() {
             }
 
             if (_fillTimeout) { clearTimeout(_fillTimeout); _fillTimeout = null; }
+            _accumText = '';
 
             // 文件粘贴后网页可能需要一点时间渲染上传提示，等1.5秒再点发送
             _fillTimeout = setTimeout(() => {
@@ -636,12 +673,13 @@ function _pollConfig() {
     }
 
 
+    let _accumText = '';
     function _fillAndSend(text) {
-        if (_fillTimeout) {
-            clearTimeout(_fillTimeout);
-            _fillTimeout = null;
-        }
         text = '[Poker Agent] ' + text;
+        _accumText = _accumText ? _accumText + '\n\n' + text : text;
+
+        if (_fillTimeout) clearTimeout(_fillTimeout);
+
         const c = cfgLoad();
         const input = document.querySelector(c.selInputBox);
         const btn = document.querySelector(c.selSendButton);
@@ -650,12 +688,15 @@ function _pollConfig() {
             return;
         }
         log('INFO', '正在模拟输入并发送...');
-        _directInput(input, text);
+        _directInput(input, _accumText);
+
         _fillTimeout = setTimeout(() => {
             _fillTimeout = null;
+            _accumText = '';
             try { btn.click(); } catch (err) { log('ERR', `点击发送失败: ${err.message}`); }
-        }, 600);
+        }, 800);
     }
+
 
 
     /* ================================================================
