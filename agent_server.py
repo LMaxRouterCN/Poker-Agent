@@ -170,6 +170,8 @@ def execute_line(line):
             search_text = ' '.join(all_tokens[j:])
 
             
+        old_text = old_text.replace('TICK3', '```')
+        new_text = new_text.replace('TICK3', '```')
         tokens = opts_str.split()
         if not tokens:
             return '错误：缺少文件路径。'
@@ -235,18 +237,19 @@ def execute_line(line):
 
     elif cmd == 'replace':
         if '\x00' not in arg:
-            return '错误：缺少参数。用法：replace <路径> [选项] 换行用 --- 分隔新旧内容'
+            return '错误：缺少参数。用法：replace <路径> [选项] 换行用 【SepTag】 分隔新旧内容'
         sep = arg.split('\x00', 1)
         opts_str = sep[0].strip()
         combined = sep[1]
         
-        if '\n---\n' not in combined:
-            return '错误：缺少分隔符。旧文本和新文本之间请用单独一行的 --- 分隔。'
-        
-        parts = combined.split('\n---\n', 1)
+        if '\n【SepTag】\n' not in combined:
+            return '错误：缺少分隔符。旧文本和新文本之间请用单独一行的 【SepTag】 分隔。'
+        parts = combined.split('\n【SepTag】\n', 1)
         old_text = parts[0].strip('\n')
         new_text = parts[1].strip('\n') if len(parts) > 1 else ''
         
+        old_text = old_text.replace('TICK3', '```')
+        new_text = new_text.replace('TICK3', '```')
         tokens = opts_str.split()
         if not tokens:
             return '错误：缺少文件路径。'
@@ -364,8 +367,8 @@ def execute_line(line):
                 else:
                     insert_idx = found_idx
             
-            if not insert_text.endswith('\n'):
-                insert_text += '\n'
+            insert_text = insert_text.replace('TICK3', '```')
+            if not insert_text.endswith('\n'): insert_text += '\n'
             lines.insert(insert_idx, insert_text)
             
             with open(filepath, 'w', encoding='utf-8') as f:
@@ -487,6 +490,7 @@ def execute_line(line):
             sep = arg.split(None, 1)
             filepath = safe_path(W, sep[0])
             content = sep[1] if len(sep) > 1 else ''
+        content = content.replace('TICK3', '```')
         err = _check_permission('create', filepath)
         if err:
             return err
@@ -539,6 +543,7 @@ def execute_line(line):
             sep = arg.split(None, 1)
             filepath = safe_path(W, sep[0])
             content = sep[1] if len(sep) > 1 else ''
+        content = content.replace('TICK3', '```')
         err = _check_permission('append', filepath)
         if err:
             return err

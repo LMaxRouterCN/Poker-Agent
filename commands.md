@@ -1,4 +1,5 @@
 # Agent 指令列表
+
 用法：在 【cmd】和【/cmd】标签之间编写指令，多条指令按顺序执行。
 
 ---
@@ -22,11 +23,11 @@
 ### find <文件路径> [选项]
 精确查找文件内的文本，返回所有匹配的行号及内容。
 选项：
-  -i ：忽略大小写
-  -w ：全词匹配（仅英文）
+- -i ：忽略大小写
+- -w ：全词匹配（仅英文）
 如果是多行查找，内容需要换行并用标签包裹。
 示例：
-【cmd】find test.txt -i -w
+【cmd】find test.txt -i -w 
 【CodeSTART】
 ```
 hello world
@@ -37,15 +38,15 @@ hello world
 ### replace <文件路径> [选项]
 精确替换文件内的文本。
 选项：
-  -a ：替换所有（默认只替换第一个）
-  -i ：忽略大小写
-旧文本和新文本之间，**必须用单独一行的 --- 作为分隔符**。
+- -a ：替换所有（默认只替换第一个）
+- -i ：忽略大小写
+旧文本和新文本之间，**必须用单独一行的 【SepTag】 作为分隔符**。
 示例：
-【cmd】replace config.json -a
+【cmd】replace config.json -a 
 【CodeSTART】
 ```
 "debug": false
----
+【SepTag】
 "debug": true
 ```
 【/CodeEND】
@@ -54,16 +55,15 @@ hello world
 ### insert <文件路径> -after/-before <行号或文本>
 在指定位置插入内容。可以指定行号，也可以指定一段目标文本。
 示例（在第10行后插入）：
-【cmd】insert main.py -after 10
+【cmd】insert main.py -after 10 
 【CodeSTART】
 ```
 print("插入的内容")
 ```
 【/CodeEND】
 【/cmd】
-
 示例（在目标文本前插入）：
-【cmd】insert main.py -before "def main():"
+【cmd】insert main.py -before "def main():" 
 【CodeSTART】
 ```
 # 这是新插入的注释
@@ -91,28 +91,33 @@ print("插入的内容")
 ## 文件操作
 
 ### create
-创建一个新文件并写入内容。文件路径写在指令同行，多行内容必须使用 【CodeSTART】 和 【/CodeEND】 标签包裹（内部仍需保留"```"以维持代码缩进）。
+创建一个新文件并写入内容。文件路径写在指令同行，多行内容必须使用 【CodeSTART】 和 【/CodeEND】 标签包裹
 格式：
-【cmd】create <文件路径>
+【cmd】create <文件路径> 
 【CodeSTART】
 ```
 <文件内容>
 ```
 【/CodeEND】
 【/cmd】
-- 文件路径：相对于工作目录，或使用绝对路径。
-- 如果文件已存在，会覆盖原文件。
-- 如果内容只有单行且不含特殊字符，也可以简写为：
-【cmd】create <文件路径> <单行内容>【/cmd】
+
 示例：
-【cmd】create hello.txt
+
+【cmd】create hello.txt 
 【CodeSTART】
 ```
-Hello World!
+Hello World! 
 这是第二行。
 ```
 【/CodeEND】
 【/cmd】
+
+
+- 文件路径：相对于工作目录，或使用绝对路径。
+- 如果文件已存在，会覆盖原文件。
+- 如果内容只有单行且不含特殊字符，也可以简写为：
+
+【cmd】create <文件路径> <单行内容>【/cmd】
 
 ### read <文件路径>
 读取文件内容并返回。
@@ -122,7 +127,7 @@ Hello World!
 ### append
 向已有文件末尾追加内容。多行格式与 create 相同。
 格式：
-【cmd】append <文件路径>
+【cmd】append <文件路径> 
 【CodeSTART】
 ```
 <追加内容>
@@ -157,6 +162,12 @@ Hello World!
 【cmd】list【/cmd】
 【cmd】list src【/cmd】
 
+ ```3
+treelist [目录路径]
+以树形结构列出目录下的所有文件和子目录。不传路径时列出当前工作目录。
+示例：
+【cmd】treelist
+treelist src
 ### mkdir <目录路径>
 创建目录（支持多级创建）。
 示例：
@@ -194,7 +205,8 @@ Hello World!
 ---
 
 ## 注意事项
-- 写入多行内容时，必须使用 【CodeSTART】 和 【/CodeEND】 包裹（内部保留"```"代码块以防止缩进丢失）。
+- 写入多行内容时，必须在外层使用 【CodeSTART】 和 【/CodeEND】 包裹，内测用 ``` 包裹代码使其变为代码块。
+- 如果要写入的内容本身包含三个反引号，请用 TICK3 代替避免在浏览器处理文本后打乱排版格式（后端会自动还原）。
 - 代码块内的一切内容都会原封不动写入文件，包括空行、空格、特殊符号。
-- replace 指令中，新旧内容的分界线必须是**单独一行的 ---**。
+- replace 指令中，新旧内容的分界线必须是**单独一行的 【SepTag】**。
 - 危险操作（delete、exec）会记录日志。

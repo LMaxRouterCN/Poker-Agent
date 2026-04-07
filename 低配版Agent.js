@@ -555,6 +555,10 @@ function _enqueueCmd(cmdStr) {
         log('INFO', `发送至本地: ${c.apiUrl}`);
         cmd = cmd.replace(/\u2014/g, '--');
         cmd = cmd.replace(/\u2013/g, '-');
+        cmd = cmd.replace(/\u201C/g, '"');
+        cmd = cmd.replace(/\u201D/g, '"');
+        cmd = cmd.replace(/\u2018/g, "'");
+        cmd = cmd.replace(/\u2019/g, "'");
 
         GM_xmlhttpRequest({
             method: 'POST',

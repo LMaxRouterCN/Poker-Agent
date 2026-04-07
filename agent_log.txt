@@ -4581,3 +4581,1234 @@ target_str = non_opts[-1]
 
 【/CodeEND】
 [2026-04-05 21:49:25] RESULT | 错误：缺少分隔符。旧文本和新文本之间请用单独一行的 --- 分隔。
+[2026-04-05 23:53:02] RECEIVED | grep -s “strip_indent” agent_server.py
+[2026-04-05 23:53:02] RESULT | d:\Documents\my\Poker Agent\agent_server.py: 无匹配
+[2026-04-05 23:53:53] RECEIVED | create test.txt 这是一个测试文件。
+[2026-04-05 23:53:53] CREATE | d:\Documents\my\Poker Agent\test.txt 这是一个测试文件。
+[2026-04-05 23:53:53] RESULT | 已创建文件：d:\Documents\my\Poker Agent\test.txt 这是一个测试文件。（0 字符）
+[2026-04-05 23:54:26] RECEIVED | grep -s strip_indent agent_server.py
+[2026-04-05 23:54:26] RESULT | d:\Documents\my\Poker Agent\agent_server.py:
+ 行 257:         strip_indent = '-s' in flags
+ 行 266:             if strip_indent:
+ 行 388:             strip_indent = '-s' in rest
+ 行 394:             strip_indent = '-s' in opts
+ 行 401:         cmp_kw = keyword.lstrip() if strip_indent else keyword
+ 行 415:                     check = line.lstrip() if strip_indent else line
+ 行 432:                                     check = line.lstrip() if strip_indent else line
+[2026-04-05 23:55:13] RECEIVED | read agent_server.py
+[2026-04-05 23:55:13] READ-CLIPBOARD | agent_server.py
+[2026-04-06 00:02:14] RECEIVED | grep -s “strip_indent” agent_server.py
+[2026-04-06 00:02:14] RESULT | d:\Documents\my\Poker Agent\agent_server.py: 无匹配
+[2026-04-06 00:09:55] RECEIVED | grep -s “strip_indent” agent_server.py
+[2026-04-06 00:09:56] RESULT | d:\Documents\my\Poker Agent\agent_server.py: 无匹配
+[2026-04-06 00:11:35] RECEIVED | grep -s strip_indent agent_server.py
+[2026-04-06 00:11:35] RESULT | d:\Documents\my\Poker Agent\agent_server.py:
+ 行 257:         strip_indent = '-s' in flags
+ 行 266:             if strip_indent:
+ 行 388:             strip_indent = '-s' in rest
+ 行 394:             strip_indent = '-s' in opts
+ 行 401:         cmp_kw = keyword.lstrip() if strip_indent else keyword
+ 行 415:                     check = line.lstrip() if strip_indent else line
+ 行 432:                                     check = line.lstrip() if strip_indent else line
+[2026-04-06 00:17:40] RECEIVED | grep -s strip_indent agent_server.py
+[2026-04-06 00:17:40] RESULT | d:\Documents\my\Poker Agent\agent_server.py:
+ 行 257:         strip_indent = '-s' in flags
+ 行 266:             if strip_indent:
+ 行 388:             strip_indent = '-s' in rest
+ 行 394:             strip_indent = '-s' in opts
+ 行 401:         cmp_kw = keyword.lstrip() if strip_indent else keyword
+ 行 415:                     check = line.lstrip() if strip_indent else line
+ 行 432:                                     check = line.lstrip() if strip_indent else line
+[2026-04-06 19:10:03] RECEIVED | list
+[2026-04-06 19:10:03] LIST | d:\Documents\my\Poker Agent
+[2026-04-06 19:10:03] RESULT | 目录：d:\Documents\my\Poker Agent
+
+ [DIR] .git
+ [FILE] .gitattributes (66 B)
+ [FILE] .gitignore (28 B)
+ [FILE] LICENSE (16.7 KB)
+ [FILE] LLM 系统提示词.md (2.9 KB)
+ [FILE] README.md (95 B)
+ [DIR] __pycache__
+ [FILE] agent_gui.py (23.7 KB)
+ [FILE] agent_log.txt (168.5 KB)
+ [FILE] agent_server.py (35.1 KB)
+ [FILE] commands.md (4.7 KB)
+ [FILE] test.txt 这是一个测试文件。 (0 B)
+ [FILE] 低配版Agent.js (35.2 KB)
+ [FILE] 待解决问题.md (2.2 KB)
+[2026-04-06 19:10:17] RECEIVED | read agent_server.py
+[2026-04-06 19:10:17] READ-CLIPBOARD | agent_server.py
+[2026-04-06 19:11:20] RECEIVED | read agent_gui.py
+[2026-04-06 19:11:20] READ-CLIPBOARD | agent_gui.py
+[2026-04-06 19:14:06] RECEIVED | read 低配版Agent.js
+[2026-04-06 19:14:06] READ-CLIPBOARD | 低配版Agent.js
+[2026-04-06 19:14:26] RECEIVED | exec findstr /n “.” “低配版Agent.js” | findstr /b “1: 2: 3: 4: 5:”
+[2026-04-06 19:14:26] EXEC | findstr /n “.” “低配版Agent.js” | findstr /b “1: 2: 3: 4: 5:”
+[2026-04-06 19:14:26] RESULT | FINDSTR: 无法打开 “低配版Agent.js”
+FINDSTR: 无法打开 2:
+FINDSTR: 无法打开 3:
+FINDSTR: 无法打开 4:
+FINDSTR: 无法打开 5:”
+[2026-04-06 19:15:03] RECEIVED | exec powershell -Command “Get-Content ‘低配版Agent.js’ -TotalCount 20”
+[2026-04-06 19:15:03] EXEC | powershell -Command “Get-Content ‘低配版Agent.js’ -TotalCount 20”
+[2026-04-06 19:15:03] RESULT | Get-Content ‘低配版Agent.js’ -TotalCount 20
+[2026-04-06 19:15:30] RECEIVED | exec powershell -Command “(Get-Item ‘低配版Agent.js’).Length”
+[2026-04-06 19:15:30] EXEC | powershell -Command “(Get-Item ‘低配版Agent.js’).Length”
+[2026-04-06 19:15:30] RESULT | (Get-Item ‘低配版Agent.js’).Length
+[2026-04-06 19:15:45] RECEIVED | exec type “低配版Agent.js” | find /c /v “”
+[2026-04-06 19:15:45] EXEC | type “低配版Agent.js” | find /c /v “”
+[2026-04-06 19:15:45] RESULT | 系统找不到指定的文件。
+FIND: 参数格式不正确
+[2026-04-06 19:17:57] RECEIVED | grep -s "strip_indent" agent_server.py
+replace 低配版Agent.js -s \x00 -after cmd = cmd.replace(/\u2013/g, ‘-’);
+cmd = cmd.replace(/\u201C/g, ‘"’); // “ 转 "
+cmd = cmd.replace(/\u201D/g, ‘"’); // ” 转 "
+cmd = cmd.replace(/\u2018/g, “'”); // ‘ 转 ’
+cmd = cmd.replace(/\u2019/g, “'”); // ’ 转 ’
+[2026-04-06 19:17:57] RESULT | [指令 1] d:\Documents\my\Poker Agent\agent_server.py:
+ 行 257:         strip_indent = '-s' in flags
+ 行 266:             if strip_indent:
+ 行 388:             strip_indent = '-s' in rest
+ 行 394:             strip_indent = '-s' in opts
+ 行 401:         cmp_kw = keyword.lstrip() if strip_indent else keyword
+ 行 415:                     check = line.lstrip() if strip_indent else line
+ 行 432:                                     check = line.lstrip() if strip_indent else line
+---
+[指令 2] 错误：缺少分隔符。旧文本和新文本之间请用单独一行的 --- 分隔。
+[2026-04-06 19:19:56] RECEIVED | replace 低配版Agent.js
+cmd = cmd.replace(/\u2013/g, ‘-’);  // - 转 -
+cmd = cmd.replace(/\u2013/g, ‘-’);  // - 转 -
+cmd = cmd.replace(/\u201C/g, ‘"’); // “ 转 "
+cmd = cmd.replace(/\u201D/g, ‘"’); // ” 转 "
+cmd = cmd.replace(/\u2018/g, “'”); // ‘ 转 ’
+cmd = cmd.replace(/\u2019/g, “'”); // ’ 转 ’
+[2026-04-06 19:19:56] RESULT | 错误：缺少分隔符。旧文本和新文本之间请用单独一行的 --- 分隔。
+[2026-04-06 19:24:26] RECEIVED | replace 文件路径 选项
+旧文本
+【ReplaceSep】
+新文本
+[2026-04-06 19:24:26] RESULT | 错误：缺少分隔符。旧文本和新文本之间请用单独一行的 --- 分隔。
+[2026-04-06 19:29:39] RECEIVED | replace 低配版Agent.js
+cmd = cmd.replace(/\u2013/g, ‘-’);  // - 转 -
+【SepTag】
+cmd = cmd.replace(/\u2013/g, ‘-’);  // - 转 -
+cmd = cmd.replace(/\u201C/g, ‘"’); // “ 转 "
+cmd = cmd.replace(/\u201D/g, ‘"’); // ” 转 "
+cmd = cmd.replace(/\u2018/g, “'”); // ‘ 转 ’
+cmd = cmd.replace(/\u2019/g, “'”); // ’ 转 ’
+[2026-04-06 19:29:39] RESULT | 错误：缺少分隔符。旧文本和新文本之间请用单独一行的 --- 分隔。
+[2026-04-06 19:32:36] RECEIVED | replace 低配版Agent.js
+cmd = cmd.replace(/\u2013/g, ‘-’);  // - 转 -
+【SepTag】
+cmd = cmd.replace(/\u2013/g, ‘-’);  // - 转 -
+cmd = cmd.replace(/\u201C/g, ‘"’); // “ 转 "
+cmd = cmd.replace(/\u201D/g, ‘"’); // ” 转 "
+cmd = cmd.replace(/\u2018/g, “'”); // ‘ 转 ’
+cmd = cmd.replace(/\u2019/g, “'”); // ’ 转 ’
+[2026-04-06 19:32:36] RESULT | 未找到要替换的文本。
+[2026-04-06 19:39:26] RECEIVED | read agent_server.py 240 280
+[2026-04-06 19:39:26] RESULT | 错误：文件不存在：d:\Documents\my\Poker Agent\agent_server.py 240 280
+[2026-04-06 19:49:37] RECEIVED | find 低配版Agent.js "Content-Type"
+[2026-04-06 19:49:37] FIND | d:\Documents\my\Poker Agent\低配版Agent.js -> 721 处
+[2026-04-06 19:49:37] RESULT | 在 d:\Documents\my\Poker Agent\低配版Agent.js 中找到 721 处匹配：
+
+  行 1: // ==UserScript==
+  行 2: // @name         低配版Agent
+  行 3: // @namespace    http://tampermonkey.net/
+  行 4: // @version      3.1
+  行 5: // @description  拦截LLM输出中的【cmd】指令，发给本地执行。修复卡死与长指令误杀问题。
+  行 6: // @match        *://*/*
+  行 7: // @grant        GM_registerMenuCommand
+  行 8: // @grant        GM_xmlhttpRequest
+  行 9: // @grant        GM_getValue
+  行 10: // @grant        GM_setValue
+  行 11: // @grant        GM_addStyle
+  行 12: // @grant        GM_setClipboard
+  行 13: // @connect      localhost
+  行 14: // @connect      127.0.0.1
+  行 15: // ==/UserScript==
+  行 16: 
+  行 17: (function () {
+  行 18:     'use strict';
+  行 19: 
+  行 20:     /* ================================================================
+  行 21:      * 1. 存储与配置
+  行 22:      * ================================================================ */
+  行 23:     const STORE_KEY = 'low_cost_agent_config_v3';
+  行 24:     const DEFAULTS = {
+  行 25:         whitelist: ['https://chatglm.cn/'],
+  行 26:         apiUrl: 'http://127.0.0.1:9966/agent-exec',
+  行 27:         selChatContainer: '',
+  行 28:         selInputBox: '',
+  行 29:         selSendButton: '',
+  行 30:         debugMode: false
+  行 31:     };
+  行 32: 
+  行 33:     const cfgLoad = () => {
+  行 34:         try { return { ...DEFAULTS, ...GM_getValue(STORE_KEY, {}) }; }
+  行 35:         catch (_) { return { ...DEFAULTS }; }
+  行 36:     };
+  行 37:     const cfgSave = (c) => GM_setValue(STORE_KEY, c);
+  行 38:     const isWhitelisted = () => cfgLoad().whitelist.some(p => location.href.startsWith(p));
+  行 39: 
+  行 40:     /* ================================================================
+  行 41:      * 2. 样式注入
+  行 42:      * ================================================================ */
+  行 43:     GM_addStyle(`
+  行 44:         /* --- 配置面板 --- */
+  行 45:         #agent-panel{position:fixed;top:50%;left:50%;transform:translate(-50%,-50%);width:min(540px,92vw);max-height:82vh;overflow-y:auto;background:#1a1b2e;color:#d4d4d8;border:1px solid #2e3047;border-radius:14px;box-shadow:0 24px 80px rgba(0,0,0,.55);z-index:2147483647;font:14px/1.5 system-ui,sans-serif}
+  行 46:         #agent-panel *{box-sizing:border-box;margin:0;padding:0}
+  行 47:         #agent-panel-head{display:flex;align-items:center;justify-content:space-between;padding:14px 20px;border-bottom:1px solid #2e3047}
+  行 48:         #agent-panel-head b{font-size:15px;color:#818cf8}
+  行 49:         #agent-panel-close{background:none;border:none;color:#71717a;font-size:20px;cursor:pointer;padding:2px 8px;border-radius:6px;transition:.15s}
+  行 50:         #agent-panel-close:hover{background:#2e3047;color:#f472b6}
+  行 51:         #agent-panel-body{padding:20px}
+  行 52:         .ag-sec{margin-bottom:18px}
+  行 53:         .ag-sec-title{font-size:11px;font-weight:700;color:#71717a;text-transform:uppercase;letter-spacing:.8px;margin-bottom:8px;display:flex;align-items:center;gap:6px}
+  行 54:         .ag-sec-title::before{content:'';width:3px;height:13px;background:#818cf8;border-radius:2px}
+  行 55:         .ag-field{margin-bottom:10px}
+  行 56:         .ag-field label{display:block;font-size:12px;color:#a1a1aa;margin-bottom:4px}
+  行 57:         .ag-row{display:flex;gap:6px;align-items:center}
+  行 58:         .ag-inp{flex:1;min-width:0;background:#2e3047;border:1px solid #3f3f46;color:#d4d4d8;padding:7px 10px;border-radius:8px;font-size:12px;outline:none;transition:.15s;font-family:'SF Mono',Consolas,monospace}
+  行 59:         .ag-inp:focus{border-color:#818cf8}
+  行 60:         .ag-btn{padding:7px 13px;border:none;border-radius:8px;font-size:12px;font-weight:600;cursor:pointer;transition:.15s;white-space:nowrap}
+  行 61:         .ag-btn-p{background:#818cf8;color:#0f0f23}.ag-btn-p:hover{background:#a5b4fc}
+  行 62:         .ag-btn-g{background:#2e3047;color:#d4d4d8;border:1px solid #3f3f46}.ag-btn-g:hover{border-color:#818cf8;color:#818cf8}
+  行 63:         .ag-wl-list{max-height:110px;overflow-y:auto;background:#232436;border-radius:8px;padding:3px;margin-bottom:6px}
+  行 64:         .ag-wl-item{display:flex;align-items:center;gap:6px;padding:5px 10px;border-radius:6px;font-size:12px}
+  行 65:         .ag-wl-item code{flex:1;min-width:0;color:#86efac;word-break:break-all;font-family:'SF Mono',Consolas,monospace;font-size:11px}
+  行 66:         .ag-wl-rm{background:none;border:none;color:#f472b6;cursor:pointer;font-size:14px;padding:0 4px;opacity:.5}.ag-wl-rm:hover{opacity:1}
+  行 67:         .ag-match{font-size:11px;padding:3px 8px;border-radius:4px;margin-top:3px}
+  行 68:         .ag-m-ok{background:rgba(134,239,172,.12);color:#86efac}
+  行 69:         .ag-m-fail{background:rgba(244,114,182,.12);color:#f472b6}
+  行 70:         .ag-m-none{background:rgba(161,161,170,.1);color:#71717a}
+  行 71:         .ag-foot{display:flex;justify-content:flex-end;gap:8px;padding-top:14px;border-top:1px solid #2e3047;margin-top:6px}
+  行 72:         .ag-toggle{display:flex;align-items:center;gap:10px}
+  行 73:         .ag-toggle input[type=checkbox]{width:16px;height:16px;accent-color:#818cf8}
+  行 74: 
+  行 75:         /* --- 选择器 --- */
+  行 76:         #agent-pick-dim{position:fixed;inset:0;background:rgba(0,0,0,.28);z-index:2147483645;pointer-events:none}
+  行 77:         #agent-pick-hl{position:fixed;border:2.5px solid #818cf8;background:rgba(129,140,248,.08);border-radius:5px;pointer-events:none;z-index:2147483646;transition:left .06s,top .06s,width .06s,height .06s;box-shadow:0 0 0 4000px rgba(0,0,0,.25);display:none}
+  行 78:         #agent-pick-tip{position:fixed;background:#1a1b2e;color:#c4b5fd;border:1px solid #3f3f46;padding:5px 10px;border-radius:6px;font:11px/1.4 'SF Mono',Consolas,monospace;z-index:2147483647;pointer-events:none;max-width:420px;word-break:break-all;box-shadow:0 4px 16px rgba(0,0,0,.4);opacity:0;transition:opacity .08s}
+  行 79:         #agent-pick-bar{position:fixed;top:14px;left:50%;transform:translateX(-50%);background:#1a1b2e;color:#d4d4d8;border:1px solid #818cf8;padding:10px 28px;border-radius:12px;font-size:14px;z-index:2147483647;box-shadow:0 6px 24px rgba(0,0,0,.5);pointer-events:none}
+  行 80: 
+  行 81:         /* --- 调试浮窗 --- */
+  行 82:         #agent-debug{ position:fixed;top:10px;right:10px;width:380px;max-height:60vh; background:rgba(15,15,30,.92);border:1px solid #3f3f46;border-radius:10px; box-shadow:0 10px 40px rgba(0,0,0,.5);z-index:2147483644; display:flex;flex-direction:column;font:12px/1.5 'SF Mono',Consolas,monospace; backdrop-filter:blur(8px);color:#a1a1aa; }
+  行 83:         #agent-debug-head{padding:8px 12px;border-bottom:1px solid #2e3047;display:flex;justify-content:space-between;align-items:center;color:#d4d4d8}
+  行 84:         #agent-debug-body{flex:1;overflow-y:auto;padding:8px;display:flex;flex-direction:column;gap:4px}
+  行 85:         #agent-debug-body::-webkit-scrollbar{width:4px}
+  行 86:         #agent-debug-body::-webkit-scrollbar-thumb{background:#3f3f46;border-radius:4px}
+  行 87:         .ag-log{padding:4px 6px;border-radius:4px;word-break:break-all;background:rgba(255,255,255,.03);border-left:3px solid transparent}
+  行 88:         .ag-log-time{color:#52525b;margin-right:6px}
+  行 89:         .ag-log-info{border-left-color:#818cf8;color:#c4b5fd}
+  行 90:         .ag-log-warn{border-left-color:#facc15;color:#fde68a;background:rgba(250,204,21,.05)}
+  行 91:         .ag-log-err{border-left-color:#f472b6;color:#fda4af;background:rgba(244,114,182,.05)}
+  行 92:         .ag-log-ok{border-left-color:#86efac;color:#bbf7d0;background:rgba(134,239,172,.05)}
+  行 93:         #agent-debug-foot{padding:6px 12px;border-top:1px solid #2e3047;text-align:right}
+  行 94:         .ag-dbg-btn{background:#2e3047;border:1px solid #3f3f46;color:#a1a1aa;padding:3px 10px;border-radius:4px;cursor:pointer;font-size:11px}
+  行 95:         .ag-dbg-btn:hover{border-color:#818cf8;color:#818cf8}
+  行 96:     `);
+  行 97: 
+  行 98:     /* ================================================================
+  行 99:      * 3. 调试日志系统
+  行 100:      * ================================================================ */
+  行 101:     let _debugPanel = null;
+  行 102:     let _debugBody = null;
+  行 103: 
+  行 104:     function initDebugUI() {
+  行 105:         if (_debugPanel) return;
+  行 106:         _debugPanel = document.createElement('div');
+  行 107:         _debugPanel.id = 'agent-debug';
+  行 108:         _debugPanel.innerHTML = `
+  行 109:             <div id="agent-debug-head"><span>🕵️ Agent 调试台</span><button class="ag-dbg-btn" id="ag-dbg-close">隐藏</button></div>
+  行 110:             <div id="agent-debug-body"></div>
+  行 111:             <div id="agent-debug-foot"><button class="ag-dbg-btn" id="ag-dbg-clear">清空日志</button></div>
+  行 112:         `;
+  行 113:         document.body.appendChild(_debugPanel);
+  行 114:         _debugBody = _debugPanel.querySelector('#agent-debug-body');
+  行 115:         _debugPanel.querySelector('#ag-dbg-close').onclick = () => _debugPanel.style.display = 'none';
+  行 116:         _debugPanel.querySelector('#ag-dbg-clear').onclick = () => _debugBody.innerHTML = '';
+  行 117:     }
+  行 118: 
+  行 119:     function showDebug() {
+  行 120:         if (!_debugPanel) initDebugUI();
+  行 121:         _debugPanel.style.display = 'flex';
+  行 122:     }
+  行 123: 
+  行 124: function _truncate(str, maxDisplay = 200, keepLen = 100) {
+  行 125:     str = String(str);
+  行 126:     if (str.length > maxDisplay) return str.substring(0, keepLen) + `... (共 ${str.length} 字符)`;
+  行 127:     return str;
+  行 128: }
+  行 129: 
+  行 130: function log(type, msg) {
+  行 131:     const c = cfgLoad();
+  行 132:     console.log(`[Agent-${type}] ${msg}`);
+  行 133:     if (!c.debugMode) return;
+  行 134:     if (!_debugBody) return;
+  行 135:     if (_debugPanel.style.display === 'none') return;
+  行 136:     const cls = type === 'INFO' ? 'ag-log-info' : type === 'WARN' ? 'ag-log-warn' : type === 'ERR' ? 'ag-log-err' : type === 'OK' ? 'ag-log-ok' : '';
+  行 137:     const time = new Date().toLocaleTimeString('zh-CN', { hour12: false });
+  行 138:     const div = document.createElement('div');
+  行 139:     div.className = `ag-log ${cls}`;
+  行 140:     div.innerHTML = `<span class="ag-log-time">${time}</span>${esc(_truncate(msg))}`;   // ← 包一层 _truncate
+  行 141:     _debugBody.appendChild(div);
+  行 142:     _debugBody.scrollTop = _debugBody.scrollHeight;
+  行 143: }
+  行 144: 
+  行 145: 
+  行 146:     /* ================================================================
+  行 147:      * 4. 元素选择器
+  行 148:      * ================================================================ */
+  行 149:     const PICKER_IDS = new Set(['agent-pick-dim', 'agent-pick-hl', 'agent-pick-tip', 'agent-pick-bar', 'agent-panel', 'agent-debug']);
+  行 150:     let _pickActive = false, _pickType = '', _pickHL, _pickTip, _pickBar, _pickDim;
+  行 151:     const TYPE_LABEL = { chat: '聊天记录容器', input: '输入框', send: '发送按钮' };
+  行 152: 
+  行 153:     function genSelector(el) {
+  行 154:         if (!el || el === document.body || el === document.documentElement) return '';
+  行 155:         const segs = [];
+  行 156:         let cur = el;
+  行 157:         while (cur && cur !== document.body && cur !== document.documentElement && segs.length < 5) {
+  行 158:             let seg = cur.tagName.toLowerCase();
+  行 159:             if (cur.id && !/\d/.test(cur.id)) {
+  行 160:                 segs.unshift('#' + CSS.escape(cur.id));
+  行 161:                 break;
+  行 162:             }
+  行 163:             if (cur.className && typeof cur.className === 'string') {
+  行 164:                 const cls = cur.className.trim().split(/\s+/).filter(c => c && !/^(_|-{2})/.test(c) && !/^(is|has|can|should)/.test(c)).slice(0, 3);
+  行 165:                 if (cls.length) seg += '.' + cls.map(c => CSS.escape(c)).join('.');
+  行 166:             }
+  行 167:             if (cur !== el && cur.parentElement) {
+  行 168:                 const sib = [...cur.parentElement.children].filter(n => n.tagName === cur.tagName);
+  行 169:                 if (sib.length > 1) seg += ':nth-child(' + ([...cur.parentElement.children].indexOf(cur) + 1) + ')';
+  行 170:             }
+  行 171:             segs.unshift(seg);
+  行 172:             cur = cur.parentElement;
+  行 173:         }
+  行 174:         const sel = segs.join(' > ');
+  行 175:         try { if (document.querySelectorAll(sel).length === 1) return sel; } catch (_) {}
+  行 176:         return sel;
+  行 177:     }
+  行 178: 
+  行 179:     function pickerEnter(type) {
+  行 180:         _pickActive = true;
+  行 181:         _pickType = type;
+  行 182:         hidePanel();
+  行 183:         _pickDim = document.createElement('div'); _pickDim.id = 'agent-pick-dim'; document.body.appendChild(_pickDim);
+  行 184:         _pickHL = document.createElement('div'); _pickHL.id = 'agent-pick-hl'; document.body.appendChild(_pickHL);
+  行 185:         _pickTip = document.createElement('div'); _pickTip.id = 'agent-pick-tip'; document.body.appendChild(_pickTip);
+  行 186:         _pickBar = document.createElement('div'); _pickBar.id = 'agent-pick-bar';
+  行 187:         _pickBar.innerHTML = `🎯 请点击 <span class="ag-target">${TYPE_LABEL[type]}</span><span class="ag-esc">ESC 取消</span>`;
+  行 188:         document.body.appendChild(_pickBar);
+  行 189:         document.addEventListener('mousemove', _onMove, true);
+  行 190:         document.addEventListener('click', _onClick, true);
+  行 191:         document.addEventListener('contextmenu', _onCtx, true);
+  行 192:         document.addEventListener('keydown', _onKey, true);
+  行 193:     }
+  行 194: 
+  行 195:     function pickerExit() {
+  行 196:         _pickActive = false; _pickType = '';
+  行 197:         document.removeEventListener('mousemove', _onMove, true);
+  行 198:         document.removeEventListener('click', _onClick, true);
+  行 199:         document.removeEventListener('contextmenu', _onCtx, true);
+  行 200:         document.removeEventListener('keydown', _onKey, true);
+  行 201:         [_pickDim, _pickHL, _pickTip, _pickBar].forEach(e => e && e.remove());
+  行 202:         showPanel();
+  行 203:     }
+  行 204: 
+  行 205:     function _targetAt(x, y) {
+  行 206:         let el = document.elementFromPoint(x, y);
+  行 207:         while (el && PICKER_IDS.has(el.id)) el = el.parentElement;
+  行 208:         return el;
+  行 209:     }
+  行 210: 
+  行 211:     function _onMove(e) {
+  行 212:         e.stopPropagation(); e.preventDefault();
+  行 213:         const el = _targetAt(e.clientX, e.clientY);
+  行 214:         if (!el) { _pickHL.style.display = 'none'; _pickTip.style.opacity = '0'; return; }
+  行 215:         const r = el.getBoundingClientRect();
+  行 216:         _pickHL.style.display = 'block';
+  行 217:         Object.assign(_pickHL.style, { left: (r.left-2)+'px', top: (r.top-2)+'px', width: (r.width+4)+'px', height: (r.height+4)+'px' });
+  行 218:         const sel = genSelector(el);
+  行 219:         _pickTip.textContent = sel + ' ← ' + el.tagName.toLowerCase();
+  行 220:         _pickTip.style.opacity = '1';
+  行 221:         _pickTip.style.left = Math.min(e.clientX + 14, innerWidth - 430) + 'px';
+  行 222:         _pickTip.style.top = (e.clientY + 22) + 'px';
+  行 223:     }
+  行 224: 
+  行 225:     function _onClick(e) {
+  行 226:         e.stopPropagation(); e.preventDefault();
+  行 227:         const el = _targetAt(e.clientX, e.clientY);
+  行 228:         if (!el) return;
+  行 229:         const sel = genSelector(el);
+  行 230:         if (!sel) return;
+  行 231:         const c = cfgLoad();
+  行 232:         if (_pickType === 'chat') c.selChatContainer = sel;
+  行 233:         if (_pickType === 'input') c.selInputBox = sel;
+  行 234:         if (_pickType === 'send') c.selSendButton = sel;
+  行 235:         cfgSave(c);
+  行 236:         log('OK', `已选择 [${TYPE_LABEL[_pickType]}]: ${sel}`);
+  行 237:         log('INFO', `目标元素详情: <${el.tagName.toLowerCase()}>, class="${el.className}", id="${el.id}"`);
+  行 238:         pickerExit();
+  行 239:     }
+  行 240: 
+  行 241:     function _onCtx(e) { e.stopPropagation(); e.preventDefault(); }
+  行 242:     function _onKey(e) { if (e.key === 'Escape') { e.stopPropagation(); e.preventDefault(); pickerExit(); } }
+  行 243: 
+  行 244:     /* ================================================================
+  行 245:      * 5. 配置面板
+  行 246:      * ================================================================ */
+  行 247:     let _panel = null;
+  行 248:     function showPanel() {
+  行 249:         if (!_panel) { _panel = document.createElement('div'); _panel.id = 'agent-panel'; document.body.appendChild(_panel); }
+  行 250:         _renderPanel();
+  行 251:         _panel.style.display = 'block';
+  行 252:     }
+  行 253:     function hidePanel() { if (_panel) _panel.style.display = 'none'; }
+  行 254: 
+  行 255:     function _renderPanel() {
+  行 256:         const c = cfgLoad();
+  行 257:         _panel.innerHTML = `
+  行 258:             <div id="agent-panel-head"><b>🔧 低配版 Agent 配置</b><button id="agent-panel-close">✕</button></div>
+  行 259:             <div id="agent-panel-body">
+  行 260:                 <div class="ag-sec">
+  行 261:                     <div class="ag-sec-title">控制台</div>
+  行 262:                     <div class="ag-toggle">
+  行 263:                         <input type="checkbox" id="ag-debug-toggle" ${c.debugMode ? 'checked' : ''} />
+  行 264:                         <label for="ag-debug-toggle" style="cursor:pointer">启用调试模式 (右侧显示日志浮窗)</label>
+  行 265:                     </div>
+  行 266:                 </div>
+  行 267:                 <div class="ag-sec">
+  行 268:                     <div class="ag-sec-title">网站白名单</div>
+  行 269:                     <div class="ag-wl-list" id="ag-wl-list">${c.whitelist.length ? c.whitelist.map((u, i) => `<div class="ag-wl-item"><code>${esc(u)}</code><button class="ag-wl-rm" data-i="${i}">✕</button></div>`).join('') : '<div style="padding:8px 10px;color:#52525b;font-size:12px">暂无</div>'}</div>
+  行 270:                     <div class="ag-row"><input class="ag-inp" id="ag-wl-new" placeholder="https://example.com/" /><button class="ag-btn ag-btn-g" id="ag-wl-add">添加</button></div>
+  行 271:                 </div>
+  行 272:                 <div class="ag-sec">
+  行 273:                     <div class="ag-sec-title">本地 Agent 服务</div>
+  行 274:                     <div class="ag-field"><label>接收指令的 HTTP 地址</label><input class="ag-inp" id="ag-api" value="${esc(c.apiUrl)}" /></div>
+  行 275:                 </div>
+  行 276:                 <div class="ag-sec">
+  行 277:                     <div class="ag-sec-title">页面元素绑定</div>
+  行 278:                     <div class="ag-field"><label>聊天记录容器</label><div class="ag-row"><input class="ag-inp" id="ag-s-chat" value="${esc(c.selChatContainer)}" /><button class="ag-btn ag-btn-p" id="ag-pick-chat">🖱 选择</button></div><div id="ag-m-chat"></div></div>
+  行 279:                     <div class="ag-field"><label>输入框</label><div class="ag-row"><input class="ag-inp" id="ag-s-input" value="${esc(c.selInputBox)}" /><button class="ag-btn ag-btn-p" id="ag-pick-input">🖱 选择</button></div><div id="ag-m-input"></div></div>
+  行 280:                     <div class="ag-field"><label>发送按钮</label><div class="ag-row"><input class="ag-inp" id="ag-s-send" value="${esc(c.selSendButton)}" /><button class="ag-btn ag-btn-p" id="ag-pick-send">🖱 选择</button></div><div id="ag-m-send"></div></div>
+  行 281:                 </div>
+  行 282:                 <div class="ag-foot"><button class="ag-btn ag-btn-g" id="ag-cancel">取消</button><button class="ag-btn ag-btn-p" id="ag-save">💾 保存配置</button></div>
+  行 283:             </div>`;
+  行 284: 
+  行 285:         _panel.querySelector('#agent-panel-close').onclick = hidePanel;
+  行 286:         _panel.querySelector('#ag-cancel').onclick = hidePanel;
+  行 287: 
+  行 288:         _panel.querySelector('#ag-debug-toggle').onchange = (e) => {
+  行 289:             if(e.target.checked) { showDebug(); log('INFO', '调试模式已开启'); }
+  行 290:             else { if(_debugPanel) _debugPanel.style.display = 'none'; }
+  行 291:         };
+  行 292: 
+  行 293:         const wlInput = _panel.querySelector('#ag-wl-
+[2026-04-06 19:52:25] RECEIVED | grep "Content-Type" 低配版Agent.js
+[2026-04-06 19:52:25] RESULT | d:\Documents\my\Poker Agent\低配版Agent.js:
+ 行 566:             headers: { 'Content-Type': 'application/json' },
+[2026-04-06 19:55:51] RECEIVED | list
+[2026-04-06 19:55:51] LIST | d:\Documents\my\Poker Agent
+[2026-04-06 19:55:51] RESULT | 目录：d:\Documents\my\Poker Agent
+
+ [DIR] .git
+ [FILE] .gitattributes (66 B)
+ [FILE] .gitignore (28 B)
+ [FILE] LICENSE (16.7 KB)
+ [FILE] LLM 系统提示词.md (2.9 KB)
+ [FILE] README.md (95 B)
+ [DIR] __pycache__
+ [FILE] agent_gui.py (23.7 KB)
+ [FILE] agent_log.txt (194.7 KB)
+ [FILE] agent_server.py (35.1 KB)
+ [FILE] commands.md (4.7 KB)
+ [FILE] test.txt 这是一个测试文件。 (0 B)
+ [FILE] 低配版Agent.js (35.4 KB)
+ [FILE] 待解决问题.md (2.2 KB)
+[2026-04-06 19:56:01] RECEIVED | read LLM 系统提示词.md
+[2026-04-06 19:56:01] READ-CLIPBOARD | LLM 系统提示词.md
+[2026-04-06 19:56:12] RECEIVED | read commands.md
+[2026-04-06 19:56:12] READ-CLIPBOARD | commands.md
+[2026-04-06 19:56:43] RECEIVED | replace commands.md 【CodeSTART】
+
+
+
+
+
+
+        
+
+          
+### replace <文件路径> [选项]
+精确替换文件内的文本。
+
+选项：
+-a ：替换所有（默认只替换第一个）
+-i ：忽略大小写
+
+旧文本和新文本之间，**必须用单独一行的 --- 作为分隔符**。
+
+示例：
+【cmd】replace config.json -a 【CodeSTART】
+
+        
+      
+
+
+"debug": false
+"debug": true
+
+
+
+
+
+
+        
+
+          
+【/CodeEND】
+[2026-04-06 19:56:43] RESULT | 错误：缺少分隔符。旧文本和新文本之间请用单独一行的 【SepTag】 分隔。
+[2026-04-06 19:56:48] RECEIVED | replace config.json -a 【CodeSTART】
+
+        
+      
+
+
+"debug": false
+【SepTag】
+"debug": true
+
+
+
+
+
+
+        
+
+          
+【/CodeEND】
+[2026-04-06 19:56:48] RESULT | 替换失败：[Errno 2] No such file or directory: 'd:\\Documents\\my\\Poker Agent\\config.json'
+[2026-04-06 20:06:09] RECEIVED | replace agent_server.py 【CodeSTART】
+
+
+
+
+
+
+        
+
+          
+    if '\x00' in arg:
+        sep = arg.split('\x00', 1)
+        filepath = safe_path(W, sep[0].strip())
+        content = sep[1]
+    else:
+        sep = arg.split(None, 1)
+        filepath = safe_path(W, sep[0])
+        content = sep[1] if len(sep) > 1 else ''
+    err = _check_permission('create', filepath)
+【SepTag】
+    if '\x00' in arg:
+        sep = arg.split('\x00', 1)
+        filepath = safe_path(W, sep[0].strip())
+        content = sep[1]
+    else:
+        sep = arg.split(None, 1)
+        filepath = safe_path(W, sep[0])
+        content = sep[1] if len(sep) > 1 else ''
+    content = content.replace('TICK3', '
+        
+      
+
+
+')
+err = _check_permission('create', filepath)
+
+
+
+
+
+
+        
+
+          
+【/CodeEND】
+replace agent_server.py 【CodeSTART】
+
+        
+      
+
+
+     err = _check_permission('append', filepath)
+if err: return err
+try:
+os.makedirs(os.path.dirname(filepath) or '.', exist_ok=True)
+with open(filepath, 'a', encoding='utf-8') as f:
+f.write('\n' + content)
+【SepTag】
+content = content.replace('TICK3', '```')
+err = _check_permission('append', filepath)
+if err: return err
+try:
+os.makedirs(os.path.dirname(filepath) or '.', exist_ok=True)
+with open(filepath, 'a', encoding='utf-8') as f:
+f.write('\n' + content)
+
+
+
+
+
+
+        
+
+          
+【/CodeEND】
+[2026-04-06 20:06:09] RESULT | [指令 1] 未找到要替换的文本。
+---
+[指令 2] 未知指令：err
+输入 @@help 查看可用指令列表。
+---
+[指令 3] 未知指令：if
+输入 @@help 查看可用指令列表。
+---
+[指令 4] 未知指令：try:
+输入 @@help 查看可用指令列表。
+---
+[指令 5] 未知指令：os.makedirs(os.path.dirname(filepath)
+输入 @@help 查看可用指令列表。
+---
+[指令 6] 未知指令：with
+输入 @@help 查看可用指令列表。
+---
+[指令 7] 未知指令：f.write('\n'
+输入 @@help 查看可用指令列表。
+---
+[指令 8] 未知指令：【septag】
+输入 @@help 查看可用指令列表。
+---
+[指令 9] 未知指令：content
+输入 @@help 查看可用指令列表。
+---
+[指令 10] 未知指令：err
+输入 @@help 查看可用指令列表。
+---
+[指令 11] 未知指令：if
+输入 @@help 查看可用指令列表。
+---
+[指令 12] 未知指令：try:
+输入 @@help 查看可用指令列表。
+---
+[指令 13] 未知指令：os.makedirs(os.path.dirname(filepath)
+输入 @@help 查看可用指令列表。
+---
+[指令 14] 未知指令：with
+输入 @@help 查看可用指令列表。
+---
+[指令 15] 未知指令：f.write('\n'
+输入 @@help 查看可用指令列表。
+---
+[指令 16] 未知指令：【/codeend】
+输入 @@help 查看可用指令列表。
+[2026-04-06 20:06:21] RECEIVED | replace agent_server.py 【CodeSTART】
+
+        
+      
+
+
+         parts = combined.split('\n【SepTag】\n', 1)
+old_text = parts[0].strip('\n')
+new_text = parts[1].strip('\n') if len(parts) > 1 else ''
+tokens = opts_str.split()
+【SepTag】
+parts = combined.split('\n【SepTag】\n', 1)
+old_text = parts[0].strip('\n')
+new_text = parts[1].strip('\n') if len(parts) > 1 else ''
+old_text = old_text.replace('TICK3', '')         new_text = new_text.replace('TICK3', '')
+tokens = opts_str.split()
+
+
+
+
+
+
+        
+
+          
+【/CodeEND】
+[2026-04-06 20:06:21] RESULT | 未找到要替换的文本。
+[2026-04-06 20:06:30] RECEIVED | replace agent_server.py 【CodeSTART】
+
+        
+      
+
+
+         if found_idx == -1:
+return f'未找到定位文本：{pos_val}'
+if pos_type == 'after':
+insert_idx = found_idx + 1
+else:
+insert_idx = found_idx
+if not insert_text.endswith('\n'): insert_text += '\n'
+【SepTag】
+if found_idx == -1:
+return f'未找到定位文本：{pos_val}'
+if pos_type == 'after':
+insert_idx = found_idx + 1
+else:
+insert_idx = found_idx
+insert_text = insert_text.replace('TICK3', '```')
+if not insert_text.endswith('\n'): insert_text += '\n'
+
+
+
+
+
+
+        
+
+          
+【/CodeEND】
+[2026-04-06 20:06:30] RESULT | 未找到要替换的文本。
+[2026-04-06 20:10:21] RECEIVED | create 测试文件.txt
+【CodeSTART】
+
+        
+      
+
+
+白日依山尽，
+黄河入海流。
+欲穷千里目，
+更上一层楼。
+【/CodeEND】
+create rotating-cube.html
+【CodeSTART】
+
+
+
+
+
+
+        
+
+          
+TICK3html
+<!DOCTYPE html>
+(something)
+</html>
+TICK3
+【/CodeEND】
+[2026-04-06 20:10:21] CREATE | d:\Documents\my\Poker Agent\测试文件.txt
+[2026-04-06 20:10:21] RESULT | [指令 1] 已创建文件：d:\Documents\my\Poker Agent\测试文件.txt（28 字符）
+---
+[指令 2] 未知指令：【codestart】
+输入 @@help 查看可用指令列表。
+---
+[指令 3] 未知指令：tick3html
+输入 @@help 查看可用指令列表。
+---
+[指令 4] 未知指令：<!doctype
+输入 @@help 查看可用指令列表。
+---
+[指令 5] 未知指令：(something)
+输入 @@help 查看可用指令列表。
+---
+[指令 6] 未知指令：</html>
+输入 @@help 查看可用指令列表。
+---
+[指令 7] 未知指令：tick3
+输入 @@help 查看可用指令列表。
+---
+[指令 8] 未知指令：【/codeend】
+输入 @@help 查看可用指令列表。
+[2026-04-06 20:30:22] RECEIVED | read commands.md
+[2026-04-06 20:30:22] READ-CLIPBOARD | commands.md
+[2026-04-06 20:34:00] RECEIVED | replace commands.md 【CodeSTART】
+
+
+
+
+
+
+        
+
+          
+【cmd】find test.txt -i -w 【CodeSTART】 TICK3 hello world TICK3 【/CodeEND】
+find test.txt -i -w 【CodeSTART】
+hello world
+【/CodeEND】
+replace commands.md 【CodeSTART】
+
+
+
+
+
+
+        
+
+          
+旧文本和新文本之间，**必须用单独一行的 --- 作为分隔符**。
+
+示例：
+【cmd】replace config.json -a 【CodeSTART】 TICK3 "debug": false --- "debug": true TICK3 【/CodeEND】
+replace config.json -a 【CodeSTART】
+"debug": false
+【SepTag】
+"debug": true
+【/CodeEND】
+[2026-04-06 20:34:00] RESULT | [指令 1] 错误：缺少分隔符。旧文本和新文本之间请用单独一行的 【SepTag】 分隔。
+---
+[指令 2] 未知指令：hello
+输入 @@help 查看可用指令列表。
+---
+[指令 3] 未知指令：【/codeend】
+输入 @@help 查看可用指令列表。
+---
+[指令 4] 错误：缺少分隔符。旧文本和新文本之间请用单独一行的 【SepTag】 分隔。
+---
+[指令 5] 未知指令："debug":
+输入 @@help 查看可用指令列表。
+---
+[指令 6] 未知指令：【septag】
+输入 @@help 查看可用指令列表。
+---
+[指令 7] 未知指令："debug":
+输入 @@help 查看可用指令列表。
+---
+[指令 8] 未知指令：【/codeend】
+输入 @@help 查看可用指令列表。
+[2026-04-06 20:34:09] RECEIVED | replace commands.md 【CodeSTART】
+
+
+
+
+
+
+        
+
+          
+【cmd】insert main.py -after 10 【CodeSTART】 TICK3 print("插入的内容") TICK3 【/CodeEND】
+insert main.py -after 10 【CodeSTART】
+print("插入的内容")
+【/CodeEND】
+replace commands.md 【CodeSTART】
+
+
+
+
+
+
+        
+
+          
+【cmd】insert main.py -before "def main():" 【CodeSTART】 TICK3 # 这是新插入的注释 TICK3 【/CodeEND】
+insert main.py -before "def main():" 【CodeSTART】
+# 这是新插入的注释
+【/CodeEND】
+[2026-04-06 20:34:09] RESULT | [指令 1] 错误：缺少分隔符。旧文本和新文本之间请用单独一行的 【SepTag】 分隔。
+---
+[指令 2] 未知指令：print("插入的内容")
+输入 @@help 查看可用指令列表。
+---
+[指令 3] 未知指令：【/codeend】
+输入 @@help 查看可用指令列表。
+---
+[指令 4] 错误：缺少分隔符。旧文本和新文本之间请用单独一行的 【SepTag】 分隔。
+---
+[指令 5] 未知指令：【/codeend】
+输入 @@help 查看可用指令列表。
+[2026-04-06 20:34:16] RECEIVED | replace commands.md 【CodeSTART】
+
+
+
+
+
+
+        
+
+          
+### create
+创建一个新文件并写入内容。文件路径写在指令同行，多行内容必须使用 【CodeSTART】 和 【/CodeEND】 标签包裹（内部仍需保留"TICK3"以维持代码缩进）。
+
+格式：
+【cmd】create <文件路径> 【CodeSTART】
+TICK3
+<文件内容>
+TICK3
+【/CodeEND】
+【cmd】
+【SepTag】
+### create
+创建一个新文件并写入内容。文件路径写在指令同行，多行内容必须使用 【CodeSTART】 和 【/CodeEND】 标签包裹，下一行写一个单独的 TICK3 防止缩进丢失。
+
+格式：
+【cmd】create <文件路径> 【CodeSTART】
+TICK3
+<文件内容>
+【/CodeEND】
+【cmd】
+
+        
+      
+
+
+【/CodeEND】
+replace commands.md 【CodeSTART】
+
+
+
+
+
+
+        
+
+          
+【cmd】create hello.txt 【CodeSTART】 TICK3 Hello World! 这是第二行。 TICK3 【/CodeEND】
+create hello.txt 【CodeSTART】
+Hello World! 这是第二行。
+【/CodeEND】
+replace commands.md 【CodeSTART】
+
+
+
+
+
+
+        
+
+          
+格式：
+【cmd】append <文件路径> 【CodeSTART】
+TICK3
+<追加内容>
+TICK3
+【/CodeEND】
+【cmd】
+【SepTag】
+格式：
+【cmd】append <文件路径> 【CodeSTART】
+TICK3
+<追加内容>
+【/CodeEND】
+【cmd】
+
+        
+      
+
+
+【/CodeEND】
+[2026-04-06 20:34:17] RESULT | [指令 1] 错误：缺少分隔符。旧文本和新文本之间请用单独一行的 【SepTag】 分隔。
+---
+[指令 2] 未知指令：格式：
+输入 @@help 查看可用指令列表。
+---
+[指令 3] 未知指令：【cmd】create
+输入 @@help 查看可用指令列表。
+---
+[指令 4] 未知指令：tick3
+输入 @@help 查看可用指令列表。
+---
+[指令 5] 未知指令：<文件内容>
+输入 @@help 查看可用指令列表。
+---
+[指令 6] 未知指令：tick3
+输入 @@help 查看可用指令列表。
+---
+[指令 7] 未知指令：【/codeend】
+输入 @@help 查看可用指令列表。
+---
+[指令 8] 未知指令：【cmd】
+输入 @@help 查看可用指令列表。
+---
+[指令 9] 未知指令：【septag】
+输入 @@help 查看可用指令列表。
+---
+[指令 10] 未知指令：创建一个新文件并写入内容。文件路径写在指令同行，多行内容必须使用
+输入 @@help 查看可用指令列表。
+---
+[指令 11] 未知指令：格式：
+输入 @@help 查看可用指令列表。
+---
+[指令 12] 未知指令：【cmd】create
+输入 @@help 查看可用指令列表。
+---
+[指令 13] 未知指令：tick3
+输入 @@help 查看可用指令列表。
+---
+[指令 14] 未知指令：<文件内容>
+输入 @@help 查看可用指令列表。
+---
+[指令 15] 未知指令：【/codeend】
+输入 @@help 查看可用指令列表。
+---
+[指令 16] 未知指令：【cmd】
+输入 @@help 查看可用指令列表。
+---
+[指令 17] 未知指令：【/codeend】
+输入 @@help 查看可用指令列表。
+---
+[指令 18] 错误：缺少分隔符。旧文本和新文本之间请用单独一行的 【SepTag】 分隔。
+---
+[指令 19] 未知指令：hello
+输入 @@help 查看可用指令列表。
+---
+[指令 20] 未知指令：【/codeend】
+输入 @@help 查看可用指令列表。
+---
+[指令 21] 错误：缺少分隔符。旧文本和新文本之间请用单独一行的 【SepTag】 分隔。
+---
+[指令 22] 未知指令：【septag】
+输入 @@help 查看可用指令列表。
+---
+[指令 23] 未知指令：格式：
+输入 @@help 查看可用指令列表。
+---
+[指令 24] 未知指令：【cmd】append
+输入 @@help 查看可用指令列表。
+---
+[指令 25] 未知指令：tick3
+输入 @@help 查看可用指令列表。
+---
+[指令 26] 未知指令：<追加内容>
+输入 @@help 查看可用指令列表。
+---
+[指令 27] 未知指令：【/codeend】
+输入 @@help 查看可用指令列表。
+---
+[指令 28] 未知指令：【cmd】
+输入 @@help 查看可用指令列表。
+---
+[指令 29] 未知指令：【/codeend】
+输入 @@help 查看可用指令列表。
+[2026-04-06 20:34:30] RECEIVED | replace commands.md 【CodeSTART】
+
+
+
+
+
+
+        
+
+          
+## 注意事项
+- 写入多行内容时，必须使用 【CodeSTART】 和 【/CodeEND】 包裹（内部保留"TICK3"代码块以防止缩进丢失）。
+- 代码块内的一切内容都会原封不动写入文件，包括空行、空格、特殊符号。
+- replace 指令中，新旧内容的分界线必须是**单独一行的 ---**。
+- 危险操作（delete、exec）会记录日志。
+【SepTag】
+## 注意事项
+- 写入多行内容时，必须使用 【CodeSTART】 和 【/CodeEND】 包裹，下一行必须写一个单独的 TICK3 （防缩进用，不会写入文件）。
+- 如果要写入的内容本身包含三个反引号，请用 TICK3 代替（后端会自动还原）。
+- 代码块内的一切内容都会原封不动写入文件，包括空行、空格、特殊符号。
+- replace 指令中，新旧内容的分界线必须是**单独一行的 【SepTag】**。
+- 危险操作（delete、exec）会记录日志。
+
+        
+      
+
+
+【/CodeEND】
+[2026-04-06 20:34:30] RESULT | [指令 1] 错误：缺少分隔符。旧文本和新文本之间请用单独一行的 【SepTag】 分隔。
+---
+[指令 2] 未知指令：-
+输入 @@help 查看可用指令列表。
+---
+[指令 3] 未知指令：-
+输入 @@help 查看可用指令列表。
+---
+[指令 4] 未知指令：【septag】
+输入 @@help 查看可用指令列表。
+---
+[指令 5] 未知指令：-
+输入 @@help 查看可用指令列表。
+---
+[指令 6] 未知指令：-
+输入 @@help 查看可用指令列表。
+---
+[指令 7] 未知指令：-
+输入 @@help 查看可用指令列表。
+---
+[指令 8] 未知指令：-
+输入 @@help 查看可用指令列表。
+---
+[指令 9] 未知指令：-
+输入 @@help 查看可用指令列表。
+---
+[指令 10] 未知指令：【/codeend】
+输入 @@help 查看可用指令列表。
+[2026-04-06 20:41:24] RECEIVED | /
+find test.txt -i -w 【CodeSTART】 ``` hello world ``` 【/CodeEND】\n
+find test.txt -i -w 【CodeSTART】\nhello world\n【/CodeEND】\n
+[2026-04-06 20:41:33] RECEIVED | replace config.json -a 【CodeSTART】 ```\n"debug": false\n---\n"debug": true\n``` 【/CodeEND】\n
+replace config.json -a 【CodeSTART】\n"debug": false\n【SepTag】\n"debug": true\n【/CodeEND】\n
+insert main.py -after 10 【CodeSTART】 ``` print("插入的内容") ``` 【/CodeEND】\n
+insert main.py -after 10 【CodeSTART】\nprint("插入的内容")\n【/CodeEND】\n
+[2026-04-06 20:41:33] RESULT | [指令 1] 错误：缺少分隔符。旧文本和新文本之间请用单独一行的 【SepTag】 分隔。
+---
+[指令 2] 插入失败：[Errno 2] No such file or directory: 'd:\\Documents\\my\\Poker Agent\\main.py'
+[2026-04-06 20:41:41] RECEIVED | insert main.py -before "def main():" 【CodeSTART】 ``` # 这是新插入的注释 ``` 【/CodeEND】\n
+insert main.py -before "def main():" 【CodeSTART】\n# 这是新插入的注释\n【/CodeEND】\n
+create <文件路径> 【CodeSTART】\n\``\n<文件内容>\n```\n【/CodeEND】\n
+create <文件路径> 【CodeSTART】\nTICK3\n<文件内容>\n【/CodeEND】\n
+[2026-04-06 20:41:41] RESULT | [指令 1] 插入失败：[Errno 2] No such file or directory: 'd:\\Documents\\my\\Poker Agent\\main.py'
+---
+[指令 2] 创建失败：[Errno 22] Invalid argument: 'd:\\Documents\\my\\Poker Agent\\<文件路径>'
+[2026-04-06 20:41:49] RECEIVED | create hello.txt 【CodeSTART】 ```\nHello World! 这是第二行。\n``` 【/CodeEND】\n
+create hello.txt 【CodeSTART】\nHello World! 这是第二行。\n【/CodeEND】\n
+append <文件路径> 【CodeSTART】\n\``\n<追加内容>\n```\n【/CodeEND】\n
+append <文件路径> 【CodeSTART】\nTICK3\n<追加内容>\n【/CodeEND】\n
+[2026-04-06 20:41:49] CREATE | d:\Documents\my\Poker Agent\hello.txt
+[2026-04-06 20:41:49] RESULT | [指令 1] 已创建文件：d:\Documents\my\Poker Agent\hello.txt（52 字符）
+---
+[指令 2] 追加失败：[Errno 22] Invalid argument: 'd:\\Documents\\my\\Poker Agent\\<文件路径>'
+[2026-04-06 21:21:04] RECEIVED | create commands.md 【CodeSTART】
+TICK3
+Agent 指令列表
+用法：在 【cmd】和
+@@help
+count main.py
+find test.txt -i -w 【CodeSTART】
+hello world
+【/CodeEND】
+replace config.json -a 【CodeSTART】
+"debug": false
+【SepTag】
+"debug": true
+【/CodeEND】
+insert main.py -after 10 【CodeSTART】
+print("插入的内容")
+【/CodeEND】
+insert main.py -before "def main():" 【CodeSTART】
+这是新插入的注释
+【/CodeEND】
+grep "TODO" src
+head log.txt 20
+tail log.txt 50
+create <文件路径> 【CodeSTART】
+TICK3
+<文件内容>
+【/CodeEND】
+create <文件路径> <单行内容>
+create hello.txt 【CodeSTART】
+Hello World! 这是第二行。
+【/CodeEND】
+read notes.txt
+append <文件路径> 【CodeSTART】
+TICK3
+<追加内容>
+【/CodeEND】
+append <文件路径> <单行内容>
+delete temp.txt
+copy notes.txt backup.txt
+move old.txt new.txt
+list
+list src
+mkdir src/modules
+exec python --version
+exec dir
+run script.py
+get https://httpbin.org/get
+download https://example.com/img.png images/img.png
+[2026-04-06 21:21:04] CREATE | d:\Documents\my\Poker Agent\commands.md
+[2026-04-06 21:21:04] CREATE | d:\Documents\my\Poker Agent\hello.txt
+[2026-04-06 21:21:04] LIST | d:\Documents\my\Poker Agent
+[2026-04-06 21:21:04] MKDIR | d:\Documents\my\Poker Agent\src\modules
+[2026-04-06 21:21:04] EXEC | python --version
+[2026-04-06 21:21:04] EXEC | dir
+[2026-04-06 21:21:07] GET | https://httpbin.org/get
+[2026-04-06 21:21:08] RESULT | [指令 1] 已创建文件：d:\Documents\my\Poker Agent\commands.md（92 字符）
+---
+[指令 2] 未知指令："debug":
+输入 @@help 查看可用指令列表。
+---
+[指令 3] 未知指令：【septag】
+输入 @@help 查看可用指令列表。
+---
+[指令 4] 未知指令："debug":
+输入 @@help 查看可用指令列表。
+---
+[指令 5] 未知指令：【/codeend】
+输入 @@help 查看可用指令列表。
+---
+[指令 6] 插入失败：[Errno 2] No such file or directory: 'd:\\Documents\\my\\Poker Agent\\main.py'
+---
+[指令 7] 未知指令：这是新插入的注释
+输入 @@help 查看可用指令列表。
+---
+[指令 8] 未知指令：【/codeend】
+输入 @@help 查看可用指令列表。
+---
+[指令 9] 错误：路径不存在 d:\Documents\my\Poker Agent\src
+---
+[指令 10] 读取失败：[Errno 2] No such file or directory: 'd:\\Documents\\my\\Poker Agent\\log.txt'
+---
+[指令 11] 读取失败：[Errno 2] No such file or directory: 'd:\\Documents\\my\\Poker Agent\\log.txt'
+---
+[指令 12] 创建失败：[Errno 22] Invalid argument: 'd:\\Documents\\my\\Poker Agent\\<文件路径>'
+---
+[指令 13] 已创建文件：d:\Documents\my\Poker Agent\hello.txt（20 字符）
+---
+[指令 14] 追加失败：[Errno 22] Invalid argument: 'd:\\Documents\\my\\Poker Agent\\<文件路径>'
+---
+[指令 15] 错误：文件不存在：d:\Documents\my\Poker Agent\temp.txt
+---
+[指令 16] 复制失败：[WinError 2] 系统找不到指定的文件。
+---
+[指令 17] 移动失败：[WinError 2] 系统找不到指定的文件。
+---
+[指令 18] 目录：d:\Documents\my\Poker Agent
+
+ [DIR] .git
+ [FILE] .gitattributes (66 B)
+ [FILE] .gitignore (28 B)
+ [FILE] LICENSE (16.7 KB)
+ [FILE] LLM 系统提示词.md (3.2 KB)
+ [FILE] README.md (95 B)
+ [DIR] __pycache__
+ [FILE] agent_gui.py (23.7 KB)
+ [FILE] agent_log.txt (213.6 KB)
+ [FILE] agent_server.py (35.4 KB)
+ [FILE] commands.md (124 B)
+ [FILE] hello.txt (32 B)
+ [FILE] test.txt 这是一个测试文件。 (0 B)
+ [FILE] 低配版Agent.js (35.4 KB)
+ [FILE] 待解决问题.md (2.2 KB)
+ [FILE] 测试文件.txt (79 B)
+---
+[指令 19] 错误：目录不存在：d:\Documents\my\Poker Agent\src
+---
+[指令 20] 已创建目录：d:\Documents\my\Poker Agent\src\modules
+---
+[指令 21] Python 3.14.2
+---
+[指令 22] 'dir"' 不是内部或外部命令，也不是可运行的程序
+或批处理文件。
+---
+[指令 23] 错误：脚本不存在：d:\Documents\my\Poker Agent\script.py
+---
+[指令 24] {
+  "args": {}, 
+  "headers": {
+    "Accept-Encoding": "identity", 
+    "Host": "httpbin.org", 
+    "User-Agent": "Agent/1.0", 
+    "X-Amzn-Trace-Id": "Root=1-69d3b343-6b611180721ce1c23548666c"
+  }, 
+  "origin": "111.25.183.206", 
+  "url": "https://httpbin.org/get"
+}
+
+---
+[指令 25] 下载失败：HTTP Error 404: Not Found
+[2026-04-07 16:30:11] RECEIVED | insert commands.md -before "### mkdir"
+【CodeSTART】
+TICK33
+treelist [目录路径]
+以树形结构列出目录下的所有文件和子目录。不传路径时列出当前工作目录。
+示例：
+【cmd】treelist
+treelist src
+[2026-04-07 16:30:11] INSERT | d:\Documents\my\Poker Agent\commands.md 行 165
+[2026-04-07 16:30:11] RESULT | 已在 d:\Documents\my\Poker Agent\commands.md 的第 165 行处插入内容。
