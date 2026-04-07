@@ -162,12 +162,6 @@ Hello World!
 【cmd】list【/cmd】
 【cmd】list src【/cmd】
 
- ```3
-treelist [目录路径]
-以树形结构列出目录下的所有文件和子目录。不传路径时列出当前工作目录。
-示例：
-【cmd】treelist
-treelist src
 ### mkdir <目录路径>
 创建目录（支持多级创建）。
 示例：
