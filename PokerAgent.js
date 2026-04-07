@@ -1,8 +1,8 @@
 // ==UserScript==
-// @name         低配版Agent
+// @name         PokerAgent
 // @namespace    http://tampermonkey.net/
 // @version      3.1
-// @description  拦截LLM输出中的【cmd】指令，发给本地执行。修复卡死与长指令误杀问题。
+// @description  Poker Agent 的网页端配套脚本，负责从聊天界面捕获指令并发送到本地服务，提供配置面板和调试日志功能。
 // @match        *://*/*
 // @grant        GM_registerMenuCommand
 // @grant        GM_xmlhttpRequest
