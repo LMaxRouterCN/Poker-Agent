@@ -470,6 +470,7 @@ class AgentGUI:
     def _toggle_permission(self):
         enabled = self.var_perm.get()
         agent_server.permission_mgr.enabled = enabled
+        agent_server._push_config()
         status = "已启用" if enabled else "已禁用"
         print(f'[Agent] 目录限制{status}')
 
