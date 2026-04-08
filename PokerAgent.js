@@ -2,6 +2,7 @@
 // @name         PokerAgent
 // @namespace    http://tampermonkey.net/
 // @version      4.0
+// @author       LMaxRouterCN
 // @description  Poker Agent 网页端配套脚本，支持层级穿透选择(左键向上,右键向下)，直角UI风格。
 // @match        *://*/*
 // @grant        GM_registerMenuCommand
