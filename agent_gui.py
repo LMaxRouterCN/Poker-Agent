@@ -91,7 +91,9 @@ class _ServerThread(threading.Thread):
 
     def shutdown(self):
         if self.server:
-            threading.Thread(target=self.server.shutdown, daemon=True).start()
+            self.server.shutdown()
+            self.server.server_close()
+
 
 # ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 #  GUI 主类
@@ -416,7 +418,9 @@ class AgentGUI:
             print('[Agent] 正在重启服务...')
             if self._server:
                 self._server.shutdown()
-            self.root.after(600, self._start_server)
+                self._server.join(timeout=2)
+            self.root.after(800, self._start_server)
+
 
     # ──────── 工作目录选择 ────────
 
