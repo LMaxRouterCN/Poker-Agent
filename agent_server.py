@@ -377,7 +377,7 @@ def execute_line(line):
             quote = stripped[0]
             end = stripped.find(quote, 1)
             if end == -1:
-                return '错误：缺少闭合引号。用法：grep [-s] "关键词" <路径或文件>'
+                return '错误：缺少闭合引号。用法：grep [-s] "关键词1|关键词2" <路径或文件>'
             keyword = stripped[1:end]
             rest = stripped[end+1:].strip().split()
             strip_indent = '-s' in rest
@@ -388,19 +388,23 @@ def execute_line(line):
             non_opts = [t for t in tokens if not t.startswith('-')]
             strip_indent = '-s' in opts
             if len(non_opts) < 2:
-                return '错误：缺少参数。用法：grep [-s] <关键词> <路径或文件>'
+                return '错误：缺少参数。用法：grep [-s] <关键词1|关键词2> <路径或文件>'
             keyword = non_opts[0]
             if len(keyword) >= 2 and keyword[0] in ('"', "'") and keyword[-1] == keyword[0]:
                 keyword = keyword[1:-1]
             target_str = non_opts[-1]
-        cmp_kw = keyword.lstrip() if strip_indent else keyword
         if not target_str:
             return '错误：缺少文件路径。'
+        kw_list = [k.strip() for k in keyword.split('|') if k.strip()]
+        if not kw_list:
+            return '错误：关键词为空。'
+        if len(kw_list) == 1:
+            cmp_kws = kw_list
+        else:
+            cmp_kws = kw_list
         target = safe_path(W, target_str)
-        
         err = _check_permission('grep', target)
         if err: return err
-        
         try:
             if os.path.isfile(target):
                 with open(target, 'r', encoding='utf-8') as f:
@@ -408,14 +412,15 @@ def execute_line(line):
                 results = []
                 for idx, line in enumerate(lines, 1):
                     check = line.lstrip() if strip_indent else line
-                    if cmp_kw in check:
-                        results.append(f' 行 {idx}: {line.rstrip()}')
+                    matched = any(kw in check for kw in cmp_kws)
+                    if matched:
+                        hit = [kw for kw in cmp_kws if kw in check]
+                        results.append(f' 行 {idx}: {line.rstrip()}  ← {hit}')
                 if results:
                     output = [f'{target}:']
                     output.extend(results)
                     return '\n'.join(output)
                 return f'{target}: 无匹配'
-                
             elif os.path.isdir(target):
                 output = []
                 for root, dirs, files in os.walk(target):
@@ -425,10 +430,11 @@ def execute_line(line):
                             with open(fpath, 'r', encoding='utf-8', errors='ignore') as f:
                                 for idx, line in enumerate(f, 1):
                                     check = line.lstrip() if strip_indent else line
-                                    if cmp_kw in check:
-                                        output.append(f'{fpath}:{idx}: {line.rstrip()}')
-                        except:
-                            pass
+                                    matched = any(kw in check for kw in cmp_kws)
+                                    if matched:
+                                        hit = [kw for kw in cmp_kws if kw in check]
+                                        output.append(f'{fpath}:{idx}: {line.rstrip()}  ← {hit}')
+                        except: pass
                 if output:
                     return '\n'.join(output)
                 return f'在目录 {target} 中未找到匹配。'
