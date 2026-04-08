@@ -1056,3 +1056,161 @@ function goodbye() {
 
 // TODO: fix this later
 // TODO: refactor module
+[2026-04-08 20:26:44] RECEIVED | list
+[2026-04-08 20:26:44] LIST | d:\Documents\my\Poker Agent
+[2026-04-08 20:26:44] RESULT | 目录：d:\Documents\my\Poker Agent
+
+ [DIR] .git
+ [FILE] .gitattributes (66 B)
+ [FILE] .gitignore (28 B)
+ [FILE] LICENSE (16.7 KB)
+ [FILE] Poker Agent LLM-系统提示词.md (2.1 KB)
+ [FILE] PokerAgent.js (61.3 KB)
+ [FILE] README.md (95 B)
+ [DIR] __pycache__
+ [FILE] agent_gui.py (23.7 KB)
+ [FILE] agent_log.txt (23.2 KB)
+ [FILE] agent_server.py (35.5 KB)
+ [FILE] commands.md (4.8 KB)
+ [FILE] test_agent.txt (171 B)
+ [FILE] test_complex.txt (241 B)
+[2026-04-08 20:26:59] RECEIVED | grep "agent-exec" PokerAgent.js
+[2026-04-08 20:26:59] RESULT | d:\Documents\my\Poker Agent\PokerAgent.js:
+ 行 27:       apiUrl: 'http://127.0.0.1:9966/agent-exec',
+ 行 1001:       const pollUrl = c.apiUrl.replace('/agent-exec', '/agent-config-poll');
+[2026-04-08 20:27:15] RECEIVED | grep "fetch|agent.exec|response|innerHTML|append" PokerAgent.js -s
+[2026-04-08 20:27:15] RESULT | 错误：缺少文件路径。
+[2026-04-08 20:28:09] RECEIVED | grep "fetch" PokerAgent.js
+[2026-04-08 20:28:09] RESULT | d:\Documents\my\Poker Agent\PokerAgent.js: 无匹配
+[2026-04-08 20:28:24] RECEIVED | grep "XMLHttpRequest" PokerAgent.js
+[2026-04-08 20:28:24] RESULT | d:\Documents\my\Poker Agent\PokerAgent.js: 无匹配
+[2026-04-08 20:29:26] RECEIVED | grep "GM_xmlhttpRequest" PokerAgent.js
+grep "postMessage" PokerAgent.js
+[2026-04-08 20:29:26] RESULT | [指令 1] d:\Documents\my\Poker Agent\PokerAgent.js:
+ 行 8: // @grant        GM_xmlhttpRequest
+ 行 1002:       GM_xmlhttpRequest({
+ 行 1182:       GM_xmlhttpRequest({
+---
+[指令 2] d:\Documents\my\Poker Agent\PokerAgent.js: 无匹配
+[2026-04-08 20:29:35] RECEIVED | read PokerAgent.js 990 1050
+[2026-04-08 20:29:35] RESULT | 错误：文件不存在：d:\Documents\my\Poker Agent\PokerAgent.js 990 1050
+[2026-04-08 20:31:33] RECEIVED | read PokerAgent.js
+[2026-04-08 20:31:33] READ-CLIPBOARD | PokerAgent.js
+[2026-04-08 20:44:11] RECEIVED | replace PokerAgent.js
+let _accumText = '';
+async function _fillAndSend(text) {
+text = '[Poker Agent] ' + text;
+_accumText = _accumText ? _accumText + '\n\n' + text : text;
+if (_fillTimeout) clearTimeout(_fillTimeout);
+const c = cfgLoad();
+const input = document.querySelector(c.selInputBox);
+const btn = document.querySelector(c.selSendButton);
+if (!input || !btn) {
+log('ERR', '找不到输入框或发送按钮');
+return;
+}
+log('INFO', '正在模拟输入并发送…');
+_directInput(input, _accumText);
+const captured = _accumText;
+await new Promise(r => {
+_fillTimeout = setTimeout(() => {
+_fillTimeout = null;
+r();
+}, 100);
+});
+if (_accumText !== captured) return;
+_accumText = '';
+await _smartWait(input, { expectValue: captured });
+if (c.autoSendByEnter) {
+try {
+_trySendByEnter(input);
+} catch (err) {
+log('ERR', 模拟回车发送失败: ${err.message});
+}
+}
+try {
+btn.click();
+} catch (err) {
+log('ERR', 点击发送失败: ${err.message});
+}
+}
+let _accumText = '';
+let _sending = false;
+async function _fillAndSend(text) {
+text = '[Poker Agent] ' + text;
+_accumText = _accumText ? _accumText + '\n\n' + text : text;
+if (_fillTimeout) clearTimeout(_fillTimeout);
+const c = cfgLoad();
+const input = document.querySelector(c.selInputBox);
+const btn = document.querySelector(c.selSendButton);
+if (!input || !btn) {
+log('ERR', '找不到输入框或发送按钮');
+return;
+}
+if (_sending) return;
+_sending = true;
+log('INFO', '正在模拟输入并发送…');
+const captured = _accumText;
+_accumText = '';
+_directInput(input, captured);
+await new Promise(r => {
+_fillTimeout = setTimeout(() => {
+_fillTimeout = null;
+r();
+}, 100);
+});
+await _smartWait(input, { expectValue: captured });
+if (c.autoSendByEnter) {
+try {
+_trySendByEnter(input);
+} catch (err) {
+log('ERR', 模拟回车发送失败: ${err.message});
+}
+}
+try {
+btn.click();
+} catch (err) {
+log('ERR', 点击发送失败: ${err.message});
+}
+_sending = false;
+if (_accumText) _fillAndSend('');
+}
+[2026-04-08 20:44:11] RESULT | [指令 1] 错误：缺少分隔符。旧文本和新文本之间请用单独一行的 【SepTag】 分隔。
+---
+[指令 2] 未知指令：}
+输入 @@help 查看可用指令列表。
+[2026-04-08 21:42:59] RECEIVED | replace PokerAgent.js
+
+
+
+
+
+
+        
+
+          
+        
+      
+
+
+【SepTag】
+[2026-04-08 21:42:59] RESULT | [指令 1] 错误：缺少分隔符。旧文本和新文本之间请用单独一行的 【SepTag】 分隔。
+---
+[指令 2] 未知指令：【septag】
+输入 @@help 查看可用指令列表。
+[2026-04-08 21:46:03] RECEIVED | replace PokerAgent.js
+[2026-04-08 21:49:36] RECEIVED | replace PokerAgent.js
+
+
+
+
+
+
+
+
+
+ 引用
+[2026-04-08 21:49:37] RESULT | [指令 1] 错误：缺少分隔符。旧文本和新文本之间请用单独一行的 【SepTag】 分隔。
+---
+[指令 2] 未知指令：引用
+输入 @@help 查看可用指令列表。

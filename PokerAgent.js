@@ -1381,7 +1381,7 @@
     }
   
     let _accumText = '';
-  
+    let _sending = false;
     async function _fillAndSend(text) {
         text = '[Poker Agent] ' + text;
         _accumText = _accumText ? _accumText + '\n\n' + text : text;
@@ -1389,17 +1389,38 @@
         const c = cfgLoad();
         const input = document.querySelector(c.selInputBox);
         const btn = document.querySelector(c.selSendButton);
-        if (!input || !btn) { log('ERR', '找不到输入框或发送按钮'); return; }
+        if (!input || !btn) {
+            log('ERR', '找不到输入框或发送按钮');
+            return;
+        }
+        if (_sending) return;
+        _sending = true;
         log('INFO', '正在模拟输入并发送...');
-        _directInput(input, _accumText);
         const captured = _accumText;
-        await new Promise(r => { _fillTimeout = setTimeout(() => { _fillTimeout = null; r(); }, 100); });
-        if (_accumText !== captured) return;
         _accumText = '';
+        _directInput(input, captured);
+        await new Promise(r => {
+            _fillTimeout = setTimeout(() => {
+                _fillTimeout = null;
+                r();
+            }, 100);
+        });
         await _smartWait(input, { expectValue: captured });
-        if (c.autoSendByEnter) { try { _trySendByEnter(input); } catch (err) { log('ERR', `模拟回车发送失败: ${err.message}`); } }
-        try { btn.click(); } catch (err) { log('ERR', `点击发送失败: ${err.message}`); }
-      }      
+        if (c.autoSendByEnter) {
+            try {
+                _trySendByEnter(input);
+            } catch (err) {
+                log('ERR', `模拟回车发送失败: ${err.message}`);
+            }
+        }
+        try {
+            btn.click();
+        } catch (err) {
+            log('ERR', `点击发送失败: ${err.message}`);
+        }
+        _sending = false;
+        if (_accumText) _fillAndSend('');
+    }   
   
     /* ================================================================
      * 7. 启动入口
