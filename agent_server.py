@@ -168,10 +168,7 @@ def execute_line(line):
                 j += 1
             opts_str = ' '.join(all_tokens[:j])
             search_text = ' '.join(all_tokens[j:])
-
             
-        old_text = old_text.replace('TICK3', '```')
-        new_text = new_text.replace('TICK3', '```')
         tokens = opts_str.split()
         if not tokens:
             return '错误：缺少文件路径。'
@@ -242,9 +239,11 @@ def execute_line(line):
         opts_str = sep[0].strip()
         combined = sep[1]
         
-        if '\n【SepTag】\n' not in combined:
+        lower_combined = combined.lower()
+        if '\n【septag】\n' not in lower_combined:
             return '错误：缺少分隔符。旧文本和新文本之间请用单独一行的 【SepTag】 分隔。'
-        parts = combined.split('\n【SepTag】\n', 1)
+        idx = lower_combined.find('\n【septag】\n')
+        parts = [combined[:idx], combined[idx + len('\n【SepTag】\n'):]]
         old_text = parts[0].strip('\n')
         new_text = parts[1].strip('\n') if len(parts) > 1 else ''
         
@@ -780,14 +779,14 @@ def agent_exec():
             has_code_start = False
 
             # 情况1：指令行自身包含【CodeSTART】（LLM没换行）
-            if '【CodeSTART】' in lines[i]:
+            if '【codestart】' in lines[i].lower():
                 has_code_start = True
                 clean_line = lines[i].split('【CodeSTART】', 1)[0].strip()
                 parts = clean_line.split(None, 1)
                 cmd = parts[0].lower()
                 arg = parts[1] if len(parts) > 1 else ''
             # 情况2：下一行是【CodeSTART】（标准格式）
-            elif peek < len(lines) and lines[peek].strip() == '【CodeSTART】':
+            elif peek < len(lines) and lines[peek].strip().lower() == '【codestart】':
                 has_code_start = True
                 peek += 1
 
@@ -799,7 +798,7 @@ def agent_exec():
                 while peek < len(lines):
                     ln = lines[peek]
                     # 遇到【/CodeEND】，只取前面的部分（容忍没换行）
-                    if '【/CodeEND】' in ln:
+                    if '【/codeend】' in ln.lower():
                         content_lines.append(ln.split('【/CodeEND】', 1)[0])
                         peek += 1
                         break
@@ -838,6 +837,7 @@ def agent_exec():
             result = execute_line(final_cmd)
             if result is not None:
                 results.append(result)
+            continue
         else:
             result = execute_line(line)
             if result is not None:

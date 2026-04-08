@@ -1,0 +1,13 @@
+ function greet(name) {
+     // added by agent test
+     console.log(`Hello, ${name}!`);
+     return true;
+ }
+
+function goodbye() {
+    console.log("Goodbye");
+    return false;
+}
+
+// TODO: fix this later
+// TODO: refactor module

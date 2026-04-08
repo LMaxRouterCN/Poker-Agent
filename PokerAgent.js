@@ -52,7 +52,7 @@
           whitelist: ['https://chatglm.cn/'],
           debugMode: false,
           defaults: { ...SITE_DEFAULTS },
-          perSite: {}
+         perSite: { 'https://chatglm.cn/' : { ...SITE_DEFAULTS, selChatContainer: 'div.chatScrollContainer' } }
         };
       }
       return _migrateStore(store);
@@ -1069,7 +1069,7 @@
       _lastAnswerEl = null;
       _currentRoundSent.clear();
       const c = cfgLoad();
-      const selector = c.selChatContainer || 'div.chatScrollContainer';
+     const selector = c.selChatContainer;
       let currentContainer = document.querySelector(selector);
       if (!currentContainer) {
         log('WARN', `找不到容器 ${selector}，5秒后重试...`);
@@ -1184,7 +1184,7 @@
         url: c.apiUrl,
         headers: { 'Content-Type': 'application/json' },
         data: JSON.stringify({ command: cmd }),
-        onload(r) {
+        onload: async (r) => {
           if (r.status === 200) {
             try {
               const data = JSON.parse(r.responseText);
@@ -1234,6 +1234,22 @@
       });
     }
   
+    function _smartWait(input, opts = {}) {
+        const { expectValue, checkDOM = false, minWait = 100, maxWait = 3000, interval = 50, stableNeed = 3 } = opts;
+        return new Promise(resolve => {
+          let stable = 0;
+          let domSnap = checkDOM ? input.parentElement?.children.length ?? -1 : -1;
+          const t = setInterval(() => {
+            const valOk = !expectValue || input.value === expectValue;
+            const domOk = !checkDOM || (input.parentElement?.children.length ?? -1) === domSnap;
+            if (valOk && domOk) { stable++; } else { stable = 0; domSnap = checkDOM ? input.parentElement?.children.length ?? -1 : -1; }
+            if (stable >= stableNeed) { clearInterval(t); clearTimeout(safety); resolve(); }
+          }, interval);
+          const safety = setTimeout(() => { clearInterval(t); resolve(); }, maxWait);
+        });
+      }
+      
+
     /* ================================================================
      * 6.5 自动发送滑块
      * ================================================================ */
@@ -1314,7 +1330,7 @@
       if (_toggleEl) { _toggleEl.remove(); _toggleEl = null; }
     }
   
-    function _pasteFile(filename, b64Data) {
+    async function _pasteFile(filename, b64Data) {
       const c = cfgLoad();
       const input = document.querySelector(c.selInputBox);
       const btn = document.querySelector(c.selSendButton);
@@ -1355,13 +1371,10 @@
   
         if (_fillTimeout) { clearTimeout(_fillTimeout); _fillTimeout = null; }
         _accumText = '';
-        _fillTimeout = setTimeout(() => {
-          _fillTimeout = null;
-          if (c.autoSendByEnter) {
-            try { _trySendByEnter(input); } catch (err) { log('ERR', `模拟回车发送失败: ${err.message}`); }
-          }
-          try { btn.click(); } catch (err) { log('ERR', `点击发送失败: ${err.message}`); }
-        }, 1500);
+        await _smartWait(input, { checkDOM: true, minWait: 300 });
+        if (c.autoSendByEnter) { try { _trySendByEnter(input); } catch (err) { log('ERR', `模拟回车发送失败: ${err.message}`); } }
+        try { btn.click(); } catch (err) { log('ERR', `点击发送失败: ${err.message}`); }
+      
       } catch (err) {
         log('ERR', `文件粘贴失败: ${err.message}`);
       }
@@ -1369,28 +1382,24 @@
   
     let _accumText = '';
   
-    function _fillAndSend(text) {
-      text = '[Poker Agent] ' + text;
-      _accumText = _accumText ? _accumText + '\n\n' + text : text;
-      if (_fillTimeout) clearTimeout(_fillTimeout);
-      const c = cfgLoad();
-      const input = document.querySelector(c.selInputBox);
-      const btn = document.querySelector(c.selSendButton);
-      if (!input || !btn) {
-        log('ERR', '找不到输入框或发送按钮');
-        return;
-      }
-      log('INFO', '正在模拟输入并发送...');
-      _directInput(input, _accumText);
-      _fillTimeout = setTimeout(() => {
-        _fillTimeout = null;
+    async function _fillAndSend(text) {
+        text = '[Poker Agent] ' + text;
+        _accumText = _accumText ? _accumText + '\n\n' + text : text;
+        if (_fillTimeout) clearTimeout(_fillTimeout);
+        const c = cfgLoad();
+        const input = document.querySelector(c.selInputBox);
+        const btn = document.querySelector(c.selSendButton);
+        if (!input || !btn) { log('ERR', '找不到输入框或发送按钮'); return; }
+        log('INFO', '正在模拟输入并发送...');
+        _directInput(input, _accumText);
+        const captured = _accumText;
+        await new Promise(r => { _fillTimeout = setTimeout(() => { _fillTimeout = null; r(); }, 100); });
+        if (_accumText !== captured) return;
         _accumText = '';
-        if (c.autoSendByEnter) {
-          try { _trySendByEnter(input); } catch (err) { log('ERR', `模拟回车发送失败: ${err.message}`); }
-        }
+        await _smartWait(input, { expectValue: captured });
+        if (c.autoSendByEnter) { try { _trySendByEnter(input); } catch (err) { log('ERR', `模拟回车发送失败: ${err.message}`); } }
         try { btn.click(); } catch (err) { log('ERR', `点击发送失败: ${err.message}`); }
-      }, 800);
-    }
+      }      
   
     /* ================================================================
      * 7. 启动入口
