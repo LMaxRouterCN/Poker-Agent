@@ -233,20 +233,13 @@ def execute_line(line):
             return f'查找失败：{e}'
 
     elif cmd == 'replace':
-        if '\x00' not in arg:
-            return '错误：缺少参数。用法：replace <路径> [选项] 换行用 【SepTag】 分隔新旧内容'
-        sep = arg.split('\x00', 1)
-        opts_str = sep[0].strip()
-        combined = sep[1]
-        
-        lower_combined = combined.lower()
-        if '\n【septag】\n' not in lower_combined:
-            return '错误：缺少分隔符。旧文本和新文本之间请用单独一行的 【SepTag】 分隔。'
-        idx = lower_combined.find('\n【septag】\n')
-        parts = [combined[:idx], combined[idx + len('\n【SepTag】\n'):]]
-        old_text = parts[0].strip('\n')
-        new_text = parts[1].strip('\n') if len(parts) > 1 else ''
-        
+        parts = arg.split('\x00')
+        if len(parts) >= 3:
+            opts_str = parts[0].strip()
+            old_text = parts[1].strip('\n')
+            new_text = parts[2].strip('\n')
+        else:
+            return '错误：缺少参数。用法：replace <路径> [选项] 后接两个代码块'
         old_text = old_text.replace('TICK3', '```')
         new_text = new_text.replace('TICK3', '```')
         tokens = opts_str.split()
@@ -504,13 +497,26 @@ def execute_line(line):
 
     elif cmd == 'read':
         if not arg.strip():
-            return '错误：缺少文件路径。用法：read <路径>'
-        filepath = safe_path(W, arg.strip())
+            return '错误：缺少文件路径。用法：read <路径> [起始行]-[结束行]'
+        parts = arg.strip().split()
+        filepath = safe_path(W, parts[0])
+        start_line = 0
+        end_line = 0
+        if len(parts) >= 2:
+            try:
+                range_str = parts[1]
+                if '-' in range_str:
+                    s, e = range_str.split('-', 1)
+                    start_line = int(s) if s else 1
+                    end_line = int(e) if e else -1
+                else:
+                    start_line = int(range_str)
+                    end_line = -1
+            except ValueError:
+                return '错误：行号格式不正确。用法：read <路径> [起始行]-[结束行]'
         err = _check_permission('read', filepath)
-        if err:
-            return err
-        # 剪贴板文件模式：返回标记 + 文件名 + base64，由路由层拦截转JSON
-        if clipboard_mode and os.path.isfile(filepath):
+        if err: return err
+        if start_line == 0 and clipboard_mode and os.path.isfile(filepath):
             try:
                 filename = os.path.basename(filepath)
                 with open(filepath, 'rb') as f:
@@ -520,15 +526,30 @@ def execute_line(line):
                 return f'读取失败：{e}'
         try:
             with open(filepath, 'r', encoding='utf-8') as f:
-                content = f.read()
-            log_action('READ', filepath)
-            if len(content) > 5000:
-                return f'{content[:5000]}\n\n...（文件过长，仅显示前 5000 字符，共 {len(content)} 字符）'
-            return content if content else '（文件为空）'
+                lines = f.readlines()
+            if start_line > 0:
+                s_idx = max(0, start_line - 1)
+                e_idx = min(end_line, len(lines)) if end_line > 0 else len(lines)
+                selected = lines[s_idx:e_idx]
+                if not selected:
+                    return f'指定范围内无内容（文件共 {len(lines)} 行）'
+                output = []
+                for i, line in enumerate(selected, start=s_idx + 1):
+                    output.append(f"{i:>5}\t{line.rstrip()}")
+                result = '\n'.join(output)
+                log_action('READ', f'{filepath} 行 {start_line}-{end_line if end_line>0 else "末尾"}')
+                return result
+            else:
+                content = ''.join(lines)
+                log_action('READ', filepath)
+                if len(content) > 5000:
+                    return f'{content[:5000]}\n\n...（文件过长，仅显示前 5000 字符，共 {len(content)} 字符）'
+                return content if content else '（文件为空）'
         except FileNotFoundError:
             return f'错误：文件不存在：{filepath}'
         except Exception as e:
             return f'读取失败：{e}'
+
 
 
     elif cmd == 'append':
@@ -772,6 +793,48 @@ def agent_exec():
         parts = line.split(None, 1)
         cmd = parts[0].lower()
         arg = parts[1] if len(parts) > 1 else ''
+
+        if cmd == 'replace':
+            peek = i + 1
+            blocks = []
+            while peek < len(lines) and len(blocks) < 2:
+                ln = lines[peek]
+                stripped = ln.strip()
+                if stripped.lower() == '【codestart】':
+                    peek += 1
+                    if peek < len(lines) and lines[peek].strip().startswith('```'):
+                        peek += 1
+                    block = []
+                    while peek < len(lines):
+                        bln = lines[peek]
+                        if bln.strip().startswith('```') or '【/codeend】' in bln.lower():
+                            if '【/codeend】' in bln.lower():
+                                block.append(bln.split('【/codeend】', 1)[0])
+                            peek += 1
+                            break
+                        block.append(bln)
+                        peek += 1
+                    blocks.append('\n'.join(block))
+                elif stripped.startswith('```'):
+                    peek += 1
+                    block = []
+                    while peek < len(lines):
+                        bln = lines[peek]
+                        if bln.strip().startswith('```'):
+                            peek += 1
+                            break
+                        block.append(bln)
+                        peek += 1
+                    blocks.append('\n'.join(block))
+                else:
+                    peek += 1
+            if len(blocks) == 2:
+                final_cmd = f"replace {arg} \x00 {blocks[0].strip(chr(10))} \x00 {blocks[1].strip(chr(10))}"
+                result = execute_line(final_cmd)
+                if result is not None:
+                    results.append(result)
+                i = peek
+                continue
 
         if cmd in ('create', 'append', 'replace', 'insert', 'find'):
             peek = i + 1
