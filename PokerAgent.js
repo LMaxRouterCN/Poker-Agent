@@ -1152,63 +1152,67 @@ let _toggleEl = null;
 let _togglePosTimer = null;
 
 function _initAutoSendToggle() {
-    _destroyAutoSendToggle();
-    const c = cfgLoad();
-    if (!c.showAutoSendToggle || !c.selSendButton) return;
-    
-    _toggleEl = document.createElement('div');
-    _toggleEl.id = 'agent-auto-send-toggle';
-    _toggleEl.innerHTML = `
-        <span class="ag-as-label">回车发送</span>
-        <div class="ag-as-track ${c.autoSendByEnter ? 'active' : ''}">
-            <div class="ag-as-thumb"></div>
-        </div>`;
-    document.body.appendChild(_toggleEl);
-    
-    const track = _toggleEl.querySelector('.ag-as-track');
-    // 运行时保存使用 cfgSaveRuntime，自动写入当前网站的实际配置源
-    track.onclick = (e) => {
-        e.stopPropagation();
-        const cfg = cfgLoad();
-        cfg.autoSendByEnter = !cfg.autoSendByEnter;
-        cfgSaveRuntime({ autoSendByEnter: cfg.autoSendByEnter });
-        track.classList.toggle('active', cfg.autoSendByEnter);
-        log('INFO', `回车发送: ${cfg.autoSendByEnter ? '已开启' : '已关闭'}`);
-    };
-    
-    _toggleEl.onclick = (e) => e.stopPropagation();
-    
-    requestAnimationFrame(() => {
-        _updateTogglePosition();
-        _togglePosTimer = setInterval(_updateTogglePosition, 500);
-    });
+  _destroyAutoSendToggle();
+  let c;
+  try { c = cfgLoad(); } catch(e) { console.error('[Agent] cfgLoad异常:', e); return; }
+  if (!c.showAutoSendToggle || !c.selSendButton) return;
+  log('INFO', `🔧 初始化滑块 | showToggle=${c.showAutoSendToggle} | btn=${c.selSendButton.substring(0, 40)}...`);
+  _toggleEl = document.createElement('div');
+  _toggleEl.id = 'agent-auto-send-toggle';
+  _toggleEl.innerHTML = `
+      <span class="ag-as-label">回车发送</span>
+      <div class="ag-as-track ${c.autoSendByEnter ? 'active' : ''}">
+          <div class="ag-as-thumb"></div>
+      </div>`;
+  document.body.appendChild(_toggleEl);
+  const track = _toggleEl.querySelector('.ag-as-track');
+  track.onclick = (e) => {
+      e.stopPropagation();
+      const cfg = cfgLoad();
+      cfg.autoSendByEnter = !cfg.autoSendByEnter;
+      cfgSaveRuntime({ autoSendByEnter: cfg.autoSendByEnter });
+      track.classList.toggle('active', cfg.autoSendByEnter);
+      log('INFO', `回车发送: ${cfg.autoSendByEnter ? '已开启' : '已关闭'}`);
+  };
+  _toggleEl.onclick = (e) => e.stopPropagation();
+  // 关键修复：用 setTimeout 代替 requestAnimationFrame，并确保 interval 一定注册
+  setTimeout(() => {
+      try { _updateTogglePosition(); } catch(e) { console.error('[Agent] 首次定位异常:', e); }
+      // 不管首次是否成功，interval 必须注册，后续会持续修正
+      _togglePosTimer = setInterval(() => {
+          try { _updateTogglePosition(); } catch(e) { console.error('[Agent] 定位轮询异常:', e); }
+      }, 500);
+  }, 100);
 }
 
+
 function _updateTogglePosition() {
-    if (!_toggleEl) return;
-    const c = cfgLoad();
-    const btn = document.querySelector(c.selSendButton);
-    if (!btn) { _toggleEl.style.display = 'none'; return; }
-    
-    const br = btn.getBoundingClientRect();
-    if (br.bottom < 0 || br.top > innerHeight || br.right < 0 || br.left < innerWidth) {
-        _toggleEl.style.display = 'none'; return;
-    }
-    
-    _toggleEl.style.display = 'flex';
-    const tr = _toggleEl.getBoundingClientRect();
-    const pos = c.autoSendTogglePos || 'right';
-    let left, top;
-    
-    switch (pos) { 
-        case 'right': left = br.right; top = br.top + br.height / 2 - tr.height / 2; break; 
-        case 'left': left = br.left - tr.width; top = br.top + br.height / 2 - tr.height / 2; break; 
-        case 'top': left = br.left + br.width / 2 - tr.width / 2; top = br.top - tr.height; break; 
-        case 'bottom': left = br.left + br.width / 2 - tr.width / 2; top = br.bottom; break; 
-    }
-    
-    _toggleEl.style.left = left + 'px'; 
-    _toggleEl.style.top = top + 'px';
+  if (!_toggleEl) return;
+  const c = cfgLoad();
+  const btn = document.querySelector(c.selSendButton);
+  if (!btn) {
+      // 不再直接隐藏，而是等下一轮轮询再试
+      // 页面可能还在渲染，按钮元素可能暂时不存在
+      return;
+  }
+  const br = btn.getBoundingClientRect();
+  if (br.width === 0 && br.height === 0) return; // 元素存在但还没渲染出尺寸
+  if (br.bottom < 0 || br.top > innerHeight || br.right < 0 || br.left > innerWidth) {
+      _toggleEl.style.display = 'none'; 
+      return;
+  }
+  _toggleEl.style.display = 'flex';
+  const tr = _toggleEl.getBoundingClientRect();
+  const pos = c.autoSendTogglePos || 'right';
+  let left, top;
+  switch (pos) { 
+      case 'right': left = br.right; top = br.top + br.height / 2 - tr.height / 2; break; 
+      case 'left': left = br.left - tr.width; top = br.top + br.height / 2 - tr.height / 2; break; 
+      case 'top': left = br.left + br.width / 2 - tr.width / 2; top = br.top - tr.height; break; 
+      case 'bottom': left = br.left + br.width / 2 - tr.width / 2; top = br.bottom; break; 
+  }
+  _toggleEl.style.left = left + 'px'; 
+  _toggleEl.style.top = top + 'px';
 }
 
 function _destroyAutoSendToggle() { 
@@ -1277,6 +1281,8 @@ function initAgent() {
     _lastAnswerEl = null; 
     _currentRoundSent.clear();
     
+    _initAutoSendToggle();
+
     const c = cfgLoad(); 
     const selector = c.selChatContainer;
     let currentContainer = document.querySelector(selector);
@@ -1290,8 +1296,7 @@ function initAgent() {
     _knownAnswers = [...currentContainer.querySelectorAll('.answer')]; 
     _lastAnswerEl = null; 
     _currentRoundSent.clear();
-    _pollConfig(); 
-    _initAutoSendToggle(); 
+    _pollConfig();  
     log('OK', `✅ 监听已启动！`);
     
     // 核心轮询
