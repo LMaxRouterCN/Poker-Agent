@@ -25,15 +25,19 @@
   
   // [新增] 站点级可配置项的默认值（不含全局项 whitelist/debugMode）
   const SITE_DEFAULTS = {
-      apiUrl: 'http://127.0.0.1:9966/agent-exec',
-      selChatContainer: '',
-      selInputBox: '',
-      selSendButton: '',
-      sendBtnIdleFingerprint: '', // 新增：发送按钮空闲态指纹
-      showAutoSendToggle: false,
-      autoSendTogglePos: 'right',
-      autoSendByEnter: false
-  };
+    apiUrl: 'http://127.0.0.1:9966/agent-exec' ,
+    selChatContainer: '',
+    selInputBox: '',
+    selSendButton: '',
+    // 废弃旧的 sendBtnIdleFingerprint，改为多指纹列表
+    sendBtnBusyFingerprints: [], // 忙碌态指纹数组
+    sendBtnIdleFingerprints: [],  // 空闲态指纹数组
+    verifyMode: 'single',         // 'single' 单验证 | 'double' 双验证
+    waitDelayAfterDone: 500,      // 放行前额外延时
+    showAutoSendToggle: false,
+    autoSendTogglePos: 'right',
+    autoSendByEnter: false
+};
   
   // 旧版兼容：完整默认值（含全局项），仅作 cfgLoad 兜底
   const DEFAULTS = {
@@ -44,44 +48,38 @@
   
   // [修改] 存储键升级，触发旧配置自动迁移
   const STORE_KEY = 'low_cost_agent_config_v4';
-  
-  // [新增] 底层存储读取（返回原始 store 对象）
+
   function _loadStore() {
       let store;
       try { store = GM_getValue(STORE_KEY, null); } catch (_) { store = null; }
       if (!store) {
-          return { 
-              whitelist: ['https://chatglm.cn/'], 
-              debugMode: false, 
-              defaults: { ...SITE_DEFAULTS }, 
-              perSite: { 
-                  'https://chatglm.cn/' : { ...SITE_DEFAULTS, selChatContainer: 'div.chatScrollContainer' } 
-              } 
-          };
+          return { whitelist: ['https://chatglm.cn/'] , debugMode: false, defaults: { ...SITE_DEFAULTS }, perSite: { 'https://chatglm.cn/' : { ...SITE_DEFAULTS, selChatContainer: 'div.chatScrollContainer' } } };
       }
       return _migrateStore(store);
   }
   
-  // [新增] 底层存储写入
-  function _saveStore(store) { 
-      GM_setValue(STORE_KEY, store); 
-  }
+  function _saveStore(store) { GM_setValue(STORE_KEY, store); }
   
-  // [新增] 旧版(v3)扁平配置迁移到新版(v4)双层结构
   function _migrateStore(store) {
-      // 已经是新格式（有 defaults 和 perSite 字段）
-      if (store.defaults && store.perSite !== undefined) return store;
-      // 旧格式：扁平对象，所有字段平铺
-      const newStore = { 
-          whitelist: store.whitelist || ['https://chatglm.cn/'], 
-          debugMode: !!store.debugMode, 
-          defaults: { ...SITE_DEFAULTS }, 
-          perSite: {} 
-      };
-      // 旧配置中的站点级字段全部迁移到 defaults
-      for (const key of Object.keys(SITE_DEFAULTS)) { 
-          if (store[key] !== undefined) newStore.defaults[key] = store[key]; 
+      if (store.defaults && store.perSite !== undefined) {
+          // 兼容旧版单指纹：如果有旧字段，强制清空，提示用户重新校准
+          const clearOld = (cfg) => {
+              if (cfg.sendBtnIdleFingerprint !== undefined && cfg.sendBtnIdleFingerprint !== '') {
+                  cfg.sendBtnBusyFingerprints = [];
+                  cfg.sendBtnIdleFingerprints = [];
+                  delete cfg.sendBtnIdleFingerprint;
+              }
+              if (!cfg.sendBtnBusyFingerprints) cfg.sendBtnBusyFingerprints = [];
+              if (!cfg.sendBtnIdleFingerprints) cfg.sendBtnIdleFingerprints = [];
+              if (!cfg.verifyMode) cfg.verifyMode = 'single';
+              if (!cfg.waitDelayAfterDone) cfg.waitDelayAfterDone = 500;
+          };
+          if (store.defaults) clearOld(store.defaults);
+          if (store.perSite) Object.values(store.perSite).forEach(clearOld);
+          return store;
       }
+      const newStore = { whitelist: store.whitelist || ['https://chatglm.cn/'] , debugMode: !!store.debugMode, defaults: { ...SITE_DEFAULTS }, perSite: {} };
+      for (const key of Object.keys(SITE_DEFAULTS)) { if (store[key] !== undefined) newStore.defaults[key] = store[key]; }
       return newStore;
   }
   
@@ -249,9 +247,23 @@
   .ag-as-track.active{background:#818cf8}
   .ag-as-thumb{width:12px;height:12px;background:#d4d4d8;position:absolute;top:1px;left:1px;transition:left .15s;border-radius:0;}
   .ag-as-track.active .ag-as-thumb{left:15px;background:#0f0f23}
-  /* 校准引导条 */
-  #ag-calibrate-bar{position:fixed;top:20px;left:50%;transform:translateX(-50%);background:#1a1b2e;color:#fde68a;border:1px solid #facc15;padding:12px 24px;z-index:2147483647;box-shadow:0 8px 32px rgba(0,0,0,.6);font:13px/1.5 system-ui,sans-serif;display:none;white-space:nowrap;pointer-events:none}
-  #ag-calibrate-bar b{color:#facc15}
+/* --- 校准引导条 --- */
+#ag-calibrate-bar{position:fixed;top:20px;left:50%;transform:translateX(-50%);background:#1a1b2e;color:#fde68a;border:1px solid #facc15;padding:14px 24px;z-index:2147483647;box-shadow:0 8px 32px rgba(0,0,0,.6);font:13px/1.5 system-ui,sans-serif;display:none;flex-direction:column;align-items:center;gap:10px;pointer-events:auto;width:min(600px,90vw)}
+#ag-calibrate-bar b{color:#facc15}
+
+#ag-calibrate-cards{position:fixed;top:100px;left:50%;transform:translateX(-50%);background:#1a1b2e;border:1px solid #3f3f46;z-index:2147483647;box-shadow:0 8px 32px rgba(0,0,0,.6);width:min(220px,45vw);overflow-y:auto;overflow-x:hidden;padding:10px;cursor:move}
+#ag-calibrate-cards::-webkit-scrollbar{width:4px}
+#ag-calibrate-cards::-webkit-scrollbar-thumb{background:#3f3f46}
+.ag-cal-item{display:flex;flex-direction:column;align-items:center;gap:6px;padding:6px;background:#232436;transition:.15s;width:100%;box-sizing:border-box;overflow:hidden}
+.ag-cal-item.selected-busy{background:rgba(244,114,182,.1);outline:1px solid #f472b6}
+.ag-cal-item.selected-idle{background:rgba(134,239,172,.1);outline:1px solid #86efac}
+.ag-cal-clone{width:100%;min-height:40px;overflow:hidden;display:flex;align-items:center;justify-content:center;background:#0f0f23}
+.ag-cal-actions{display:flex;flex-direction:column;gap:4px;width:100%;align-items:center}
+.ag-cal-tag{font-size:10px;padding:2px 8px;border:1px solid #3f3f46;color:#71717a;cursor:pointer;background:none;white-space:nowrap;width:60%;text-align:center}
+.ag-cal-tag:hover{border-color:#818cf8;color:#818cf8}
+.ag-cal-tag.active-busy{border-color:#f472b6;color:#f472b6;background:rgba(244,114,182,.2)}
+.ag-cal-tag.active-idle{border-color:#86efac;color:#86efac;background:rgba(134,239,172,.2)}
+
   `);
   
   /* ================================================================
@@ -667,14 +679,28 @@
                   <div class="ag-row"><input class="ag-inp" id="ag-s-send" value="${esc(editCfg.selSendButton)}" /><button class="ag-btn ag-btn-p" id="ag-pick-send">🖱 选择</button></div>
                   <div id="ag-m-send"></div>
                   <div class="ag-field" id="ag-calibrate-field" style="margin-top:6px; padding:8px; background:#232436; border:1px solid #2e3047; display:${editCfg.selSendButton ? 'block' : 'none'};">
-                      <div style="font-size:12px; color:#a1a1aa; margin-bottom:6px">通过让 AI 回复一次，自动记录按钮状态，用于精准判断 AI 是否输出完毕。</div>
+                      <div style="font-size:12px; color:#a1a1aa; margin-bottom:6px">捕获按钮的各种形态，手动标记【忙碌】(AI输出时)和【空闲】态。</div>
                       <div class="ag-row">
-                          <div id="ag-calibrate-status" style="flex:1; font-size:11px; color:#52525b">${editCfg.sendBtnIdleFingerprint ? '<span style="color:#86efac">✔ 已校准</span>' : '未校准 (多指令并发可能失效)'}</div>
-                          <button class="ag-btn ag-btn-p" id="ag-start-calibrate">${editCfg.sendBtnIdleFingerprint ? '重新校准' : '开始校准'}</button>
+                          <div id="ag-calibrate-status" style="flex:1; font-size:11px; color:#52525b">
+                              忙碌:${(editCfg.sendBtnBusyFingerprints||[]).length}个 | 空闲:${(editCfg.sendBtnIdleFingerprints||[]).length}个
+                          </div>
+                          <button class="ag-btn ag-btn-p" id="ag-start-calibrate">${(editCfg.sendBtnBusyFingerprints||[]).length > 0 ? '重新校准' : '开始校准'}</button>
                       </div>
                   </div>
-              </div>
-              <div class="ag-field" style="margin-top:12px;padding-top:10px;border-top:1px solid #2e3047">
+                  <div class="ag-field" style="margin-top:12px;padding-top:10px;border-top:1px solid #2e3047">
+                      <label>输出完毕判断逻辑</label>
+                      <div class="ag-row" style="margin-bottom:6px">
+                          <input type="radio" name="verifyMode" id="ag-mode-single" value="single" ${editCfg.verifyMode !== 'double' ? 'checked' : ''} />
+                          <label for="ag-mode-single" style="font-size:12px;cursor:pointer;margin-right:12px">单验证 (脱离忙碌即放行)</label>
+                          <input type="radio" name="verifyMode" id="ag-mode-double" value="double" ${editCfg.verifyMode === 'double' ? 'checked' : ''} />
+                          <label for="ag-mode-double" style="font-size:12px;cursor:pointer">双验证 (需进入空闲态)</label>
+                      </div>
+                      <div class="ag-row">
+                          <label style="font-size:12px;color:#71717a;white-space:nowrap">放行前额外延时</label>
+                          <input class="ag-inp" id="ag-wait-delay" type="number" value="${editCfg.waitDelayAfterDone || 500}" style="width:80px" />
+                      </div>
+                  </div>
+
                   <label>自动发送滑块</label>
                   <div class="ag-toggle" style="margin-bottom:6px">
                       <input type="checkbox" id="ag-show-toggle" ${editCfg.showAutoSendToggle ? 'checked' : ''} />
@@ -801,7 +827,13 @@
           siteData.showAutoSendToggle = _panel.querySelector('#ag-show-toggle').checked;
           const activePos = _panel.querySelector('.ag-pos-btn.active'); 
           siteData.autoSendTogglePos = activePos ? activePos.dataset.pos : 'right';
-          siteData.sendBtnIdleFingerprint = editCfg.sendBtnIdleFingerprint;
+          // 保存验证模式与延时
+          siteData.verifyMode = _panel.querySelector('input[name="verifyMode"]:checked').value;
+          siteData.waitDelayAfterDone = parseInt(_panel.querySelector('#ag-wait-delay').value) || 500;
+          // 指纹列表在校准时已通过 cfgSaveRuntime 实时保存，这里直接透传防止被清空
+          siteData.sendBtnBusyFingerprints = editCfg.sendBtnBusyFingerprints || [];
+          siteData.sendBtnIdleFingerprints = editCfg.sendBtnIdleFingerprints || [];
+
           
           if (_editTarget === 'defaults') { 
               s.defaults = siteData; 
@@ -918,86 +950,212 @@ function _getSendBtnFingerprint() {
     return `${el.tagName}|${style}|${cls}|${innerTag}`;
 }
 
-function _startCalibration() {
-    if (_isCalibrating) return;
-    _isCalibrating = true;
-    hidePanel();
-    
-    const bar = document.createElement('div');
-    bar.id = 'ag-calibrate-bar';
-    document.body.appendChild(bar);
-    const updateBar = (msg) => { bar.innerHTML = msg; bar.style.display = 'block'; };
-    
-    updateBar('⏳ <b>校准中(1/3)：</b>正在记录空闲态指纹...');
-    
-    setTimeout(() => {
-        const idleFP = _getSendBtnFingerprint();
-        if (!idleFP || idleFP === 'ELEMENT_MISSING') {
-            updateBar('❌ <b>校准失败：</b>找不到发送按钮或已被隐藏，请重新选择。');
-            setTimeout(() => { bar.remove(); _isCalibrating = false; showPanel(); }, 3000);
-            return;
-        }
-        
-        updateBar('👇 <b>校准中(2/3)：</b>请立即向 AI 发送一条消息（如"你好"），等待它回复...');
-        
-        let changed = false;
-        let timeout = setTimeout(() => {
-          if (!changed) {
-              updateBar('❌ <b>校准超时：</b>60秒内未检测到按钮变化，您选的可能不是发送按钮。');
-              setTimeout(() => { bar.remove(); _isCalibrating = false; showPanel(); }, 3000);
-          }
-      }, 60000);
-
-        
-        const checkChange = setInterval(() => {
-            const currentFP = _getSendBtnFingerprint();
-            if (currentFP !== idleFP) {
-                changed = true;
-                clearTimeout(timeout);
-                clearInterval(checkChange);
-                
-                updateBar('👀 <b>校准中(3/3)：</b>已捕捉到生成状态！请等待 AI 彻底回复完毕...');
-                
-                const checkRestore = setInterval(() => {
-                    const nowFP = _getSendBtnFingerprint();
-                    if (nowFP === idleFP) {
-                        clearInterval(checkRestore);
-                        updateBar('✅ <b>校准成功！</b>已精准锁定 AI 输出状态判断依据。');
-                        // 自动保存到当前配置源（独立配置或默认配置）
-                        cfgSaveRuntime({ sendBtnIdleFingerprint: idleFP });
-                        log('OK', `校准成功，指纹: ${idleFP}`);
-                        setTimeout(() => { bar.remove(); _isCalibrating = false; showPanel(); }, 1500);
-                    }
-                }, 300);
-            }
-        }, 300);
-    }, 500);
+// --- 通用拖动：mousedown 时注册监听，mouseup 时自动注销，不会泄漏 ---
+function _makeDraggable(el) {
+  el.addEventListener('mousedown', (e) => {
+      // 不拦截内部按钮的点击
+      if (e.target.closest('button') || e.target.closest('input')) return;
+      // 首次拖动时把 transform 居中转为绝对定位，避免后续偏移计算出错
+      if (el.style.transform !== 'none') {
+          const rect = el.getBoundingClientRect();
+          el.style.transform = 'none';
+          el.style.left = rect.left + 'px';
+          el.style.top = rect.top + 'px';
+      }
+      const startX = e.clientX;
+      const startY = e.clientY;
+      const origLeft = el.offsetLeft;
+      const origTop = el.offsetTop;
+      const onMove = (ev) => {
+          el.style.left = (origLeft + ev.clientX - startX) + 'px';
+          el.style.top = (origTop + ev.clientY - startY) + 'px';
+      };
+      const onUp = () => {
+          document.removeEventListener('mousemove', onMove);
+          document.removeEventListener('mouseup', onUp);
+      };
+      document.addEventListener('mousemove', onMove);
+      document.addEventListener('mouseup', onUp);
+      e.preventDefault();
+  });
 }
+
+
+function _startCalibration() {
+  if (_isCalibrating) return;
+  _isCalibrating = true;
+  hidePanel();
+
+  const bar = document.createElement('div');
+  bar.id = 'ag-calibrate-bar';
+  document.body.appendChild(bar);
+
+  const cards = document.createElement('div');
+  cards.id = 'ag-calibrate-cards';
+  // 关键改动：所有 flex 和尺寸属性通过内联样式设置，避免和 CSS 里的 display:none 冲突
+  cards.style.display = 'none';
+  cards.style.flexDirection = 'column';
+  cards.style.gap = '10px';
+  cards.style.height = 'calc(min(220px, 45vw) * 1.5)';
+  document.body.appendChild(cards);
+  _makeDraggable(cards);
+
+  const c = cfgLoad();
+  let capturedMap = new Map();
+  let selectedBusy = new Set(c.sendBtnBusyFingerprints || []);
+  let selectedIdle = new Set(c.sendBtnIdleFingerprints || []);
+  let checkInterval = null;
+
+  const renderBar = (msg) => {
+      const mode = c.verifyMode || 'single';
+      const canFinish = (mode === 'single' && selectedBusy.size > 0) || (mode === 'double' && selectedBusy.size > 0 && selectedIdle.size > 0);
+
+      // 直接往 cards 里塞条目，不套额外的 list 包裹层
+      let listHtml = '';
+      capturedMap.forEach((snap, fp) => {
+          const isBusy = selectedBusy.has(fp);
+          const isIdle = selectedIdle.has(fp);
+          const cls = isBusy ? 'selected-busy' : (isIdle ? 'selected-idle' : '');
+          // 不再套 .ag-cal-clone-inner，直接放 HTML
+          listHtml += `
+            <div class="ag-cal-item ${cls}">
+              <div class="ag-cal-clone" style="background:${snap.bg};color:${snap.color}">
+                ${snap.html}
+              </div>
+              <div class="ag-cal-actions">
+                <button class="ag-cal-tag ${isBusy ? 'active-busy' : ''}" data-fp="${fp}" data-type="busy">忙碌</button>
+                <button class="ag-cal-tag ${isIdle ? 'active-idle' : ''}" data-fp="${fp}" data-type="idle">空闲</button>
+              </div>
+            </div>`;
+      });
+
+      cards.innerHTML = listHtml || '<div style="color:#52525b;font-size:12px;text-align:center;padding:16px 0">等待按钮状态变化...</div>';
+      cards.style.display = 'flex';
+
+      bar.innerHTML = `
+        <div style="font-size:13px;color:#d4d4d8;text-align:center">${msg}</div>
+        <div style="display:flex;gap:8px;align-items:center">
+          <button class="ag-btn ag-btn-g" id="ag-cal-stop">取消</button>
+          <button class="ag-btn ag-btn-p" id="ag-cal-finish" style="${canFinish ? '' : 'opacity:0.5;pointer-events:none'}">完成校准</button>
+        </div>`;
+      bar.style.display = 'flex';
+
+      bar.querySelector('#ag-cal-stop').onclick = () => stopCalibration();
+      if (canFinish) {
+          bar.querySelector('#ag-cal-finish').onclick = () => {
+              cfgSaveRuntime({ sendBtnBusyFingerprints: [...selectedBusy], sendBtnIdleFingerprints: [...selectedIdle] });
+              log('OK', `校准完成！忙碌: ${selectedBusy.size}个, 空闲: ${selectedIdle.size}个`);
+              stopCalibration();
+          };
+      }
+      cards.querySelectorAll('.ag-cal-tag').forEach(btn => {
+          btn.onclick = (e) => {
+              e.stopPropagation();
+              const fp = btn.dataset.fp;
+              const type = btn.dataset.type;
+              if (type === 'busy') {
+                  if (selectedBusy.has(fp)) selectedBusy.delete(fp); else selectedBusy.add(fp);
+                  selectedIdle.delete(fp);
+              } else {
+                  if (selectedIdle.has(fp)) selectedIdle.delete(fp); else selectedIdle.add(fp);
+                  selectedBusy.delete(fp);
+              }
+              renderBar(msg);
+          };
+      });
+  };
+
+  const stopCalibration = () => {
+      if (checkInterval) clearInterval(checkInterval);
+      bar.remove();
+      cards.remove();
+      _isCalibrating = false;
+      showPanel();
+  };
+
+  renderBar('👇 请在下方正常聊天，脚本会自动捕获按钮的不同状态。<br><b style="color:#f472b6">请将"停止生成"标记为【忙碌】，其他状态标记为【空闲】。</b>');
+
+  checkInterval = setInterval(() => {
+      const fp = _getSendBtnFingerprint();
+      if (!fp || fp === 'ELEMENT_MISSING') return;
+      if (!capturedMap.has(fp)) {
+          const el = document.querySelector(c.selSendButton);
+          if (!el) return;
+          const cs = getComputedStyle(el);
+          let inner = el.innerHTML;
+          if (inner.length > 500) inner = inner.substring(0, 500);
+          capturedMap.set(fp, { html: inner, bg: cs.backgroundColor, color: cs.color });
+          log('INFO', `捕获新状态指纹 (#${capturedMap.size})`);
+          renderBar('👇 继续操作，或标记已捕获的状态后点击完成。<br><b style="color:#f472b6">请将"停止生成"标记为【忙碌】</b>');
+      }
+  }, 300);
+}
+
+
 
 // --- 等待与调度 ---
 
 function _waitForLLMFinish() {
-    return new Promise(resolve => {
-        const c = cfgLoad();
-        if (c.sendBtnIdleFingerprint) {
-            log('INFO', '👀 监听发送按钮状态...');
-            const check = () => {
-                const fp = _getSendBtnFingerprint();
-                if (fp === c.sendBtnIdleFingerprint) {
-                    log('INFO', '🟢 发送按钮恢复空闲，确认输出完毕');
-                    resolve();
-                } else {
-                    setTimeout(check, 200);
-                }
-            };
-            check();
-        } else {
-            // 未校准时的盲等：直接放行
-            log('WARN', '⚠️ 未校准发送按钮，直接放行(建议校准以支持多指令)');
-            resolve();
-        }
-    });
+  return new Promise(resolve => {
+      const c = cfgLoad();
+      const busyList = c.sendBtnBusyFingerprints || [];
+
+      // 如果没有校准过，直接放行
+      if (busyList.length === 0) {
+          log('WARN', '⚠️ 未校准忙碌态，直接放行(建议校准)');
+          resolve();
+          return;
+      }
+
+      log('INFO', '👀 监听发送按钮状态...');
+
+      // 阶段 1：等待脱离忙碌态 (如果不处于忙碌态，说明AI秒回或已结束，直接放行)
+      const checkPhase1 = () => {
+          const fp = _getSendBtnFingerprint();
+          if (fp === null || fp === 'ELEMENT_MISSING' || !busyList.includes(fp)) {
+              log('INFO', '🟢 脱离忙碌态');
+              startPhase2();
+          } else {
+              setTimeout(checkPhase1, 200);
+          }
+      };
+
+      // 阶段 2：双验证 或 延时
+      const startPhase2 = () => {
+          if (c.verifyMode === 'double') {
+              const idleList = c.sendBtnIdleFingerprints || [];
+              if (idleList.length === 0) {
+                  log('WARN', '⚠️ 双验证模式但未设置空闲态，退化为单验证');
+                  triggerDelay();
+                  return;
+              }
+              log('INFO', '👀 双验证：等待进入空闲态...');
+              const checkPhase2 = () => {
+                  const fp = _getSendBtnFingerprint();
+                  if (fp && idleList.includes(fp)) {
+                      log('INFO', '🟢 进入空闲态');
+                      triggerDelay();
+                  } else {
+                      setTimeout(checkPhase2, 200);
+                  }
+              };
+              checkPhase2();
+          } else {
+              triggerDelay();
+          }
+      };
+
+      // 阶段 3：延时
+      const triggerDelay = () => {
+          const delay = parseInt(c.waitDelayAfterDone) || 500;
+          log('INFO', `⏳ 等待延时 ${delay}ms...`);
+          setTimeout(resolve, delay);
+      };
+
+      checkPhase1();
+  });
 }
+
 
 async function _checkAndDispatch() {
     if (_isProcessing || _cmdQueue.length === 0) return;
