@@ -202,7 +202,7 @@ def execute_line(line):
                     if context_end == -1: context_end = len(full_text)
                     context = full_text[context_start:context_end].rstrip()
                     results.append((line_no, context))
-                    start_idx = pos + 1
+                    start_idx = pos + len(search_comp)
             else:
                 search_comp = search_text.strip().lower() if ignore_case else search_text.strip()
                 for idx, line in enumerate(lines, 1):
@@ -236,10 +236,10 @@ def execute_line(line):
         parts = arg.split('\x00')
         if len(parts) >= 3:
             opts_str = parts[0].strip()
-            old_text = parts[1].strip('\n')
-            new_text = parts[2].strip('\n')
+            old_text = parts[1].strip()   # 原来是 .strip('\n')
+            new_text = parts[2].strip()   # 原来是 .strip('\n')
         else:
-            return '错误：缺少参数。用法：replace <路径> [选项] 后接两个代码块'
+            return '错误：缺少参数。用法：replace <路径> [选项]'
         old_text = old_text.replace('TICK3', '```')
         new_text = new_text.replace('TICK3', '```')
         tokens = opts_str.split()
@@ -785,6 +785,7 @@ def agent_exec():
         return '无法解析请求体', 400
     if not command_text:
         return '空的指令', 400
+    command_text = command_text.replace('\r\n', '\n').replace('\r', '\n')
     log_action('RECEIVED', command_text[:20000])
 
     lines = command_text.split('\n')
@@ -815,7 +816,9 @@ def agent_exec():
                         bln = lines[peek]
                         if bln.strip().startswith('```') or '【/codeend】' in bln.lower():
                             if '【/codeend】' in bln.lower():
-                                block.append(bln.split('【/codeend】', 1)[0])
+                                idx = bln.lower().find('【/codeend】')
+                                if idx != -1:
+                                    block.append(bln[:idx])
                             peek += 1
                             break
                         block.append(bln)
@@ -835,7 +838,8 @@ def agent_exec():
                 else:
                     peek += 1
             if len(blocks) == 2:
-                final_cmd = f"replace {arg} \x00 {blocks[0].strip(chr(10))} \x00 {blocks[1].strip(chr(10))}"
+                final_cmd = f"replace {arg}\x00{blocks[0].strip(chr(10))}\x00{blocks[1].strip(chr(10))}"
+                print(f"[DEBUG] final_cmd = {repr(final_cmd)}")
                 result = execute_line(final_cmd)
                 if result is not None:
                     results.append(result)
@@ -868,7 +872,9 @@ def agent_exec():
                     ln = lines[peek]
                     # 遇到【/CodeEND】，只取前面的部分（容忍没换行）
                     if '【/codeend】' in ln.lower():
-                        content_lines.append(ln.split('【/CodeEND】', 1)[0])
+                        idx = ln.lower().find('【/codeend】')
+                        if idx != -1:
+                            content_lines.append(ln[:idx])
                         peek += 1
                         break
                     # 遇到结尾的 ```，跳过并结束
@@ -893,7 +899,7 @@ def agent_exec():
                         break
                     content_lines.append(lines[peek])
                     peek += 1
-                i = peek - 1
+                i = peek
 
 
             while content_lines and not content_lines[0].strip():
@@ -902,7 +908,7 @@ def agent_exec():
                 content_lines.pop()
 
             content = '\n'.join(content_lines)
-            final_cmd = f"{cmd} {arg} \x00 {content}"
+            final_cmd = f"{cmd} {arg}\x00{content}"
             result = execute_line(final_cmd)
             if result is not None:
                 results.append(result)

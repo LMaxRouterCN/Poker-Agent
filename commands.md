@@ -44,12 +44,16 @@ hello world
 **用两个独立的代码块分别提供旧文本和新文本**，第一个代码块是旧文本，第二个是新文本。
 示例：
 【cmd】replace config.json -a
+【CodeSTART】
 ```
 "debug": false
 ```
+【/CodeEND】
+【CodeSTART】
 ```
 "debug": true
 ```
+【/CodeEND】
 【/cmd】
 
 ### insert <文件路径> -after/-before <行号或文本>
@@ -217,3 +221,4 @@ Hello World!
 - replace 指令中，请用**两个独立的代码块**分别提供旧文本和新文本（按出现顺序区分）。
 - 危险操作（delete、exec）会记录日志。
 - 如果此文档中指令说明更新的不及时，你可以读取此项目下根目录的`agent_server.py`源文件以确定某个指令在代码中的实现方式。
+- 【CodeSTART】 和 【/CodeEND】的作用就是标记代码块的起始和结束,所以在指令中每个代码块都必须用【CodeSTART】 和 【/CodeEND】包裹,【CodeSTART】 和 【/CodeEND】必须和代码块同时存在,如果没有代码块就不要用【CodeSTART】 和 【/CodeEND】
