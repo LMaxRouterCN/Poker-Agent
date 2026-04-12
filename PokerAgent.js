@@ -1,9 +1,9 @@
 // ==UserScript==
 // @name         PokerAgent
 // @namespace    http://tampermonkey.net/
-// @version      5.0
+// @version      6.0
 // @author       LMaxRouterCN
-// @description  Poker Agent 网页端配套脚本，支持层级穿透选择(左键向上,右键向下)，直角UI风格。
+// @description  PokerAgent的浏览器端核心脚本，提供元素选择、配置管理、调试日志等功能，支持多站点独立配置和自动发送功能。
 // @match        *://*/*
 // @grant        GM_registerMenuCommand
 // @grant        GM_xmlhttpRequest
@@ -254,10 +254,10 @@
 #ag-calibrate-cards{position:fixed;top:100px;left:50%;transform:translateX(-50%);background:#1a1b2e;border:1px solid #3f3f46;z-index:2147483647;box-shadow:0 8px 32px rgba(0,0,0,.6);width:min(220px,45vw);overflow-y:auto;overflow-x:hidden;padding:10px;cursor:move}
 #ag-calibrate-cards::-webkit-scrollbar{width:4px}
 #ag-calibrate-cards::-webkit-scrollbar-thumb{background:#3f3f46}
-.ag-cal-item{display:flex;flex-direction:column;align-items:center;gap:6px;padding:6px;background:#232436;transition:.15s;width:100%;box-sizing:border-box;overflow:hidden}
-.ag-cal-item.selected-busy{background:rgba(244,114,182,.1);outline:1px solid #f472b6}
-.ag-cal-item.selected-idle{background:rgba(134,239,172,.1);outline:1px solid #86efac}
-.ag-cal-clone{width:100%;min-height:40px;overflow:hidden;display:flex;align-items:center;justify-content:center;background:#0f0f23}
+.ag-cal-item{display:flex;flex-direction:column;align-items:center;gap:6px;padding:6px;background:#232436;transition:.15s;width:100%;box-sizing:border-box;overflow:hidden;position:relative;z-index:0;border:1px solid transparent;min-height:0}
+.ag-cal-item.selected-busy{background:rgba(244,114,182,.1);border-color:#f472b6}
+.ag-cal-item.selected-idle{background:rgba(134,239,172,.1);border-color:#86efac}
+.ag-cal-clone{width:100%;height:60px;max-height:60px;overflow:hidden;display:flex;align-items:center;justify-content:center;background:#0f0f23}
 .ag-cal-actions{display:flex;flex-direction:column;gap:4px;width:100%;align-items:center}
 .ag-cal-tag{font-size:10px;padding:2px 8px;border:1px solid #3f3f46;color:#71717a;cursor:pointer;background:none;white-space:nowrap;width:60%;text-align:center}
 .ag-cal-tag:hover{border-color:#818cf8;color:#818cf8}
@@ -1082,8 +1082,9 @@ function _startCalibration() {
           const el = document.querySelector(c.selSendButton);
           if (!el) return;
           const cs = getComputedStyle(el);
-          let inner = el.innerHTML;
-          if (inner.length > 500) inner = inner.substring(0, 500);
+          let inner = el.innerHTML.replace(/<(style|script|link)[\s\S]*?<\/\1>/gi, '');
+
+
           capturedMap.set(fp, { html: inner, bg: cs.backgroundColor, color: cs.color });
           log('INFO', `捕获新状态指纹 (#${capturedMap.size})`);
           renderBar('👇 继续操作，或标记已捕获的状态后点击完成。<br><b style="color:#f472b6">请将"停止生成"标记为【忙碌】</b>');
