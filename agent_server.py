@@ -25,6 +25,7 @@ HELP_FILE = os.path.join(WORK_DIR, 'commands.md')
 # 操作日志
 LOG_FILE = os.path.join(WORK_DIR, 'agent_log.txt')
 clipboard_mode = False
+exec_enabled = True
 _config_changed = threading.Event()
 
 def _push_config():
@@ -124,6 +125,10 @@ def execute_line(line):
     parts = line.split(None, 1)
     cmd = parts[0].lower()
     arg = parts[1] if len(parts) > 1 else ''
+    # 【CodeSTART】截断：防止LLM未换行导致arg混入标签
+    cs_idx = arg.find('【CodeSTART】')
+    if cs_idx != -1:
+        arg = arg[:cs_idx]
     W = WORK_DIR
 
     # ========== 系统指令 ==========
@@ -527,7 +532,9 @@ def execute_line(line):
                 filename = os.path.basename(filepath)
                 with open(filepath, 'rb') as f:
                     b64 = base64.b64encode(f.read()).decode('ascii')
-                return f'__CLIPBOARD_FILE__{filename}\x00{b64}'
+                file_size = os.path.getsize(filepath)
+                return f'__CLIPBOARD_FILE__{filename}\x00{file_size}\x00{b64}'
+
             except Exception as e:
                 return f'读取失败：{e}'
         try:
@@ -687,6 +694,8 @@ def execute_line(line):
 
     # ========== 系统命令 ==========
     elif cmd == 'exec':
+        if not exec_enabled:
+            return '错误：exec 指令已被管理员禁用。'
         if not arg.strip():
             return '错误：缺少命令。用法：exec <系统命令>'
         log_action('EXEC', arg.strip())
@@ -804,6 +813,26 @@ def agent_exec():
         if cmd == 'replace':
             peek = i + 1
             blocks = []
+            # 如果指令行自身包含【CodeSTART】（LLM没换行），直接开始收集第一个block
+            if '【codestart】' in lines[i].lower():
+                if peek < len(lines) and lines[peek].strip().startswith('```'):
+                    peek += 1
+                block = []
+                while peek < len(lines):
+                    bln = lines[peek]
+                    if bln.strip().startswith('```') or '【/codeend】' in bln.lower():
+                        if '【/codeend】' in bln.lower():
+                            idx2 = bln.lower().find('【/codeend】')
+                            if idx2 != -1:
+                                block.append(bln[:idx2])
+                                peek += 1
+                                break
+                        peek += 1
+                        break
+                    block.append(bln)
+                    peek += 1
+                blocks.append('\n'.join(block))
+            # 继续查找后续block（标准逻辑，不变）
             while peek < len(lines) and len(blocks) < 2:
                 ln = lines[peek]
                 stripped = ln.strip()
@@ -919,18 +948,37 @@ def agent_exec():
                 results.append(result)
         i += 1
 
-    # 拦截剪贴板文件模式，转为JSON返回（让JS能拿到真实的File对象）
+    # 分离文本结果和剪贴板文件结果
+    text_results = []
+    file_results = []
     for r in results:
         if isinstance(r, str) and r.startswith('__CLIPBOARD_FILE__'):
-            m = re.match(r'__CLIPBOARD_FILE__(.+?)\x00([\s\S]+)', r)
+            m = re.match(r'__CLIPBOARD_FILE__(.+?)\x00(\d+)\x00([\s\S]+)', r)
             if m:
                 log_action('READ-CLIPBOARD', m.group(1))
-                return jsonify({
-                    'type': 'clipboard_file',
+                file_results.append({
                     'filename': m.group(1),
-                    'data': m.group(2).strip()
+                    'size': int(m.group(2)),
+                    'data': m.group(3).strip()
                 })
-            break
+        elif r is not None:
+            text_results.append(r)
+
+    if file_results:
+        # 组合所有文本回执
+        text_output = ''
+        if text_results:
+            if len(text_results) == 1:
+                text_output = text_results[0]
+            else:
+                text_output = '\n---\n'.join(
+                    f'[指令 {idx+1}] {r}' for idx, r in enumerate(text_results))
+        log_action('RESULT', text_output[:20000] if text_output else 'clipboard_file')
+        return jsonify({
+            'type': 'clipboard_file',
+            'files': file_results,
+            'result': text_output
+        })
 
     if not results:
         output = '（无可执行的指令）'
@@ -948,8 +996,10 @@ def agent_config_poll():
     _config_changed.clear()
     return jsonify({
         'clipboard_mode': clipboard_mode,
-        'permission_enabled': permission_mgr.enabled
+        'permission_enabled': permission_mgr.enabled,
+        'exec_enabled': exec_enabled
     })
+
 
 if __name__ == '__main__':
     permission_mgr.set_callback(_default_permission_callback)

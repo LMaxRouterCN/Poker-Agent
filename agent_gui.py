@@ -227,6 +227,15 @@ class AgentGUI:
             font=FONT_UI, command=self._toggle_clipboard)
         self.chk_clipboard.pack(anchor='w', padx=20)
 
+        self.var_exec = tk.BooleanVar(value=True)
+        self.chk_exec = tk.Checkbutton(
+            f, text="允许执行系统命令", variable=self.var_exec,
+            bg=PANEL, fg=TXT, selectcolor=BTN,
+            activebackground=PANEL, activeforeground=TXT,
+            font=FONT_UI, command=self._toggle_exec)
+        self.chk_exec.pack(anchor='w', padx=20)
+
+
 
     def _build_right(self):
         f = self.right
@@ -488,6 +497,12 @@ class AgentGUI:
         agent_server._push_config()
         status = "已启用" if agent_server.clipboard_mode else "已禁用"
         print(f'[Agent] 剪贴板读取模式{status}')
+
+    def _toggle_exec(self):
+        agent_server.exec_enabled = self.var_exec.get()
+        agent_server._push_config()
+        status = "已启用" if agent_server.exec_enabled else "已禁用"
+        print(f'[Agent] 系统命令执行{status}')
 
 
     def _make_permission_callback(self):

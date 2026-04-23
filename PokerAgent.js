@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         PokerAgent
 // @namespace    http://tampermonkey.net/
-// @version      6.0
+// @version      6.1
 // @author       LMaxRouterCN
 // @description  PokerAgent的浏览器端核心脚本，提供元素选择、配置管理、调试日志等功能，支持多站点独立配置和自动发送功能。
 // @match        *://*/*
@@ -1198,12 +1198,23 @@ function _dispatch(cmd) {
                 try {
                     const data = JSON.parse(r.responseText);
                     if (data.type === 'clipboard_file') {
-                        log('OK', `准备粘贴文件: ${data.filename}`);
-                        await _pasteFile(data.filename, data.data);
-                        return; // _pasteFile 内部会处理 _isProcessing 释放
+                        // 先发送文本回执（如果有）
+                        if (data.result) {
+                            await _sendToChat('[Poker Agent] ' + data.result);
+                        }
+                        // 逐个粘贴文件
+                        for (const file of data.files) {
+                            log('OK', `准备粘贴文件: ${file.filename}（${file.size} 字节）`);
+                            await _pasteFile(file.filename, file.size, file.data);
+                        }
+                        // 所有文件处理完毕，解锁
+                        _isProcessing = false;
+                        _checkAndDispatch();
+                        return;
                     }
                 } catch (e) {}
                 resultText = r.responseText;
+                
             } else {
                 resultText = `[Agent 错误] HTTP ${r.status}`;
                 log('ERR', `HTTP ${r.status}`);
@@ -1381,14 +1392,13 @@ function _destroyAutoSendToggle() {
 
 // --- 文件粘贴处理 ---
 
-async function _pasteFile(filename, b64Data) {
+async function _pasteFile(filename, fileSize, b64Data) {
+
     const c = cfgLoad();
     const input = document.querySelector(c.selInputBox);
     const btn = document.querySelector(c.selSendButton);
     if (!input || !btn) { 
         log('ERR', '找不到输入框或发送按钮'); 
-        _isProcessing = false; 
-        _checkAndDispatch(); 
         return; 
     }
     
@@ -1414,6 +1424,8 @@ async function _pasteFile(filename, b64Data) {
         
         log('OK', '已触发文件粘贴事件');
         await _smartWait(input, { checkDOM: true, minWait: 300 });
+        _directInput(input, `[Poker Agent] 已读取文件：${filename}（${fileSize} 字节）`);
+
         
         if (c.autoSendByEnter) { 
             try { _trySendByEnter(input); } catch (err) { log('ERR', `模拟回车发送失败: ${err.message}`); } 
@@ -1423,9 +1435,6 @@ async function _pasteFile(filename, b64Data) {
         log('ERR', `文件粘贴失败: ${err.message}`);
     }
     
-    // 文件处理完毕，释放锁并检查后续指令
-    _isProcessing = false;
-    if (_cmdQueue.length > 0) _checkAndDispatch();
 }
 
 /* ================================================================
