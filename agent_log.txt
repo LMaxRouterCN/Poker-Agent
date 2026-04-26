@@ -30,3 +30,3808 @@ public void
 ---
 [指令 4] 未知指令：【/codeend】
 输入 @@help 查看可用指令列表。
+[2026-04-23 17:58:04] RECEIVED | mkdir chatglm-raw
+create chatglm-raw\manifest.json 【CodeSTART】
+
+
+
+
+
+
+        
+
+          
+{
+  "manifest_version": 3,
+  "name": "ChatGLM Raw Markdown",
+  "version": "1.0",
+  "description": "显示 ChatGLM 回复的原始 Markdown 文本",
+  "content_scripts": [
+    {
+      "matches": ["https://chatglm.cn/*"] ,
+      "js": ["content.js"],
+      "run_at": "document_start",
+      "world": "MAIN"
+    }
+  ]
+}
+
+        
+      
+
+
+【/CodeEND】
+create chatglm-raw\content.js 【CodeSTART】
+
+
+
+
+
+
+        
+
+          
+(function() {
+    'use strict';
+
+    let pendingRawText = null;
+    let replaceTimer = null;
+
+    function escapeHtml(text) {
+        const div = document.createElement('div');
+        div.textContent = text;
+        return div.innerHTML;
+    }
+
+    function scheduleReplace() {
+        if (replaceTimer) clearTimeout(replaceTimer);
+        replaceTimer = setTimeout(doReplace, 800);
+    }
+
+    function doReplace() {
+        if (!pendingRawText) return;
+        const rawText = pendingRawText;
+        pendingRawText = null;
+
+        const contents = document.querySelectorAll('.answer-content');
+        if (contents.length === 0) {
+            pendingRawText = rawText;
+            replaceTimer = setTimeout(doReplace, 500);
+            return;
+        }
+
+        const target = contents[contents.length - 1];
+        target.innerHTML = '<pre style="white-space:pre-wrap;word-wrap:break-word;font-family:Consolas,Monaco,\'Courier New\',monospace;margin:0;padding:16px;background:#1a1a2e;color:#e0e0e0;border-radius:8px;font-size:13.5px;line-height:1.7;overflow-x:auto;tab-size:4;">' + escapeHtml(rawText) + '</pre>';
+    }
+
+    function processMessage(data) {
+        if (!data.parts || !Array.isArray(data.parts)) return;
+        for (const part of data.parts) {
+            if (!part.content || !Array.isArray(part.content)) continue;
+            for (const item of part.content) {
+                if (item.type === 'text' && typeof item.text === 'string') {
+                    if (part.status === 'finish') {
+                        pendingRawText = item.text;
+                        scheduleReplace();
+                    }
+                }
+            }
+        }
+    }
+
+    function tryParseLine(line) {
+        let cleanLine = line.trim();
+        if (cleanLine.startsWith('data:')) {
+            cleanLine = cleanLine.substring(5).trim();
+        }
+        if (!cleanLine.startsWith('message ')) return;
+
+        const jsonStart = cleanLine.indexOf('{');
+        if (jsonStart === -1) return;
+
+        let jsonStr = cleanLine.substring(jsonStart);
+
+        try {
+            processMessage(JSON.parse(jsonStr));
+            return;
+        } catch(e) {}
+
+        const lastBrace = jsonStr.lastIndexOf('}');
+        if (lastBrace > 0 && lastBrace < jsonStr.length - 1) {
+            try {
+                processMessage(JSON.parse(jsonStr.substring(0, lastBrace + 1)));
+            } catch(e) {}
+        }
+    }
+
+    async function readStream(stream) {
+        const reader = stream.getReader();
+        const decoder = new TextDecoder();
+        let buffer = '';
+
+        try {
+            while (true) {
+                const { done, value } = await reader.read();
+                if (done) break;
+                buffer += decoder.decode(value, { stream: true });
+                const lines = buffer.split('\n');
+                buffer = lines.pop() || '';
+                for (const line of lines) {
+                    tryParseLine(line);
+                }
+            }
+            if (buffer.trim()) tryParseLine(buffer);
+        } catch(e) {}
+    }
+
+    const originalFetch = window.fetch;
+    window.fetch = function(...args) {
+        const result = originalFetch.apply(this, args);
+        const url = typeof args[0] === 'string' ? args[0] : (args[0]?.url || '');
+
+        if (url.includes('/assistant/stream')) {
+            return result.then(response => {
+                if (response.body) {
+                    const [stream1, stream2] = response.body.tee();
+                    readStream(stream2);
+                    return new Response(stream1, {
+                        headers: response.headers,
+                        status: response.status,
+                        statusText: response.statusText
+                    });
+                }
+                return response;
+            });
+        }
+        return result;
+    };
+})();
+
+        
+      
+
+
+【/CodeEND】
+[2026-04-23 17:58:04] MKDIR | D:\Documents\my\ChatGLM Raw Markdown\chatglm-raw
+[2026-04-23 17:58:04] CREATE | D:\Documents\my\ChatGLM Raw Markdown\chatglm-raw\manifest.json
+[2026-04-23 17:58:04] CREATE | D:\Documents\my\ChatGLM Raw Markdown\chatglm-raw\content.js
+[2026-04-23 17:58:04] RESULT | [指令 1] 已创建目录：D:\Documents\my\ChatGLM Raw Markdown\chatglm-raw
+---
+[指令 2] 已创建文件：D:\Documents\my\ChatGLM Raw Markdown\chatglm-raw\manifest.json（298 字符）
+---
+[指令 3] 已创建文件：D:\Documents\my\ChatGLM Raw Markdown\chatglm-raw\content.js（3873 字符）
+[2026-04-23 18:08:38] RECEIVED | create chatglm-raw\content.js 【CodeSTART】
+
+
+
+
+
+
+        
+
+          
+(function() {
+    'use strict';
+
+    let pendingRawText = null;
+    let replaceTimer = null;
+    let hookReady = false;
+
+    function escapeHtml(text) {
+        const div = document.createElement('div');
+        div.textContent = text;
+        return div.innerHTML;
+    }
+
+    function scheduleReplace() {
+        if (replaceTimer) clearTimeout(replaceTimer);
+        replaceTimer = setTimeout(doReplace, 1000);
+    }
+
+    function doReplace() {
+        if (!pendingRawText) return;
+        const rawText = pendingRawText;
+
+        const contents = document.querySelectorAll('.answer-content-wrap');
+        if (contents.length === 0) {
+            replaceTimer = setTimeout(doReplace, 500);
+            return;
+        }
+
+        const target = contents[contents.length - 1];
+        target.innerHTML = '<pre style="white-space:pre-wrap;word-wrap:break-word;font-family:Consolas,Monaco,\'Courier New\',monospace;margin:0;padding:16px;background:#1a1a2e;color:#e0e0e0;border-radius:8px;font-size:13.5px;line-height:1.7;overflow-x:auto;tab-size:4;">' + escapeHtml(rawText) + '</pre>';
+        console.log('[RawMD] 已替换回复内容，长度:', rawText.length);
+        pendingRawText = null;
+    }
+
+    function processMessage(data) {
+        if (!data.parts || !Array.isArray(data.parts)) return;
+        for (const part of data.parts) {
+            if (!part.content || !Array.isArray(part.content)) continue;
+            for (const item of part.content) {
+                if (item.type === 'text' && typeof item.text === 'string') {
+                    if (part.status === 'finish') {
+                        console.log('[RawMD] 捕获到完整回复，长度:', item.text.length);
+                        pendingRawText = item.text;
+                        scheduleReplace();
+                    }
+                }
+            }
+        }
+    }
+
+    function tryParseLine(line) {
+        let cleanLine = line.trim();
+        if (cleanLine.startsWith('data:')) {
+            cleanLine = cleanLine.substring(5).trim();
+        }
+        if (!cleanLine.startsWith('message ')) return;
+
+        const jsonStart = cleanLine.indexOf('{');
+        if (jsonStart === -1) return;
+        let jsonStr = cleanLine.substring(jsonStart);
+
+        try {
+            processMessage(JSON.parse(jsonStr));
+            return;
+        } catch(e) {}
+
+        const lastBrace = jsonStr.lastIndexOf('}');
+        if (lastBrace > 0 && lastBrace < jsonStr.length - 1) {
+            try {
+                processMessage(JSON.parse(jsonStr.substring(0, lastBrace + 1)));
+            } catch(e) {}
+        }
+    }
+
+    async function readStream(stream) {
+        const reader = stream.getReader();
+        const decoder = new TextDecoder();
+        let buffer = '';
+
+        try {
+            while (true) {
+                const { done, value } = await reader.read();
+                if (done) break;
+                buffer += decoder.decode(value, { stream: true });
+                const lines = buffer.split('\n');
+                buffer = lines.pop() || '';
+                for (const line of lines) {
+                    tryParseLine(line);
+                }
+            }
+            if (buffer.trim()) tryParseLine(buffer);
+        } catch(e) {
+            console.log('[RawMD] stream 读取错误:', e);
+        }
+    }
+
+    // 在最底层 hook fetch
+    const originalFetch = window.fetch;
+    window.fetch = function(...args) {
+        const result = originalFetch.apply(this, args);
+        const url = typeof args[0] === 'string' ? args[0] : (args[0]?.url || '');
+
+        if (url.includes('/assistant/stream')) {
+            console.log('[RawMD] 拦截到 stream 请求');
+            return result.then(response => {
+                if (response.body) {
+                    const [stream1, stream2] = response.body.tee();
+                    readStream(stream2);
+                    return new Response(stream1, {
+                        headers: response.headers,
+                        status: response.status,
+                        statusText: response.statusText
+                    });
+                }
+                return response;
+            });
+        }
+        return result;
+    };
+
+    console.log('[RawMD] hook 已安装');
+    hookReady = true;
+})();
+
+        
+      
+
+
+【/CodeEND】
+[2026-04-23 18:08:38] CREATE | D:\Documents\my\ChatGLM Raw Markdown\chatglm-raw\content.js
+[2026-04-23 18:08:38] RESULT | 已创建文件：D:\Documents\my\ChatGLM Raw Markdown\chatglm-raw\content.js（4199 字符）
+[2026-04-23 18:15:42] RECEIVED | delete chatglm-raw\chatglm-raw\content.js
+delete chatglm-raw\chatglm-raw\manifest.json
+exec rd /s /q chatglm-raw\chatglm-raw
+create manifest.json 【CodeSTART】
+
+
+
+
+
+
+        
+
+          
+{
+  "manifest_version": 3,
+  "name": "ChatGLM Raw Markdown",
+  "version": "1.0",
+  "description": "显示 ChatGLM 回复的原始 Markdown 文本",
+  "content_scripts": [
+    {
+      "matches": ["https://chatglm.cn/*"] ,
+      "js": ["content.js"],
+      "run_at": "document_start",
+      "world": "MAIN"
+    }
+  ]
+}
+
+        
+      
+
+
+【/CodeEND】
+create content.js 【CodeSTART】
+
+
+
+
+
+
+        
+
+          
+(function() {
+    'use strict';
+
+    let pendingRawText = null;
+    let replaceTimer = null;
+
+    function escapeHtml(text) {
+        const div = document.createElement('div');
+        div.textContent = text;
+        return div.innerHTML;
+    }
+
+    function scheduleReplace() {
+        if (replaceTimer) clearTimeout(replaceTimer);
+        replaceTimer = setTimeout(doReplace, 1000);
+    }
+
+    function doReplace() {
+        if (!pendingRawText) return;
+        const rawText = pendingRawText;
+
+        const contents = document.querySelectorAll('.answer-content-wrap');
+        if (contents.length === 0) {
+            replaceTimer = setTimeout(doReplace, 500);
+            return;
+        }
+
+        const target = contents[contents.length - 1];
+        target.innerHTML = '<pre style="white-space:pre-wrap;word-wrap:break-word;font-family:Consolas,Monaco,\'Courier New\',monospace;margin:0;padding:16px;background:#1a1a2e;color:#e0e0e0;border-radius:8px;font-size:13.5px;line-height:1.7;overflow-x:auto;tab-size:4;">' + escapeHtml(rawText) + '</pre>';
+        console.log('[RawMD] 已替换回复内容，长度:', rawText.length);
+        pendingRawText = null;
+    }
+
+    function processMessage(data) {
+        if (!data.parts || !Array.isArray(data.parts)) return;
+        for (const part of data.parts) {
+            if (!part.content || !Array.isArray(part.content)) continue;
+            for (const item of part.content) {
+                if (item.type === 'text' && typeof item.text === 'string') {
+                    if (part.status === 'finish') {
+                        console.log('[RawMD] 捕获到完整回复，长度:', item.text.length);
+                        pendingRawText = item.text;
+                        scheduleReplace();
+                    }
+                }
+            }
+        }
+    }
+
+    function tryParseLine(line) {
+        let cleanLine = line.trim();
+        if (cleanLine.startsWith('data:')) {
+            cleanLine = cleanLine.substring(5).trim();
+        }
+        if (!cleanLine.startsWith('message ')) return;
+
+        const jsonStart = cleanLine.indexOf('{');
+        if (jsonStart === -1) return;
+        let jsonStr = cleanLine.substring(jsonStart);
+
+        try {
+            processMessage(JSON.parse(jsonStr));
+            return;
+        } catch(e) {}
+
+        const lastBrace = jsonStr.lastIndexOf('}');
+        if (lastBrace > 0 && lastBrace < jsonStr.length - 1) {
+            try {
+                processMessage(JSON.parse(jsonStr.substring(0, lastBrace + 1)));
+            } catch(e) {}
+        }
+    }
+
+    async function readStream(stream) {
+        const reader = stream.getReader();
+        const decoder = new TextDecoder();
+        let buffer = '';
+
+        try {
+            while (true) {
+                const { done, value } = await reader.read();
+                if (done) break;
+                buffer += decoder.decode(value, { stream: true });
+                const lines = buffer.split('\n');
+                buffer = lines.pop() || '';
+                for (const line of lines) {
+                    tryParseLine(line);
+                }
+            }
+            if (buffer.trim()) tryParseLine(buffer);
+        } catch(e) {
+            console.log('[RawMD] stream 读取错误:', e);
+        }
+    }
+
+    const originalFetch = window.fetch;
+    window.fetch = function(...args) {
+        const result = originalFetch.apply(this, args);
+        const url = typeof args[0] === 'string' ? args[0] : (args[0]?.url || '');
+
+        if (url.includes('/assistant/stream')) {
+            console.log('[RawMD] 拦截到 stream 请求');
+            return result.then(response => {
+                if (response.body) {
+                    const [stream1, stream2] = response.body.tee();
+                    readStream(stream2);
+                    return new Response(stream1, {
+                        headers: response.headers,
+                        status: response.status,
+                        statusText: response.statusText
+                    });
+                }
+                return response;
+            });
+        }
+        return result;
+    };
+
+    console.log('[RawMD] hook 已安装');
+})();
+
+        
+      
+
+
+【/CodeEND】
+[2026-04-23 18:15:42] EXEC | rd /s /q chatglm-raw\chatglm-raw
+[2026-04-23 18:15:43] CREATE | D:\Documents\my\ChatGLM Raw Markdown\manifest.json
+[2026-04-23 18:15:43] CREATE | D:\Documents\my\ChatGLM Raw Markdown\content.js
+[2026-04-23 18:15:43] RESULT | [指令 1] 错误：文件不存在：D:\Documents\my\ChatGLM Raw Markdown\chatglm-raw\chatglm-raw\content.js
+---
+[指令 2] 错误：文件不存在：D:\Documents\my\ChatGLM Raw Markdown\chatglm-raw\chatglm-raw\manifest.json
+---
+[指令 3] 系统找不到指定的文件。
+---
+[指令 4] 已创建文件：D:\Documents\my\ChatGLM Raw Markdown\manifest.json（298 字符）
+---
+[指令 5] 已创建文件：D:\Documents\my\ChatGLM Raw Markdown\content.js（4127 字符）
+[2026-04-23 19:49:12] RECEIVED | create manifest.json 【CodeSTART】
+
+
+
+
+
+
+        
+
+          
+{
+  "manifest_version": 3,
+  "name": "ChatGLM Raw Markdown",
+  "version": "1.1",
+  "description": "显示 ChatGLM 回复的原始 Markdown 文本",
+  "content_scripts": [
+    {
+      "matches": ["https://chatglm.cn/*" , "https://www.chatglm.cn/*"] ,
+      "js": ["content.js"],
+      "run_at": "document_start"
+    }
+  ]
+}
+
+        
+      
+
+
+【/CodeEND】
+create content.js 【CodeSTART】
+
+
+
+
+
+
+        
+
+          
+(function() {
+    'use strict';
+
+    console.log('[RawMD] ===== 脚本已加载 =====');
+
+    let pendingRawText = null;
+    let replaceTimer = null;
+
+    function escapeHtml(text) {
+        const div = document.createElement('div');
+        div.textContent = text;
+        return div.innerHTML;
+    }
+
+    function scheduleReplace() {
+        if (replaceTimer) clearTimeout(replaceTimer);
+        replaceTimer = setTimeout(doReplace, 1000);
+    }
+
+    function doReplace() {
+        if (!pendingRawText) return;
+        const rawText = pendingRawText;
+
+        const contents = document.querySelectorAll('.answer-content-wrap');
+        if (contents.length === 0) {
+            replaceTimer = setTimeout(doReplace, 500);
+            return;
+        }
+
+        const target = contents[contents.length - 1];
+        target.innerHTML = '<pre style="white-space:pre-wrap;word-wrap:break-word;font-family:Consolas,Monaco,\'Courier New\',monospace;margin:0;padding:16px;background:#1a1a2e;color:#e0e0e0;border-radius:8px;font-size:13.5px;line-height:1.7;overflow-x:auto;tab-size:4;">' + escapeHtml(rawText) + '</pre>';
+        console.log('[RawMD] 已替换回复内容，长度:', rawText.length);
+        pendingRawText = null;
+    }
+
+    function processMessage(data) {
+        if (!data.parts || !Array.isArray(data.parts)) return;
+        for (const part of data.parts) {
+            if (!part.content || !Array.isArray(part.content)) continue;
+            for (const item of part.content) {
+                if (item.type === 'text' && typeof item.text === 'string') {
+                    if (part.status === 'finish') {
+                        console.log('[RawMD] 捕获到完整回复，长度:', item.text.length);
+                        pendingRawText = item.text;
+                        scheduleReplace();
+                    }
+                }
+            }
+        }
+    }
+
+    function tryParseLine(line) {
+        let cleanLine = line.trim();
+        if (cleanLine.startsWith('data:')) {
+            cleanLine = cleanLine.substring(5).trim();
+        }
+        if (!cleanLine.startsWith('message ')) return;
+
+        const jsonStart = cleanLine.indexOf('{');
+        if (jsonStart === -1) return;
+        let jsonStr = cleanLine.substring(jsonStart);
+
+        try {
+            processMessage(JSON.parse(jsonStr));
+            return;
+        } catch(e) {}
+
+        const lastBrace = jsonStr.lastIndexOf('}');
+        if (lastBrace > 0 && lastBrace < jsonStr.length - 1) {
+            try {
+                processMessage(JSON.parse(jsonStr.substring(0, lastBrace + 1)));
+            } catch(e) {}
+        }
+    }
+
+    async function readStream(stream) {
+        const reader = stream.getReader();
+        const decoder = new TextDecoder();
+        let buffer = '';
+
+        try {
+            while (true) {
+                const { done, value } = await reader.read();
+                if (done) break;
+                buffer += decoder.decode(value, { stream: true });
+                const lines = buffer.split('\n');
+                buffer = lines.pop() || '';
+                for (const line of lines) {
+                    tryParseLine(line);
+                }
+            }
+            if (buffer.trim()) tryParseLine(buffer);
+        } catch(e) {
+            console.log('[RawMD] stream 读取错误:', e);
+        }
+    }
+
+    const originalFetch = window.fetch;
+    window.fetch = function(...args) {
+        const result = originalFetch.apply(this, args);
+        const url = typeof args[0] === 'string' ? args[0] : (args[0]?.url || '');
+
+        if (url.includes('/assistant/stream')) {
+            console.log('[RawMD] 拦截到 stream 请求:', url);
+            return result.then(response => {
+                if (response.body) {
+                    const [stream1, stream2] = response.body.tee();
+                    readStream(stream2);
+                    return new Response(stream1, {
+                        headers: response.headers,
+                        status: response.status,
+                        statusText: response.statusText
+                    });
+                }
+                return response;
+            });
+        }
+        return result;
+    };
+
+    console.log('[RawMD] fetch hook 已安装，原始 fetch 类型:', typeof originalFetch);
+})();
+
+        
+      
+
+
+【/CodeEND】
+[2026-04-23 19:49:12] CREATE | D:\Documents\my\ChatGLM Raw Markdown\manifest.json
+[2026-04-23 19:49:12] CREATE | D:\Documents\my\ChatGLM Raw Markdown\content.js
+[2026-04-23 19:49:12] RESULT | [指令 1] 已创建文件：D:\Documents\my\ChatGLM Raw Markdown\manifest.json（304 字符）
+---
+[指令 2] 已创建文件：D:\Documents\my\ChatGLM Raw Markdown\content.js（4221 字符）
+[2026-04-24 00:13:12] RECEIVED | create injector.js 【CodeSTART】
+
+
+
+
+
+
+        
+
+          
+(function() {
+    'use strict';
+
+    var code = '(' + function() {
+        console.log('[RawMD] ===== MAIN world 脚本已注入 =====');
+
+        var pendingRawText = null;
+        var replaceTimer = null;
+
+        function escapeHtml(text) {
+            var div = document.createElement('div');
+            div.textContent = text;
+            return div.innerHTML;
+        }
+
+        function scheduleReplace() {
+            if (replaceTimer) clearTimeout(replaceTimer);
+            replaceTimer = setTimeout(doReplace, 1000);
+        }
+
+        function doReplace() {
+            if (!pendingRawText) return;
+            var rawText = pendingRawText;
+
+            var contents = document.querySelectorAll('.answer-content-wrap');
+            if (contents.length === 0) {
+                replaceTimer = setTimeout(doReplace, 500);
+                return;
+            }
+
+            var target = contents[contents.length - 1];
+            target.innerHTML = '<pre style="white-space:pre-wrap;word-wrap:break-word;font-family:Consolas,Monaco,\'Courier New\',monospace;margin:0;padding:16px;background:#1a1a2e;color:#e0e0e0;border-radius:8px;font-size:13.5px;line-height:1.7;overflow-x:auto;tab-size:4;">' + escapeHtml(rawText) + '</pre>';
+            console.log('[RawMD] 已替换回复内容，长度:', rawText.length);
+            pendingRawText = null;
+        }
+
+        function processMessage(data) {
+            if (!data.parts || !Array.isArray(data.parts)) return;
+            for (var i = 0; i < data.parts.length; i++) {
+                var part = data.parts[i];
+                if (!part.content || !Array.isArray(part.content)) continue;
+                for (var j = 0; j < part.content.length; j++) {
+                    var item = part.content[j];
+                    if (item.type === 'text' && typeof item.text === 'string') {
+                        if (part.status === 'finish') {
+                            console.log('[RawMD] 捕获到完整回复，长度:', item.text.length);
+                            pendingRawText = item.text;
+                            scheduleReplace();
+                        }
+                    }
+                }
+            }
+        }
+
+        function tryParseLine(line) {
+            var cleanLine = line.trim();
+            if (cleanLine.indexOf('data:') === 0) {
+                cleanLine = cleanLine.substring(5).trim();
+            }
+            if (cleanLine.indexOf('message ') !== 0) return;
+
+            var jsonStart = cleanLine.indexOf('{');
+            if (jsonStart === -1) return;
+            var jsonStr = cleanLine.substring(jsonStart);
+
+            try {
+                processMessage(JSON.parse(jsonStr));
+                return;
+            } catch(e) {}
+
+            var lastBrace = jsonStr.lastIndexOf('}');
+            if (lastBrace > 0 && lastBrace < jsonStr.length - 1) {
+                try {
+                    processMessage(JSON.parse(jsonStr.substring(0, lastBrace + 1)));
+                } catch(e) {}
+            }
+        }
+
+        function readStream(stream) {
+            var reader = stream.getReader();
+            var decoder = new TextDecoder();
+            var buffer = '';
+
+            function read() {
+                reader.read().then(function(result) {
+                    if (result.done) {
+                        if (buffer.trim()) tryParseLine(buffer);
+                        return;
+                    }
+                    buffer += decoder.decode(result.value, { stream: true });
+                    var lines = buffer.split('\n');
+                    buffer = lines.pop() || '';
+                    for (var i = 0; i < lines.length; i++) {
+                        tryParseLine(lines[i]);
+                    }
+                    read();
+                }).catch(function(e) {
+                    console.log('[RawMD] stream 读取错误:', e);
+                });
+            }
+            read();
+        }
+
+        var originalFetch = window.fetch;
+        window.fetch = function() {
+            var args = Array.prototype.slice.call(arguments);
+            var result = originalFetch.apply(this, args);
+            var url = typeof args[0] === 'string' ? args[0] : (args[0] && args[0].url ? args[0].url : '');
+
+            if (url.indexOf('/assistant/stream') !== -1) {
+                console.log('[RawMD] 拦截到 stream 请求');
+                return result.then(function(response) {
+                    if (response.body) {
+                        var streams = response.body.tee();
+                        readStream(streams[1]);
+                        return new Response(streams[0], {
+                            headers: response.headers,
+                            status: response.status,
+                            statusText: response.statusText
+                        });
+                    }
+                    return response;
+                });
+            }
+            return result;
+        };
+
+        console.log('[RawMD] fetch hook 已安装');
+    } + ')();';
+
+    var script = document.createElement('script');
+    script.textContent = code;
+    (document.head || document.documentElement).appendChild(script);
+    script.remove();
+})();
+
+        
+      
+
+
+【/CodeEND】
+delete content.js
+[2026-04-24 00:13:12] CREATE | D:\Documents\my\ChatGLM Raw Markdown\injector.js
+[2026-04-24 00:13:12] DELETE | D:\Documents\my\ChatGLM Raw Markdown\content.js
+[2026-04-24 00:13:12] RESULT | [指令 1] 已创建文件：D:\Documents\my\ChatGLM Raw Markdown\injector.js（5123 字符）
+---
+[指令 2] 已删除文件：D:\Documents\my\ChatGLM Raw Markdown\content.js
+[2026-04-24 00:13:13] RECEIVED | create manifest.json 【CodeSTART】
+
+
+
+
+
+
+        
+
+          
+{
+  "manifest_version": 3,
+  "name": "ChatGLM Raw Markdown",
+  "version": "1.2",
+  "description": "显示 ChatGLM 回复的原始 Markdown 文本",
+  "content_scripts": [
+    {
+      "matches": ["https://chatglm.cn/*" , "https://www.chatglm.cn/*"] ,
+      "js": ["injector.js"],
+      "run_at": "document_start"
+    }
+  ]
+}
+
+        
+      
+
+
+【/CodeEND】
+[2026-04-24 00:13:13] CREATE | D:\Documents\my\ChatGLM Raw Markdown\manifest.json
+[2026-04-24 00:13:13] RESULT | 已创建文件：D:\Documents\my\ChatGLM Raw Markdown\manifest.json（305 字符）
+[2026-04-24 00:13:38] RECEIVED | create manifest.json 【CodeSTART】
+
+
+
+
+
+
+        
+
+          
+{
+  "manifest_version": 3,
+  "name": "ChatGLM Raw Markdown",
+  "version": "1.2",
+  "description": "显示 ChatGLM 回复的原始 Markdown 文本",
+  "content_scripts": [
+    {
+      "matches": ["https://chatglm.cn/*" , "https://www.chatglm.cn/*"] ,
+      "js": ["injector.js"],
+      "run_at": "document_start"
+    }
+  ]
+}
+
+        
+      
+
+
+【/CodeEND】
+create injector.js 【CodeSTART】
+
+
+
+
+
+
+        
+
+          
+(function() {
+    'use strict';
+
+    var code = '(' + function() {
+        console.log('[RawMD] ===== MAIN world 脚本已注入 =====');
+
+        var pendingRawText = null;
+        var replaceTimer = null;
+
+        function escapeHtml(text) {
+            var div = document.createElement('div');
+            div.textContent = text;
+            return div.innerHTML;
+        }
+
+        function scheduleReplace() {
+            if (replaceTimer) clearTimeout(replaceTimer);
+            replaceTimer = setTimeout(doReplace, 1000);
+        }
+
+        function doReplace() {
+            if (!pendingRawText) return;
+            var rawText = pendingRawText;
+
+            var contents = document.querySelectorAll('.answer-content-wrap');
+            if (contents.length === 0) {
+                replaceTimer = setTimeout(doReplace, 500);
+                return;
+            }
+
+            var target = contents[contents.length - 1];
+            target.innerHTML = '<pre style="white-space:pre-wrap;word-wrap:break-word;font-family:Consolas,Monaco,\'Courier New\',monospace;margin:0;padding:16px;background:#1a1a2e;color:#e0e0e0;border-radius:8px;font-size:13.5px;line-height:1.7;overflow-x:auto;tab-size:4;">' + escapeHtml(rawText) + '</pre>';
+            console.log('[RawMD] 已替换回复内容，长度:', rawText.length);
+            pendingRawText = null;
+        }
+
+        function processMessage(data) {
+            if (!data.parts || !Array.isArray(data.parts)) return;
+            for (var i = 0; i < data.parts.length; i++) {
+                var part = data.parts[i];
+                if (!part.content || !Array.isArray(part.content)) continue;
+                for (var j = 0; j < part.content.length; j++) {
+                    var item = part.content[j];
+                    if (item.type === 'text' && typeof item.text === 'string') {
+                        if (part.status === 'finish') {
+                            console.log('[RawMD] 捕获到完整回复，长度:', item.text.length);
+                            pendingRawText = item.text;
+                            scheduleReplace();
+                        }
+                    }
+                }
+            }
+        }
+
+        function tryParseLine(line) {
+            var cleanLine = line.trim();
+            if (cleanLine.indexOf('data:') === 0) {
+                cleanLine = cleanLine.substring(5).trim();
+            }
+            if (cleanLine.indexOf('message ') !== 0) return;
+
+            var jsonStart = cleanLine.indexOf('{');
+            if (jsonStart === -1) return;
+            var jsonStr = cleanLine.substring(jsonStart);
+
+            try {
+                processMessage(JSON.parse(jsonStr));
+                return;
+            } catch(e) {}
+
+            var lastBrace = jsonStr.lastIndexOf('}');
+            if (lastBrace > 0 && lastBrace < jsonStr.length - 1) {
+                try {
+                    processMessage(JSON.parse(jsonStr.substring(0, lastBrace + 1)));
+                } catch(e) {}
+            }
+        }
+
+        function readStream(stream) {
+            var reader = stream.getReader();
+            var decoder = new TextDecoder();
+            var buffer = '';
+
+            function read() {
+                reader.read().then(function(result) {
+                    if (result.done) {
+                        if (buffer.trim()) tryParseLine(buffer);
+                        return;
+                    }
+                    buffer += decoder.decode(result.value, { stream: true });
+                    var lines = buffer.split('\n');
+                    buffer = lines.pop() || '';
+                    for (var i = 0; i < lines.length; i++) {
+                        tryParseLine(lines[i]);
+                    }
+                    read();
+                }).catch(function(e) {
+                    console.log('[RawMD] stream 读取错误:', e);
+                });
+            }
+            read();
+        }
+
+        var originalFetch = window.fetch;
+        window.fetch = function() {
+            var args = Array.prototype.slice.call(arguments);
+            var result = originalFetch.apply(this, args);
+            var url = typeof args[0] === 'string' ? args[0] : (args[0] && args[0].url ? args[0].url : '');
+
+            if (url.indexOf('/assistant/stream') !== -1) {
+                console.log('[RawMD] 拦截到 stream 请求');
+                return result.then(function(response) {
+                    if (response.body) {
+                        var streams = response.body.tee();
+                        readStream(streams[1]);
+                        return new Response(streams[0], {
+                            headers: response.headers,
+                            status: response.status,
+                            statusText: response.statusText
+                        });
+                    }
+                    return response;
+                });
+            }
+            return result;
+        };
+
+        console.log('[RawMD] fetch hook 已安装');
+    } + ')();';
+
+    var script = document.createElement('script');
+    script.textContent = code;
+    (document.head || document.documentElement).appendChild(script);
+    script.remove();
+})();
+
+        
+      
+
+
+【/CodeEND】
+delete content.js
+[2026-04-24 00:13:38] CREATE | D:\Documents\my\ChatGLM Raw Markdown\manifest.json
+[2026-04-24 00:13:38] CREATE | D:\Documents\my\ChatGLM Raw Markdown\injector.js
+[2026-04-24 00:13:38] RESULT | [指令 1] 已创建文件：D:\Documents\my\ChatGLM Raw Markdown\manifest.json（305 字符）
+---
+[指令 2] 已创建文件：D:\Documents\my\ChatGLM Raw Markdown\injector.js（5123 字符）
+---
+[指令 3] 错误：文件不存在：D:\Documents\my\ChatGLM Raw Markdown\content.js
+[2026-04-24 00:28:21] RECEIVED | create manifest.json 【CodeSTART】
+
+
+
+
+
+
+        
+
+          
+{
+  "manifest_version": 3,
+  "name": "ChatGLM Raw Markdown",
+  "version": "1.3",
+  "description": "显示 ChatGLM 回复的原始 Markdown 文本",
+  "content_scripts": [
+    {
+      "matches": ["https://chatglm.cn/*" , "https://www.chatglm.cn/*"] ,
+      "js": ["content.js"],
+      "run_at": "document_start",
+      "world": "MAIN"
+    }
+  ]
+}
+
+        
+      
+
+
+【/CodeEND】
+create content.js 【CodeSTART】
+
+
+
+
+
+
+        
+
+          
+(function() {
+    'use strict';
+
+    console.log('[RawMD] ===== MAIN world 脚本已加载 =====');
+
+    var pendingRawText = null;
+    var replaceTimer = null;
+
+    function escapeHtml(text) {
+        var div = document.createElement('div');
+        div.textContent = text;
+        return div.innerHTML;
+    }
+
+    function scheduleReplace() {
+        if (replaceTimer) clearTimeout(replaceTimer);
+        replaceTimer = setTimeout(doReplace, 1000);
+    }
+
+    function doReplace() {
+        if (!pendingRawText) return;
+        var rawText = pendingRawText;
+
+        var contents = document.querySelectorAll('.answer-content-wrap');
+        if (contents.length === 0) {
+            replaceTimer = setTimeout(doReplace, 500);
+            return;
+        }
+
+        var target = contents[contents.length - 1];
+        target.innerHTML = '<pre style="white-space:pre-wrap;word-wrap:break-word;font-family:Consolas,Monaco,\'Courier New\',monospace;margin:0;padding:16px;background:#1a1a2e;color:#e0e0e0;border-radius:8px;font-size:13.5px;line-height:1.7;overflow-x:auto;tab-size:4;">' + escapeHtml(rawText) + '</pre>';
+        console.log('[RawMD] 已替换回复内容，长度:', rawText.length);
+        pendingRawText = null;
+    }
+
+    function processMessage(data) {
+        if (!data.parts || !Array.isArray(data.parts)) return;
+        for (var i = 0; i < data.parts.length; i++) {
+            var part = data.parts[i];
+            if (!part.content || !Array.isArray(part.content)) continue;
+            for (var j = 0; j < part.content.length; j++) {
+                var item = part.content[j];
+                if (item.type === 'text' && typeof item.text === 'string') {
+                    if (part.status === 'finish') {
+                        console.log('[RawMD] 捕获到完整回复，长度:', item.text.length);
+                        pendingRawText = item.text;
+                        scheduleReplace();
+                    }
+                }
+            }
+        }
+    }
+
+    function tryParseLine(line) {
+        var cleanLine = line.trim();
+        if (cleanLine.indexOf('data:') === 0) {
+            cleanLine = cleanLine.substring(5).trim();
+        }
+        if (cleanLine.indexOf('message ') !== 0) return;
+
+        var jsonStart = cleanLine.indexOf('{');
+        if (jsonStart === -1) return;
+        var jsonStr = cleanLine.substring(jsonStart);
+
+        try {
+            processMessage(JSON.parse(jsonStr));
+            return;
+        } catch(e) {}
+
+        var lastBrace = jsonStr.lastIndexOf('}');
+        if (lastBrace > 0 && lastBrace < jsonStr.length - 1) {
+            try {
+                processMessage(JSON.parse(jsonStr.substring(0, lastBrace + 1)));
+            } catch(e) {}
+        }
+    }
+
+    function readStream(stream) {
+        var reader = stream.getReader();
+        var decoder = new TextDecoder();
+        var buffer = '';
+
+        function read() {
+            reader.read().then(function(result) {
+                if (result.done) {
+                    if (buffer.trim()) tryParseLine(buffer);
+                    return;
+                }
+                buffer += decoder.decode(result.value, { stream: true });
+                var lines = buffer.split('\n');
+                buffer = lines.pop() || '';
+                for (var i = 0; i < lines.length; i++) {
+                    tryParseLine(lines[i]);
+                }
+                read();
+            }).catch(function(e) {
+                console.log('[RawMD] stream 读取错误:', e);
+            });
+        }
+        read();
+    }
+
+    var originalFetch = window.fetch;
+    window.fetch = function() {
+        var args = Array.prototype.slice.call(arguments);
+        var result = originalFetch.apply(this, args);
+        var url = typeof args[0] === 'string' ? args[0] : (args[0] && args[0].url ? args[0].url : '');
+
+        if (url.indexOf('/assistant/stream') !== -1) {
+            console.log('[RawMD] 拦截到 stream 请求');
+            return result.then(function(response) {
+                if (response.body) {
+                    var streams = response.body.tee();
+                    readStream(streams[1]);
+                    return new Response(streams[0], {
+                        headers: response.headers,
+                        status: response.status,
+                        statusText: response.statusText
+                    });
+                }
+                return response;
+            });
+        }
+        return result;
+    };
+
+    console.log('[RawMD] fetch hook 已安装');
+})();
+
+        
+      
+
+
+【/CodeEND】
+delete injector.js
+[2026-04-24 00:28:21] CREATE | D:\Documents\my\ChatGLM Raw Markdown\manifest.json
+[2026-04-24 00:28:21] CREATE | D:\Documents\my\ChatGLM Raw Markdown\content.js
+[2026-04-24 00:28:21] DELETE | D:\Documents\my\ChatGLM Raw Markdown\injector.js
+[2026-04-24 00:28:21] RESULT | [指令 1] 已创建文件：D:\Documents\my\ChatGLM Raw Markdown\manifest.json（327 字符）
+---
+[指令 2] 已创建文件：D:\Documents\my\ChatGLM Raw Markdown\content.js（4468 字符）
+---
+[指令 3] 已删除文件：D:\Documents\my\ChatGLM Raw Markdown\injector.js
+[2026-04-24 00:42:52] RECEIVED | get https://t1.chatglm.cn/file/69ea4bca867b10d77f85c9a7.log?expired_at=1777394513&sign=53d109ea566ef4447f51fdbaa2a12240&ext=log
+[2026-04-24 00:42:53] GET | https://t1.chatglm.cn/file/69ea4bca867b10d77f85c9a7.log?expired_at=1777394513&sign=53d109ea566ef4447f51fdbaa2a12240&ext=log
+[2026-04-24 00:42:53] RESULT | PokerAgent.user.js:307 [Agent-INFO] 💓 心跳 | 队列0条 | 锁定:false
+1990.79e2b7f2.js:1  POST https://zpqy.cn-wulanchabu.log.aliyuncs.com/logstores/front/track?APIVersion=0.6.0 net::ERR_BLOCKED_BY_CLIENT
+(匿名) @ 1990.79e2b7f2.js:1
+(匿名) @ 1990.79e2b7f2.js:1
+(匿名) @ 1990.79e2b7f2.js:1
+U @ 1990.79e2b7f2.js:1
+sendPayload @ 1990.79e2b7f2.js:1
+(匿名) @ 1990.79e2b7f2.js:1
+(匿名) @ 1990.79e2b7f2.js:1
+Promise.then
+t.__zpPatched.t.run @ 1990.79e2b7f2.js:1
+append @ 1990.79e2b7f2.js:1
+platformSend @ 1990.79e2b7f2.js:1
+sendImmediateInner @ 1990.79e2b7f2.js:1
+sendImmediate @ 1990.79e2b7f2.js:1
+es @ 1990.79e2b7f2.js:1
+eh @ 1990.79e2b7f2.js:1
+content.js:4 [RawMD] ===== MAIN world 脚本已加载 =====
+content.js:127 [RawMD] fetch hook 已安装
+content-script.js:7 📝 [Content Script] 开始加载，当前 URL: https://chatglm.cn/main/alltoolsdetail?t=1776962342262&lang=zh&cid=69ea4b40c8925c4762448083
+已导航到     https://chatglm.cn/main/alltoolsdetail?t=1776962342262&lang=zh&cid=69ea4b40c8925c4762448083
+psk8uqfi:1 Fri Apr 24 2026 00:39:41 GMT+0800 (中国标准时间)
+psk8uqfi:1 Error
+psk8uqfi:1 由于“保留日志”的原因，已阻止     console.clear()
+    
+alltoolsdetail?t=1776962342262&lang=zh&cid=69ea4b40c8925c4762448083:1 Error
+content.js:4 [RawMD] ===== MAIN world 脚本已加载 =====
+content.js:127 [RawMD] fetch hook 已安装
+content-script.js:7 📝 [Content Script] 开始加载，当前 URL: https://chatglm.cn/main/alltoolsdetail?t=1776962342262&lang=zh&cid=69ea4b40c8925c4762448083&refer__991=2651886234-Rt93euxvt6MZxix1bPx8xlx53ADPBF1R0x4oAjZ%3DtcvF8uVx_83J%2FC3BB81bf3cvoxBlffx41xxC93ufxg386xty3uRggFnAvxBB4OxA34fcxpQOx%3D9x8QoxVixux2387xG344bxcBxTdYk6x9gxo7DDx0kfG0%2FHBCbHIA338xMZs936xnMtt6%3DtzoCJOOcJBx
+已导航到     https://chatglm.cn/main/alltoolsdetail?t=1776962342262&lang=zh&cid=69ea4b40c8925c4762448083&refer__991=2651886234-Rt93euxvt6MZxix1bPx8xlx53ADPBF1R0x4oAjZ%3DtcvF8uVx_83J%2FC3BB81bf3cvoxBlffx41xxC93ufxg386xty3uRggFnAvxBB4OxA34fcxpQOx%3D9x8QoxVixux2387xG344bxcBxTdYk6x9gxo7DDx0kfG0%2FHBCbHIA338xMZs936xnMtt6%3DtzoCJOOcJBx
+jquery.min.js:1 Fri Apr 24 2026 00:39:41 GMT+0800 (中国标准时间)
+jquery.min.js:1 Error
+jquery.min.js:1 由于“保留日志”的原因，已阻止     console.clear()
+    
+VM268986:1 Error
+content-script.js:26 ✅ [AudioContext] 创建成功，状态: suspended
+Tracking Prevention blocked access to storage for <URL>.
+Tracking Prevention blocked access to storage for <URL>.
+Tracking Prevention blocked access to storage for <URL>.
+Tracking Prevention blocked access to storage for <URL>.
+Tracking Prevention blocked access to storage for <URL>.
+Tracking Prevention blocked access to storage for <URL>.
+stadium.js:1 Error
+    at stadium.js:1:2654
+    at 297d (stadium.js:1:2794)
+    at n (stadium.js:1:110)
+    at 4 (stadium.js:1:2832)
+    at n (stadium.js:1:110)
+    at stadium.js:1:903
+    at stadium.js:1:912
+content.js:106  POST https://analysis.chatglm.cn/bdms/p.gif net::ERR_BLOCKED_BY_CLIENT
+window.fetch @ content.js:106
+fetch @ jquery.min.js:1
+(匿名) @ 1990.79e2b7f2.js:1
+window.fetch.window.fetch @ 1990.79e2b7f2.js:1
+b @ main.9423cc5b.js:18
+f @ main.9423cc5b.js:18
+B @ main.9423cc5b.js:18
+(匿名) @ main.9423cc5b.js:18
+Promise.then
+c.request @ 1990.79e2b7f2.js:2
+(匿名) @ 1990.79e2b7f2.js:2
+k @ main.9423cc5b.js:18
+d @ main.9423cc5b.js:1
+(匿名) @ main.9423cc5b.js:7
+getClientConfig @ main.9423cc5b.js:7
+(匿名) @ 1990.79e2b7f2.js:2
+S.dispatch @ 1990.79e2b7f2.js:2
+S.dispatch @ 1990.79e2b7f2.js:2
+Object.defineProperties.s.dispatch @ 1990.79e2b7f2.js:2
+r.<computed> @ 1990.79e2b7f2.js:2
+created @ main.9423cc5b.js:7
+C @ 1990.79e2b7f2.js:1
+f @ 1990.79e2b7f2.js:1
+tw @ 1990.79e2b7f2.js:1
+(匿名) @ 1990.79e2b7f2.js:1
+r8 @ 1990.79e2b7f2.js:1
+r4 @ 1990.79e2b7f2.js:1
+(匿名) @ 1990.79e2b7f2.js:1
+r6 @ 1990.79e2b7f2.js:1
+M @ 1990.79e2b7f2.js:1
+L @ 1990.79e2b7f2.js:1
+w @ 1990.79e2b7f2.js:1
+ee @ 1990.79e2b7f2.js:1
+mount @ 1990.79e2b7f2.js:1
+t.mount @ 1990.79e2b7f2.js:1
+5826 @ main.9423cc5b.js:7
+f @ runtime.647084cc.js:1
+(匿名) @ main.9423cc5b.js:23
+f.O @ runtime.647084cc.js:1
+(匿名) @ main.9423cc5b.js:23
+t @ runtime.647084cc.js:1
+(匿名) @ main.9423cc5b.js:1
+S键下载这个图片.user.js:971 [图片下载器] 已加载 (v3.8) - 悬停图片并按 S 键下载
+S键下载这个图片.user.js:972 [图片下载器] B站封面高清下载已修复
+S键下载这个图片.user.js:973 [图片下载器] 支持快速连续下载多个图片
+content.js:106  POST https://analysis.chatglm.cn/bdms/p.gif net::ERR_BLOCKED_BY_CLIENT
+window.fetch @ content.js:106
+fetch @ jquery.min.js:1
+(匿名) @ 1990.79e2b7f2.js:1
+window.fetch.window.fetch @ 1990.79e2b7f2.js:1
+b @ main.9423cc5b.js:18
+f @ main.9423cc5b.js:18
+B @ main.9423cc5b.js:18
+(匿名) @ main.9423cc5b.js:18
+Promise.then
+c.request @ 1990.79e2b7f2.js:2
+(匿名) @ 1990.79e2b7f2.js:2
+k @ main.9423cc5b.js:18
+E @ main.9423cc5b.js:18
+await in E
+k @ main.9423cc5b.js:1
+(匿名) @ main.9423cc5b.js:7
+GetUserInfo @ main.9423cc5b.js:7
+(匿名) @ 1990.79e2b7f2.js:2
+S.dispatch @ 1990.79e2b7f2.js:2
+S.dispatch @ 1990.79e2b7f2.js:2
+Object.defineProperties.s.dispatch @ 1990.79e2b7f2.js:2
+r.<computed> @ 1990.79e2b7f2.js:2
+mounted @ main.9423cc5b.js:7
+(匿名) @ 1990.79e2b7f2.js:1
+C @ 1990.79e2b7f2.js:1
+f @ 1990.79e2b7f2.js:1
+t.__weh.t.__weh @ 1990.79e2b7f2.js:1
+S @ 1990.79e2b7f2.js:1
+ee @ 1990.79e2b7f2.js:1
+mount @ 1990.79e2b7f2.js:1
+t.mount @ 1990.79e2b7f2.js:1
+5826 @ main.9423cc5b.js:7
+f @ runtime.647084cc.js:1
+(匿名) @ main.9423cc5b.js:23
+f.O @ runtime.647084cc.js:1
+(匿名) @ main.9423cc5b.js:23
+t @ runtime.647084cc.js:1
+(匿名) @ main.9423cc5b.js:1
+content.js:106  POST https://analysis.chatglm.cn/bdms/p.gif net::ERR_BLOCKED_BY_CLIENT
+window.fetch @ content.js:106
+fetch @ jquery.min.js:1
+(匿名) @ 1990.79e2b7f2.js:1
+window.fetch.window.fetch @ 1990.79e2b7f2.js:1
+b @ main.9423cc5b.js:18
+f @ main.9423cc5b.js:18
+B @ main.9423cc5b.js:18
+(匿名) @ main.9423cc5b.js:18
+Promise.then
+c.request @ 1990.79e2b7f2.js:2
+(匿名) @ 1990.79e2b7f2.js:2
+k @ main.9423cc5b.js:18
+p @ main.9423cc5b.js:1
+(匿名) @ main.9423cc5b.js:7
+GetOperationData @ main.9423cc5b.js:7
+(匿名) @ 1990.79e2b7f2.js:2
+S.dispatch @ 1990.79e2b7f2.js:2
+S.dispatch @ 1990.79e2b7f2.js:2
+Object.defineProperties.s.dispatch @ 1990.79e2b7f2.js:2
+r.<computed> @ 1990.79e2b7f2.js:2
+created @ main.9423cc5b.js:7
+C @ 1990.79e2b7f2.js:1
+f @ 1990.79e2b7f2.js:1
+tw @ 1990.79e2b7f2.js:1
+(匿名) @ 1990.79e2b7f2.js:1
+r8 @ 1990.79e2b7f2.js:1
+r4 @ 1990.79e2b7f2.js:1
+(匿名) @ 1990.79e2b7f2.js:1
+r6 @ 1990.79e2b7f2.js:1
+M @ 1990.79e2b7f2.js:1
+L @ 1990.79e2b7f2.js:1
+w @ 1990.79e2b7f2.js:1
+ee @ 1990.79e2b7f2.js:1
+mount @ 1990.79e2b7f2.js:1
+t.mount @ 1990.79e2b7f2.js:1
+5826 @ main.9423cc5b.js:7
+f @ runtime.647084cc.js:1
+(匿名) @ main.9423cc5b.js:23
+f.O @ runtime.647084cc.js:1
+(匿名) @ main.9423cc5b.js:23
+t @ runtime.647084cc.js:1
+(匿名) @ main.9423cc5b.js:1
+content.js:106  POST https://analysis.chatglm.cn/bdms/p.gif net::ERR_BLOCKED_BY_CLIENT
+window.fetch @ content.js:106
+fetch @ jquery.min.js:1
+(匿名) @ 1990.79e2b7f2.js:1
+window.fetch.window.fetch @ 1990.79e2b7f2.js:1
+b @ main.9423cc5b.js:18
+x @ main.9423cc5b.js:18
+mounted @ 8686.3c1d7d5b.js:1
+await in mounted
+(匿名) @ 1990.79e2b7f2.js:1
+C @ 1990.79e2b7f2.js:1
+f @ 1990.79e2b7f2.js:1
+t.__weh.t.__weh @ 1990.79e2b7f2.js:1
+S @ 1990.79e2b7f2.js:1
+e @ 1990.79e2b7f2.js:1
+Promise.then
+I @ 1990.79e2b7f2.js:1
+D @ 1990.79e2b7f2.js:1
+a.scheduler @ 1990.79e2b7f2.js:1
+scheduler @ 1990.79e2b7f2.js:1
+trigger @ 1990.79e2b7f2.js:1
+b @ 1990.79e2b7f2.js:1
+notify @ 1990.79e2b7f2.js:1
+trigger @ 1990.79e2b7f2.js:1
+set value @ 1990.79e2b7f2.js:1
+G @ 1990.79e2b7f2.js:2
+(匿名) @ 1990.79e2b7f2.js:2
+Promise.then
+z @ 1990.79e2b7f2.js:2
+install @ 1990.79e2b7f2.js:2
+use @ 1990.79e2b7f2.js:1
+5826 @ main.9423cc5b.js:7
+f @ runtime.647084cc.js:1
+(匿名) @ main.9423cc5b.js:23
+f.O @ runtime.647084cc.js:1
+(匿名) @ main.9423cc5b.js:23
+t @ runtime.647084cc.js:1
+(匿名) @ main.9423cc5b.js:1
+jquery.min.js:1 [Violation]
+    Added non-passive event listener to a scroll-blocking 'wheel' event. Consider marking event handler as 'passive' to make the page more responsive. See https://www.chromestatus.com/feature/5745543795965952
+(匿名) @ jquery.min.js:1
+n1 @ 1990.79e2b7f2.js:1
+(匿名) @ 1990.79e2b7f2.js:1
+patchProp @ 1990.79e2b7f2.js:1
+k @ 1990.79e2b7f2.js:1
+_ @ 1990.79e2b7f2.js:1
+w @ 1990.79e2b7f2.js:1
+I @ 1990.79e2b7f2.js:1
+k @ 1990.79e2b7f2.js:1
+_ @ 1990.79e2b7f2.js:1
+w @ 1990.79e2b7f2.js:1
+a @ 1990.79e2b
+
+...（内容过长，仅显示前 8000 字符）
+[2026-04-24 00:43:42] RECEIVED | read content.js 93-106
+[2026-04-24 00:43:42] READ | D:\Documents\my\ChatGLM Raw Markdown\content.js 行 93-106
+[2026-04-24 00:43:42] RESULT |    93	                    tryParseLine(lines[i]);
+   94	                }
+   95	                read();
+   96	            }).catch(function(e) {
+   97	                console.log('[RawMD] stream 读取错误:', e);
+   98	            });
+   99	        }
+  100	        read();
+  101	    }
+  102	
+  103	    var originalFetch = window.fetch;
+  104	    window.fetch = function() {
+  105	        var args = Array.prototype.slice.call(arguments);
+  106	        var result = originalFetch.apply(this, args);
+[2026-04-24 00:44:27] RECEIVED | replace content.js -s 【CodeSTART】
+
+
+
+
+
+
+        
+
+          
+        var url = typeof args[0] === 'string' ? args[0] : (args[0] && args[0].url ? args[0].url : '');
+
+        if (url.indexOf('/assistant/stream') !== -1) {
+            console.log('[RawMD] 拦截到 stream 请求');
+
+        
+      
+
+
+【/CodeEND】
+【CodeSTART】
+
+
+
+
+
+
+        
+
+          
+        var url = typeof args[0] === 'string' ? args[0] : (args[0] && args[0].url ? args[0].url : '');
+
+        console.log('[RawMD-FETCH]', url);
+        if (url.indexOf('/assistant/stream') !== -1 || url.indexOf('stream') !== -1) {
+            console.log('[RawMD] 拦截到 stream 请求');
+
+        
+      
+
+
+【/CodeEND】
+[2026-04-24 00:44:27] RESULT | 错误：缺少参数。用法：replace <路径> [选项]
+[2026-04-24 00:44:55] RECEIVED | replace content.js -s 【CodeSTART】
+
+
+
+
+
+
+
+
+
+ 引用 
+        
+
+          
+        var url = typeof args[0] === 'string' ? args[0] : (args[0] && args[0].url ? args[0].url : '');
+
+        if (url.indexOf('/assistant/stream') !== -1) {
+            console.log('[RawMD] 拦截到 stream 请求');
+
+        
+      
+
+
+【/CodeEND】
+【CodeSTART】
+
+
+
+
+
+
+        
+
+          
+        var url = typeof args[0] === 'string' ? args[0] : (args[0] && args[0].url ? args[0].url : '');
+
+        console.log('[RawMD-FETCH]', url);
+        if (url.indexOf('/assistant/stream') !== -1 || url.indexOf('stream') !== -1) {
+            console.log('[RawMD] 拦截到 stream 请求');
+
+        
+      
+
+
+【/CodeEND】
+[2026-04-24 00:44:55] RESULT | 错误：缺少参数。用法：replace <路径> [选项]
+[2026-04-24 00:47:37] RECEIVED | create content.js 【CodeSTART】
+
+
+
+
+
+
+        
+
+          
+(function() {
+    'use strict';
+
+    console.log('[RawMD] ===== MAIN world 脚本已加载 =====');
+
+    var pendingRawText = null;
+    var replaceTimer = null;
+
+    function escapeHtml(text) {
+        var div = document.createElement('div');
+        div.textContent = text;
+        return div.innerHTML;
+    }
+
+    function scheduleReplace() {
+        if (replaceTimer) clearTimeout(replaceTimer);
+        replaceTimer = setTimeout(doReplace, 1000);
+    }
+
+    function doReplace() {
+        if (!pendingRawText) return;
+        var rawText = pendingRawText;
+
+        var contents = document.querySelectorAll('.answer-content-wrap');
+        if (contents.length === 0) {
+            replaceTimer = setTimeout(doReplace, 500);
+            return;
+        }
+
+        var target = contents[contents.length - 1];
+        target.innerHTML = '<pre style="white-space:pre-wrap;word-wrap:break-word;font-family:Consolas,Monaco,\'Courier New\',monospace;margin:0;padding:16px;background:#1a1a2e;color:#e0e0e0;border-radius:8px;font-size:13.5px;line-height:1.7;overflow-x:auto;tab-size:4;">' + escapeHtml(rawText) + '</pre>';
+        console.log('[RawMD] 已替换回复内容，长度:', rawText.length);
+        pendingRawText = null;
+    }
+
+    function processMessage(data) {
+        if (!data.parts || !Array.isArray(data.parts)) return;
+        for (var i = 0; i < data.parts.length; i++) {
+            var part = data.parts[i];
+            if (!part.content || !Array.isArray(part.content)) continue;
+            for (var j = 0; j < part.content.length; j++) {
+                var item = part.content[j];
+                if (item.type === 'text' && typeof item.text === 'string') {
+                    if (part.status === 'finish') {
+                        console.log('[RawMD] 捕获到完整回复，长度:', item.text.length);
+                        pendingRawText = item.text;
+                        scheduleReplace();
+                    }
+                }
+            }
+        }
+    }
+
+    function tryParseLine(line) {
+        var cleanLine = line.trim();
+        if (cleanLine.indexOf('data:') === 0) {
+            cleanLine = cleanLine.substring(5).trim();
+        }
+        if (cleanLine.indexOf('message ') !== 0) return;
+
+        var jsonStart = cleanLine.indexOf('{');
+        if (jsonStart === -1) return;
+        var jsonStr = cleanLine.substring(jsonStart);
+
+        try {
+            processMessage(JSON.parse(jsonStr));
+            return;
+        } catch(e) {}
+
+        var lastBrace = jsonStr.lastIndexOf('}');
+        if (lastBrace > 0 && lastBrace < jsonStr.length - 1) {
+            try {
+                processMessage(JSON.parse(jsonStr.substring(0, lastBrace + 1)));
+            } catch(e) {}
+        }
+    }
+
+    function readStream(stream) {
+        var reader = stream.getReader();
+        var decoder = new TextDecoder();
+        var buffer = '';
+
+        function read() {
+            reader.read().then(function(result) {
+                if (result.done) {
+                    if (buffer.trim()) tryParseLine(buffer);
+                    return;
+                }
+                buffer += decoder.decode(result.value, { stream: true });
+                var lines = buffer.split('\n');
+                buffer = lines.pop() || '';
+                for (var i = 0; i < lines.length; i++) {
+                    tryParseLine(lines[i]);
+                }
+                read();
+            }).catch(function(e) {
+                console.log('[RawMD] stream 读取错误:', e);
+            });
+        }
+        read();
+    }
+
+    // === Hook fetch ===
+    var originalFetch = window.fetch;
+    window.fetch = function() {
+        var args = Array.prototype.slice.call(arguments);
+        var url = typeof args[0] === 'string' ? args[0] : (args[0] && args[0].url ? args[0].url : '');
+        if (url && url.indexOf('analysis.chatglm.cn') === -1) {
+            console.log('[RawMD-FETCH]', url);
+        }
+        var result = originalFetch.apply(this, args);
+        if (url && url.indexOf('analysis.chatglm.cn') === -1) {
+            console.log('[RawMD] fetch URL 不含 stream，跳过');
+        }
+        return result;
+    };
+
+    // === Hook EventSource ===
+    var OriginalEventSource = window.EventSource;
+    window.EventSource = function(url, opts) {
+        console.log('[RawMD-EVENTSOURCE]', url);
+        var es = new OriginalEventSource(url, opts);
+        var origOnMessage = null;
+        Object.defineProperty(es, 'onmessage', {
+            get: function() { return origOnMessage; },
+            set: function(fn) {
+                origOnMessage = function(event) {
+                    console.log('[RawMD-ES-DATA]', event.data.substring(0, 200));
+                    tryParseLine(event.data);
+                    if (fn) fn.call(this, event);
+                };
+            }
+        });
+        es.addEventListener('message', function(event) {
+            console.log('[RawMD-ES-MSG]', event.data.substring(0, 200));
+            tryParseLine(event.data);
+        });
+        return es;
+    };
+
+    // === Hook XMLHttpRequest ===
+    var origXHROpen = XMLHttpRequest.prototype.open;
+    var origXHRSend = XMLHttpRequest.prototype.send;
+    var origXHRSetReady = Object.getOwnPropertyDescriptor(XMLHttpRequest.prototype, 'onreadystatechange');
+
+    XMLHttpRequest.prototype.open = function(method, url) {
+        this._rawmd_url = url;
+        this._rawmd_method = method;
+        return origXHROpen.apply(this, arguments);
+    };
+
+    XMLHttpRequest.prototype.send = function() {
+        var url = this._rawmd_url || '';
+        if (url && url.indexOf('analysis.chatglm.cn') === -1) {
+            console.log('[RawMD-XHR]', this._rawmd_method, url);
+        }
+        var xhr = this;
+        var origReadyStateChange = null;
+        Object.defineProperty(xhr, 'onreadystatechange', {
+            get: function() { return origReadyStateChange; },
+            set: function(fn) {
+                origReadyStateChange = function() {
+                    if (xhr.readyState === 3 && xhr._rawmd_url) {
+                        var data = xhr.responseText;
+                        if (data && data.length > xhr._rawmd_lastLen) {
+                            var chunk = data.substring(xhr._rawmd_lastLen);
+                            xhr._rawmd_lastLen = data.length;
+                            tryParseLine(chunk);
+                        }
+                    }
+                    if (fn) fn.call(xhr);
+                };
+            }
+        });
+        this._rawmd_lastLen = 0;
+        return origXHRSend.apply(this, arguments);
+    };
+
+    console.log('[RawMD] fetch + EventSource + XHR hooks 已安装');
+})();
+
+        
+      
+
+
+【/CodeEND】
+[2026-04-24 00:47:37] CREATE | D:\Documents\my\ChatGLM Raw Markdown\content.js
+[2026-04-24 00:47:37] RESULT | 已创建文件：D:\Documents\my\ChatGLM Raw Markdown\content.js（6585 字符）
+[2026-04-24 00:49:36] RECEIVED | create content.js 【CodeSTART】
+
+
+
+
+
+
+        
+
+          
+(function() {
+    'use strict';
+
+    console.log('[RawMD] ===== MAIN world 脚本已加载 =====');
+
+    var pendingRawText = null;
+    var replaceTimer = null;
+
+    function escapeHtml(text) {
+        var div = document.createElement('div');
+        div.textContent = text;
+        return div.innerHTML;
+    }
+
+    function scheduleReplace() {
+        if (replaceTimer) clearTimeout(replaceTimer);
+        replaceTimer = setTimeout(doReplace, 1000);
+    }
+
+    function doReplace() {
+        if (!pendingRawText) return;
+        var rawText = pendingRawText;
+
+        var contents = document.querySelectorAll('.answer-content-wrap');
+        if (contents.length === 0) {
+            replaceTimer = setTimeout(doReplace, 500);
+            return;
+        }
+
+        var target = contents[contents.length - 1];
+        target.innerHTML = '<pre style="white-space:pre-wrap;word-wrap:break-word;font-family:Consolas,Monaco,\'Courier New\',monospace;margin:0;padding:16px;background:#1a1a2e;color:#e0e0e0;border-radius:8px;font-size:13.5px;line-height:1.7;overflow-x:auto;tab-size:4;">' + escapeHtml(rawText) + '</pre>';
+        console.log('[RawMD] 已替换回复内容，长度:', rawText.length);
+        pendingRawText = null;
+    }
+
+    function processMessage(data) {
+        if (!data.parts || !Array.isArray(data.parts)) return;
+        for (var i = 0; i < data.parts.length; i++) {
+            var part = data.parts[i];
+            if (!part.content || !Array.isArray(part.content)) continue;
+            for (var j = 0; j < part.content.length; j++) {
+                var item = part.content[j];
+                if (item.type === 'text' && typeof item.text === 'string') {
+                    if (part.status === 'finish') {
+                        console.log('[RawMD] 捕获到完整回复，长度:', item.text.length);
+                        pendingRawText = item.text;
+                        scheduleReplace();
+                    }
+                }
+            }
+        }
+    }
+
+    function tryParseLine(line) {
+        var cleanLine = line.trim();
+        if (cleanLine.indexOf('data:') === 0) {
+            cleanLine = cleanLine.substring(5).trim();
+        }
+        if (cleanLine.indexOf('message ') !== 0) return;
+
+        var jsonStart = cleanLine.indexOf('{');
+        if (jsonStart === -1) return;
+        var jsonStr = cleanLine.substring(jsonStart);
+
+        try {
+            processMessage(JSON.parse(jsonStr));
+            return;
+        } catch(e) {}
+
+        var lastBrace = jsonStr.lastIndexOf('}');
+        if (lastBrace > 0 && lastBrace < jsonStr.length - 1) {
+            try {
+                processMessage(JSON.parse(jsonStr.substring(0, lastBrace + 1)));
+            } catch(e) {}
+        }
+    }
+
+    function readStream(stream) {
+        var reader = stream.getReader();
+        var decoder = new TextDecoder();
+        var buffer = '';
+
+        function read() {
+            reader.read().then(function(result) {
+                if (result.done) {
+                    if (buffer.trim()) tryParseLine(buffer);
+                    return;
+                }
+                buffer += decoder.decode(result.value, { stream: true });
+                var lines = buffer.split('\n');
+                buffer = lines.pop() || '';
+                for (var i = 0; i < lines.length; i++) {
+                    tryParseLine(lines[i]);
+                }
+                read();
+            }).catch(function(e) {
+                console.log('[RawMD] stream 读取错误:', e);
+            });
+        }
+        read();
+    }
+
+    // === Hook fetch ===
+    var originalFetch = window.fetch;
+    window.fetch = function() {
+        var args = Array.prototype.slice.call(arguments);
+        var url = typeof args[0] === 'string' ? args[0] : (args[0] && args[0].url ? args[0].url : '');
+        if (url && url.indexOf('analysis.chatglm.cn') === -1 && url.indexOf('log.aliyuncs.com') === -1 && url.indexOf('volces.com') === -1) {
+            console.log('[RawMD-FETCH]', url);
+        }
+        return originalFetch.apply(this, args);
+    };
+
+    // === Hook WebSocket ===
+    var OriginalWebSocket = window.WebSocket;
+    window.WebSocket = function(url, protocols) {
+        console.log('[RawMD-WS] 新建 WebSocket:', url);
+        var ws = protocols ? new OriginalWebSocket(url, protocols) : new OriginalWebSocket(url);
+
+        ws.addEventListener('message', function(event) {
+            var data = typeof event.data === 'string' ? event.data : '';
+            if (data.indexOf('message ') !== -1 || data.indexOf('"parts"') !== -1 || data.indexOf('"status"') !== -1) {
+                console.log('[RawMD-WS-DATA]', data.substring(0, 300));
+                var lines = data.split('\n');
+                for (var i = 0; i < lines.length; i++) {
+                    tryParseLine(lines[i]);
+                }
+            }
+        });
+
+        return ws;
+    };
+    window.WebSocket.prototype = OriginalWebSocket.prototype;
+    window.WebSocket.CONNECTING = OriginalWebSocket.CONNECTING;
+    window.WebSocket.OPEN = OriginalWebSocket.OPEN;
+    window.WebSocket.CLOSING = OriginalWebSocket.CLOSING;
+    window.WebSocket.CLOSED = OriginalWebSocket.CLOSED;
+
+    console.log('[RawMD] fetch + WebSocket hooks 已安装');
+})();
+
+        
+      
+
+
+【/CodeEND】
+[2026-04-24 00:49:36] CREATE | D:\Documents\my\ChatGLM Raw Markdown\content.js
+[2026-04-24 00:49:36] RESULT | 已创建文件：D:\Documents\my\ChatGLM Raw Markdown\content.js（5183 字符）
+[2026-04-24 00:51:52] RECEIVED | create content.js 【CodeSTART】
+
+
+
+
+
+
+        
+
+          
+(function() {
+    'use strict';
+
+    console.log('[RawMD] ===== MAIN world 脚本已加载 =====');
+
+    var pendingRawText = null;
+    var replaceTimer = null;
+
+    function escapeHtml(text) {
+        var div = document.createElement('div');
+        div.textContent = text;
+        return div.innerHTML;
+    }
+
+    function scheduleReplace() {
+        if (replaceTimer) clearTimeout(replaceTimer);
+        replaceTimer = setTimeout(doReplace, 1000);
+    }
+
+    function doReplace() {
+        if (!pendingRawText) return;
+        var rawText = pendingRawText;
+
+        var contents = document.querySelectorAll('.answer-content-wrap');
+        if (contents.length === 0) {
+            replaceTimer = setTimeout(doReplace, 500);
+            return;
+        }
+
+        var target = contents[contents.length - 1];
+        target.innerHTML = '<pre style="white-space:pre-wrap;word-wrap:break-word;font-family:Consolas,Monaco,\'Courier New\',monospace;margin:0;padding:16px;background:#1a1a2e;color:#e0e0e0;border-radius:8px;font-size:13.5px;line-height:1.7;overflow-x:auto;tab-size:4;">' + escapeHtml(rawText) + '</pre>';
+        console.log('[RawMD] 已替换回复内容，长度:', rawText.length);
+        pendingRawText = null;
+    }
+
+    function processMessage(data) {
+        if (!data.parts || !Array.isArray(data.parts)) return;
+        for (var i = 0; i < data.parts.length; i++) {
+            var part = data.parts[i];
+            if (!part.content || !Array.isArray(part.content)) continue;
+            for (var j = 0; j < part.content.length; j++) {
+                var item = part.content[j];
+                if (item.type === 'text' && typeof item.text === 'string') {
+                    if (part.status === 'finish') {
+                        console.log('[RawMD] 捕获到完整回复，长度:', item.text.length);
+                        pendingRawText = item.text;
+                        scheduleReplace();
+                    }
+                }
+            }
+        }
+    }
+
+    function tryParseLine(line) {
+        var cleanLine = line.trim();
+        if (cleanLine.indexOf('data:') === 0) {
+            cleanLine = cleanLine.substring(5).trim();
+        }
+        if (cleanLine.indexOf('message ') !== 0) return;
+
+        var jsonStart = cleanLine.indexOf('{');
+        if (jsonStart === -1) return;
+        var jsonStr = cleanLine.substring(jsonStart);
+
+        try {
+            processMessage(JSON.parse(jsonStr));
+            return;
+        } catch(e) {}
+
+        var lastBrace = jsonStr.lastIndexOf('}');
+        if (lastBrace > 0 && lastBrace < jsonStr.length - 1) {
+            try {
+                processMessage(JSON.parse(jsonStr.substring(0, lastBrace + 1)));
+            } catch(e) {}
+        }
+    }
+
+    // === Hook WebSocket ===
+    var OriginalWebSocket = window.WebSocket;
+    window.WebSocket = function(url, protocols) {
+        console.log('[RawMD-WS] 新建 WebSocket:', url);
+        var ws = protocols ? new OriginalWebSocket(url, protocols) : new OriginalWebSocket(url);
+
+        ws.addEventListener('message', function(event) {
+            var data = event.data;
+            if (typeof data === 'string') {
+                if (data.length > 50) {
+                    console.log('[RawMD-WS-TEXT]', data.substring(0, 300));
+                    // 尝试解析
+                    if (data.indexOf('"parts"') !== -1 || data.indexOf('"status"') !== -1) {
+                        var lines = data.split('\n');
+                        for (var i = 0; i < lines.length; i++) {
+                            tryParseLine(lines[i]);
+                        }
+                    }
+                }
+            } else if (data instanceof ArrayBuffer) {
+                var view = new Uint8Array(data);
+                // MQTT 二进制数据，尝试找到其中的 JSON 文本
+                var text = '';
+                for (var k = 0; k < view.length; k++) {
+                    if (view[k] >= 32 && view[k] < 127) {
+                        text += String.fromCharCode(view[k]);
+                    } else {
+                        if (text.length > 20) {
+                            console.log('[RawMD-WS-BIN-STR]', text.substring(0, 500));
+                            if (text.indexOf('"parts"') !== -1 || text.indexOf('"status"') !== -1 || text.indexOf('"text"') !== -1) {
+                                tryParseLine(text);
+                            }
+                        }
+                        text = '';
+                    }
+                }
+                if (text.length > 20) {
+                    console.log('[RawMD-WS-BIN-STR]', text.substring(0, 500));
+                    if (text.indexOf('"parts"') !== -1 || text.indexOf('"status"') !== -1 || text.indexOf('"text"') !== -1) {
+                        tryParseLine(text);
+                    }
+                }
+            } else if (data instanceof Blob) {
+                data.text().then(function(t) {
+                    console.log('[RawMD-WS-BLOB]', t.substring(0, 300));
+                });
+            }
+        });
+
+        return ws;
+    };
+    window.WebSocket.prototype = OriginalWebSocket.prototype;
+    window.WebSocket.CONNECTING = OriginalWebSocket.CONNECTING;
+    window.WebSocket.OPEN = OriginalWebSocket.OPEN;
+    window.WebSocket.CLOSING = OriginalWebSocket.CLOSING;
+    window.WebSocket.CLOSED = OriginalWebSocket.CLOSED;
+
+    console.log('[RawMD] WebSocket hook 已安装（含 MQTT 二进制解析）');
+})();
+
+        
+      
+
+
+【/CodeEND】
+[2026-04-24 00:51:52] CREATE | D:\Documents\my\ChatGLM Raw Markdown\content.js
+[2026-04-24 00:51:52] RESULT | 已创建文件：D:\Documents\my\ChatGLM Raw Markdown\content.js（5343 字符）
+[2026-04-24 00:55:48] RECEIVED | create content.js 【CodeSTART】
+
+
+
+
+
+
+        
+
+          
+(function() {
+    'use strict';
+
+    console.log('[RawMD] ===== MAIN world 脚本已加载 =====');
+
+    var wsCount = 0;
+
+    var OriginalWebSocket = window.WebSocket;
+    window.WebSocket = function(url, protocols) {
+        wsCount++;
+        var id = wsCount;
+        console.log('[RawMD-WS#' + id + '] 新建:', url);
+        var ws = protocols ? new OriginalWebSocket(url, protocols) : new OriginalWebSocket(url);
+
+        console.log('[RawMD-WS#' + id + '] binaryType:', ws.binaryType);
+
+        ws.addEventListener('open', function() {
+            console.log('[RawMD-WS#' + id + '] 已连接');
+        });
+
+        ws.addEventListener('close', function(e) {
+            console.log('[RawMD-WS#' + id + '] 已关闭', e.code, e.reason);
+        });
+
+        ws.addEventListener('error', function(e) {
+            console.log('[RawMD-WS#' + id + '] 错误', e);
+        });
+
+        ws.addEventListener('message', function(event) {
+            var data = event.data;
+            if (typeof data === 'string') {
+                console.log('[RawMD-WS#' + id + '][TEXT]', data.length, data.substring(0, 300));
+            } else if (data instanceof ArrayBuffer) {
+                var view = new Uint8Array(data);
+                var hex = '';
+                var ascii = '';
+                var len = Math.min(view.length, 500);
+                for (var k = 0; k < len; k++) {
+                    hex += view[k].toString(16).padStart(2, '0') + ' ';
+                    ascii += (view[k] >= 32 && view[k] < 127) ? String.fromCharCode(view[k]) : '.';
+                    if ((k + 1) % 32 === 0) { hex += '\n'; ascii += '\n'; }
+                }
+                console.log('[RawMD-WS#' + id + '][BIN] 总字节:', view.length, '\nHEX:\n' + hex + '\nASCII:\n' + ascii);
+            } else if (data instanceof Blob) {
+                console.log('[RawMD-WS#' + id + '][BLOB] size:', data.size, 'type:', data.type);
+            } else {
+                console.log('[RawMD-WS#' + id + '][???]', typeof data, data);
+            }
+        });
+
+        return ws;
+    };
+    window.WebSocket.prototype = OriginalWebSocket.prototype;
+    window.WebSocket.CONNECTING = OriginalWebSocket.CONNECTING;
+    window.WebSocket.OPEN = OriginalWebSocket.OPEN;
+    window.WebSocket.CLOSING = OriginalWebSocket.CLOSING;
+    window.WebSocket.CLOSED = OriginalWebSocket.CLOSED;
+
+    console.log('[RawMD] WebSocket debug hook 已安装');
+})();
+
+        
+      
+
+
+【/CodeEND】
+[2026-04-24 00:55:48] CREATE | D:\Documents\my\ChatGLM Raw Markdown\content.js
+[2026-04-24 00:55:48] RESULT | 已创建文件：D:\Documents\my\ChatGLM Raw Markdown\content.js（2384 字符）
+[2026-04-24 01:02:05] RECEIVED | create content.js 【CodeSTART】
+
+
+
+
+
+
+        
+
+          
+(function() {
+    'use strict';
+
+    console.log('[RawMD] ===== Vue 探测脚本已加载 =====');
+
+    function findVueInfo(el, depth) {
+        if (!el || depth > 8) return;
+        var keys = ['__vueParentComponent', '__vue_app__', '_vnode', '__vue__'];
+        for (var k = 0; k < keys.length; k++) {
+            if (el[keys[k]]) {
+                console.log('[RawMD] 找到 Vue 实例 @', el.tagName + '.' + el.className.substring(0, 40), 'key=' + keys[k]);
+                var comp = el[keys[k]];
+                if (comp.setupState) {
+                    console.log('[RawMD] setupState keys:', Object.keys(comp.setupState));
+                }
+                if (comp.props) {
+                    console.log('[RawMD] props:', comp.props);
+                }
+                if (comp.data) {
+                    try { console.log('[RawMD] data:', comp.data()); } catch(e) {}
+                }
+                if (comp.ctx) {
+                    var ctxKeys = Object.keys(comp.ctx).filter(function(k) { return k.startsWith('$') || k.indexOf('message') !== -1 || k.indexOf('content') !== -1 || k.indexOf('text') !== -1 || k.indexOf('markdown') !== -1 || k.indexOf('raw') !== -1 || k.indexOf('msg') !== -1 || k.indexOf('chat') !== -1; });
+                    if (ctxKeys.length > 0) {
+                        console.log('[RawMD] ctx 匹配 keys:', ctxKeys);
+                        ctxKeys.forEach(function(ck) {
+                            try { console.log('[RawMD] ctx.' + ck + ':', JSON.stringify(comp.ctx[ck]).substring(0, 300)); } catch(e) {}
+                        });
+                    }
+                }
+                if (comp.type && comp.type.props) {
+                    console.log('[RawMD] type.props:', Object.keys(comp.type.props));
+                }
+                // 如果是组件，也检查 expose
+                if (comp.exposed) {
+                    console.log('[RawMD] exposed:', Object.keys(comp.exposed));
+                }
+                return comp;
+            }
+        }
+        for (var c = 0; c < (el.children || []).length; c++) {
+            var result = findVueInfo(el.children[c], depth + 1);
+            if (result) return result;
+        }
+        return null;
+    }
+
+    var observer = new MutationObserver(function(mutations) {
+        for (var i = 0; i < mutations.length; i++) {
+            var m = mutations[i];
+            if (m.type === 'childList') {
+                for (var j = 0; j < m.addedNodes.length; j++) {
+                    var node = m.addedNodes[j];
+                    if (node.nodeType !== 1) continue;
+                    // 检查是否包含 AI 回答
+                    var answers = [];
+                    if (node.classList && (node.classList.contains('answer-content-wrap') || node.classList.contains('answer'))) {
+                        answers.push(node);
+                    }
+                    if (node.querySelectorAll) {
+                        var found = node.querySelectorAll('.answer-content-wrap, .answer');
+                        for (var f = 0; f < found.length; f++) answers.push(found[f]);
+                    }
+                    for (var a = 0; a < answers.length; a++) {
+                        console.log('[RawMD] 检测到新的回答元素');
+                        findVueInfo(answers[a], 0);
+                        // 也向上找
+                        var parent = answers[a].parentElement;
+                        var d = 0;
+                        while (parent && d < 10) {
+                            var comp = parent.__vueParentComponent;
+                            if (comp) {
+                                console.log('[RawMD] 父级 Vue 组件 depth=' + d, parent.tagName + '.' + (parent.className || '').substring(0, 30));
+                                if (comp.setupState) {
+                                    var ssKeys = Object.keys(comp.setupState);
+                                    console.log('[RawMD] setupState keys:', ssKeys);
+                                    ssKeys.forEach(function(sk) {
+                                        try {
+                                            var val = comp.setupState[sk];
+                                            if (typeof val === 'string' && val.length > 10) {
+                                                console.log('[RawMD] setupState.' + sk + ' (string ' + val.length + '):', val.substring(0, 300));
+                                            } else if (typeof val === 'object' && val !== null) {
+                                                console.log('[RawMD] setupState.' + sk + ' (object):', JSON.stringify(val).substring(0, 300));
+                                            }
+                                        } catch(e) {}
+                                    });
+                                }
+                                if (comp.props) {
+                                    console.log('[RawMD] props:', JSON.stringify(comp.props).substring(0, 300));
+                                }
+                                break;
+                            }
+                            parent = parent.parentElement;
+                            d++;
+                        }
+                    }
+                }
+            }
+        }
+    });
+
+    setTimeout(function() {
+        observer.observe(document.body, { childList: true, subtree: true });
+        console.log('[RawMD] MutationObserver 已启动，请发送一条消息...');
+    }, 3000);
+})();
+
+        
+      
+
+
+【/CodeEND】
+[2026-04-24 01:02:05] CREATE | D:\Documents\my\ChatGLM Raw Markdown\content.js
+[2026-04-24 01:02:05] RESULT | 已创建文件：D:\Documents\my\ChatGLM Raw Markdown\content.js（5371 字符）
+[2026-04-24 12:53:40] RECEIVED | create content.js 【CodeSTART】
+
+
+
+
+
+
+        
+
+          
+(function() {
+    'use strict';
+
+    console.log('[RawMD] ===== Store 探测脚本已加载 =====');
+
+    // 尝试找到 Vue app 和 Pinia store
+    function findStores() {
+        // 方法1: 从 #app 元素
+        var appEl = document.getElementById('app');
+        if (appEl && appEl.__vue_app__) {
+            console.log('[RawMD] 找到 Vue app');
+            var app = appEl.__vue_app__;
+            // Pinia store
+            if (app.config && app.config.globalProperties && app.config.globalProperties.$pinia) {
+                var pinia = app.config.globalProperties.$pinia;
+                var stores = Object.keys(pinia._s || {});
+                console.log('[RawMD] Pinia stores:', stores);
+                stores.forEach(function(storeName) {
+                    var store = pinia._s[storeName];
+                    if (store && store.$state) {
+                        var stateKeys = Object.keys(store.$state);
+                        console.log('[RawMD] Store "' + storeName + '" state keys:', stateKeys);
+                        // 查找含有 message/content/text/data 的 key
+                        stateKeys.forEach(function(sk) {
+                            var val = store.$state[sk];
+                            if (val !== null && val !== undefined) {
+                                if (typeof val === 'string' && val.length > 10) {
+                                    console.log('[RawMD]   ' + storeName + '.' + sk + ' (string):', val.substring(0, 200));
+                                } else if (Array.isArray(val)) {
+                                    console.log('[RawMD]   ' + storeName + '.' + sk + ' (array len=' + val.length + '):');
+                                    if (val.length > 0) {
+                                        var item = val[val.length - 1];
+                                        if (typeof item === 'object' && item !== null) {
+                                            console.log('[RawMD]     last item keys:', Object.keys(item));
+                                        }
+                                    }
+                                } else if (typeof val === 'object') {
+                                    var objKeys = Object.keys(val);
+                                    console.log('[RawMD]   ' + storeName + '.' + sk + ' (object keys):', objKeys);
+                                }
+                            }
+                        });
+                    }
+                });
+            } else {
+                console.log('[RawMD] 没有 Pinia');
+            }
+        } else {
+            console.log('[RawMD] #app 上没找到 __vue_app__');
+        }
+
+        // 方法2: 尝试找 __VUE_DEVTOOLS_GLOBAL_HOOK__
+        if (window.__VUE_DEVTOOLS_GLOBAL_HOOK__) {
+            var apps = window.__VUE_DEVTOOLS_GLOBAL_HOOK__.apps;
+            if (apps) {
+                console.log('[RawMD] devtools apps:', apps.size || Object.keys(apps));
+            }
+        }
+
+        // 方法3: 遍历所有 script 标签找 store 实例
+        var allEls = document.querySelectorAll('*');
+        for (var i = 0; i < allEls.length; i++) {
+            if (allEls[i].__vue_app__) {
+                console.log('[RawMD] Vue app on:', allEls[i].tagName, allEls[i].id, allEls[i].className);
+            }
+        }
+    }
+
+    // 延迟执行，等页面完全加载
+    setTimeout(findStores, 5000);
+
+    // MutationObserver 检测回答出现
+    var observer = new MutationObserver(function(mutations) {
+        for (var i = 0; i < mutations.length; i++) {
+            var m = mutations[i];
+            if (m.type === 'childList') {
+                for (var j = 0; j < m.addedNodes.length; j++) {
+                    var node = m.addedNodes[j];
+                    if (node.nodeType !== 1) continue;
+                    var answers = [];
+                    if (node.querySelectorAll) {
+                        var found = node.querySelectorAll('.answer-content-wrap');
+                        for (var f = 0; f < found.length; f++) answers.push(found[f]);
+                    }
+                    if (node.classList && node.classList.contains('answer-content-wrap')) {
+                        answers.push(node);
+                    }
+                    for (var a = 0; a < answers.length; a++) {
+                        // 向上找 Vue 组件
+                        var el = answers[a];
+                        var d = 0;
+                        while (el && d < 15) {
+                            if (el.__vueParentComponent) {
+                                var comp = el.__vueParentComponent;
+                                console.log('[RawMD] Vue 组件找到! depth=' + d, el.tagName + '.' + (el.className || '').substring(0, 30));
+                                if (comp.setupState) {
+                                    console.log('[RawMD] setupState:', Object.keys(comp.setupState));
+                                }
+                                if (comp.props) {
+                                    console.log('[RawMD] props:', Object.keys(comp.props));
+                                }
+                                if (comp.ctx) {
+                                    var interesting = Object.keys(comp.ctx).filter(function(k) {
+                                        return k.charAt(0) !== '_' && k !== '$';
+                                    });
+                                    console.log('[RawMD] ctx (public) keys:', interesting);
+                                }
+                                break;
+                            }
+                            el = el.parentElement;
+                            d++;
+                        }
+                        // 也打印 innerHTML 前 200 字符（纯文本）
+                        console.log('[RawMD] answer HTML:', answers[a].innerHTML.substring(0, 300));
+                    }
+                }
+            }
+        }
+    });
+
+    setTimeout(function() {
+        observer.observe(document.body, { childList: true, subtree: true });
+        console.log('[RawMD] MutationObserver 已启动');
+    }, 3000);
+})();
+
+        
+      
+
+
+【/CodeEND】
+[2026-04-24 12:53:40] CREATE | D:\Documents\my\ChatGLM Raw Markdown\content.js
+[2026-04-24 12:53:40] RESULT | 已创建文件：D:\Documents\my\ChatGLM Raw Markdown\content.js（5928 字符）
+[2026-04-24 12:56:20] RECEIVED | create content.js 【CodeSTART】
+
+
+
+
+
+
+        
+
+          
+(function() {
+    'use strict';
+
+    console.log('[RawMD] ===== Vuex 探测脚本已加载 =====');
+
+    var appEl = document.getElementById('app');
+    if (!appEl || !appEl.__vue_app__) {
+        console.log('[RawMD] 没有 Vue app');
+        return;
+    }
+
+    var app = appEl.__vue_app__;
+
+    // 方法1: $store
+    if (app.config.globalProperties.$store) {
+        var store = app.config.globalProperties.$store;
+        console.log('[RawMD] 找到 Vuex store via $store');
+        dumpStore(store);
+        subscribeMutations(store);
+    }
+
+    // 方法2: 遍历 app._context.provides
+    if (app._context && app._context.provides) {
+        var provides = app._context.provides;
+        console.log('[RawMD] provides keys:', Object.getOwnPropertySymbols(provides).map(function(s) { return s.toString(); }));
+        var symbols = Object.getOwnPropertySymbols(provides);
+        for (var i = 0; i < symbols.length; i++) {
+            var val = provides[symbols[i]];
+            if (val && val._s) {
+                console.log('[RawMD] Pinia found via symbol (unexpected!)');
+            }
+            if (val && val.state && val.getters) {
+                console.log('[RawMD] Vuex found via provides!');
+                dumpStore(val);
+                subscribeMutations(val);
+            }
+        }
+    }
+
+    // 方法3: 从根组件实例找
+    var rootComp = app._instance;
+    if (rootComp) {
+        console.log('[RawMD] root instance setupState keys:', Object.keys(rootComp.setupState || {}));
+        if (rootComp.setupState && rootComp.setupState.store) {
+            console.log('[RawMD] Vuex via root setupState.store!');
+            dumpStore(rootComp.setupState.store);
+            subscribeMutations(rootComp.setupState.store);
+        }
+        if (rootComp.proxy && rootComp.proxy.$store) {
+            console.log('[RawMD] Vuex via root.proxy.$store!');
+            dumpStore(rootComp.proxy.$store);
+            subscribeMutations(rootComp.proxy.$store);
+        }
+    }
+
+    function dumpStore(store) {
+        if (store.state) {
+            var keys = Object.keys(store.state);
+            console.log('[RawMD] Vuex state keys:', keys);
+            keys.forEach(function(k) {
+                var val = store.state[k];
+                if (Array.isArray(val)) {
+                    console.log('[RawMD]   state.' + k + ' is array, len=' + val.length);
+                    if (val.length > 0) {
+                        var last = val[val.length - 1];
+                        console.log('[RawMD]     last item keys:', Object.keys(last || {}));
+                        // 尝试找 content/text/markdown 字段
+                        var strKeys = ['content', 'text', 'markdown', 'raw_content', 'md_content'];
+                        strKeys.forEach(function(sk) {
+                            if (last && last[sk]) {
+                                console.log('[RawMD]     last.' + sk + ':', JSON.stringify(last[sk]).substring(0, 300));
+                            }
+                        });
+                    }
+                } else if (typeof val === 'object' && val !== null) {
+                    console.log('[RawMD]   state.' + k + ' is object, keys:', Object.keys(val).slice(0, 20));
+                } else if (typeof val === 'string' && val.length > 10) {
+                    console.log('[RawMD]   state.' + k + ':', val.substring(0, 200));
+                }
+            });
+        }
+        if (store.getters) {
+            console.log('[RawMD] Vuex getters:', Object.keys(store.getters));
+        }
+    }
+
+    function subscribeMutations(store) {
+        store.subscribe(function(mutation, state) {
+            if (mutation.type === 'SET_DATA_LIST' || mutation.type.indexOf('message') !== -1 || mutation.type.indexOf('chat') !== -1 || mutation.type.indexOf('data') !== -1) {
+                console.log('[RawMD] Mutation:', mutation.type);
+                if (mutation.payload) {
+                    var payload = mutation.payload;
+                    if (Array.isArray(payload)) {
+                        console.log('[RawMD]   payload is array, len=' + payload.length);
+                    } else if (typeof payload === 'object') {
+                        console.log('[RawMD]   payload keys:', Object.keys(payload).slice(0, 30));
+                    } else {
+                        console.log('[RawMD]   payload:', String(payload).substring(0, 300));
+                    }
+                }
+            }
+        });
+        console.log('[RawMD] 已订阅 Vuex mutations');
+    }
+})();
+
+        
+      
+
+
+【/CodeEND】
+[2026-04-24 12:56:20] CREATE | D:\Documents\my\ChatGLM Raw Markdown\content.js
+[2026-04-24 12:56:20] RESULT | 已创建文件：D:\Documents\my\ChatGLM Raw Markdown\content.js（4468 字符）
+[2026-04-24 13:01:01] RECEIVED | create content.js 【CodeSTART】
+
+
+
+
+
+
+        
+
+          
+(function() {
+    'use strict';
+
+    console.log('[RawMD] ===== Vuex 探测脚本 v2 已加载 =====');
+
+    function waitForVueApp(callback, maxWait) {
+        var waited = 0;
+        var interval = 200;
+        maxWait = maxWait || 15000;
+        var timer = setInterval(function() {
+            waited += interval;
+            var appEl = document.getElementById('app');
+            if (appEl && appEl.__vue_app__) {
+                clearInterval(timer);
+                console.log('[RawMD] 找到 Vue app，耗时', waited, 'ms');
+                callback(appEl.__vue_app__);
+            } else if (waited >= maxWait) {
+                clearInterval(timer);
+                console.log('[RawMD] 等待 Vue app 超时');
+                // 尝试其他方式
+                tryOtherMethods();
+            }
+        }, interval);
+    }
+
+    function tryOtherMethods() {
+        // 方法: 遍历所有 DOM 元素找 __vue__ 或 __vueParentComponent
+        var allEls = document.querySelectorAll('*');
+        for (var i = 0; i < Math.min(allEls.length, 5000); i++) {
+            var el = allEls[i];
+            if (el.__vueParentComponent__) {
+                var comp = el.__vueParentComponent__;
+                console.log('[RawMD] 找到 Vue component via __vueParentComponent');
+                var app = findAppFromComponent(comp);
+                if (app) {
+                    console.log('[RawMD] 找到 app via component tree');
+                    probeStore(app);
+                    return;
+                }
+            }
+        }
+        console.log('[RawMD] 所有方法都未找到 Vue app');
+    }
+
+    function findAppFromComponent(comp) {
+        var current = comp;
+        var depth = 0;
+        while (current && depth < 100) {
+            if (current.appContext && current.appContext.app) {
+                return current.appContext.app;
+            }
+            current = current.parent;
+            depth++;
+        }
+        return null;
+    }
+
+    function probeStore(app) {
+        // 方法1: globalProperties.$store
+        if (app.config && app.config.globalProperties && app.config.globalProperties.$store) {
+            var store = app.config.globalProperties.$store;
+            console.log('[RawMD] ✅ 找到 Vuex store via $store');
+            dumpAndSubscribe(store);
+            return;
+        }
+
+        // 方法2: provides
+        if (app._context && app._context.provides) {
+            var provides = app._context.provides;
+            var symbols = Object.getOwnPropertySymbols(provides);
+            for (var i = 0; i < symbols.length; i++) {
+                var val = provides[symbols[i]];
+                if (val && val.state && val.getters && val.commit) {
+                    console.log('[RawMD] ✅ 找到 Vuex store via provides');
+                    dumpAndSubscribe(val);
+                    return;
+                }
+            }
+        }
+
+        // 方法3: 从根组件
+        if (app._instance) {
+            var root = app._instance;
+            if (root.proxy && root.proxy.$store) {
+                console.log('[RawMD] ✅ 找到 Vuex store via root.proxy.$store');
+                dumpAndSubscribe(root.proxy.$store);
+                return;
+            }
+        }
+
+        console.log('[RawMD] 未找到 Vuex store，尝试 patch commit');
+
+        // 方法4: patch store commit
+        patchStoreCommit(app);
+    }
+
+    function dumpAndSubscribe(store) {
+        if (store.state) {
+            console.log('[RawMD] Vuex state keys:', Object.keys(store.state));
+            Object.keys(store.state).forEach(function(k) {
+                var val = store.state[k];
+                if (Array.isArray(val)) {
+                    console.log('[RawMD]   state.' + k + ' [array] len=' + val.length);
+                    if (val.length > 0) {
+                        var last = val[val.length - 1];
+                        console.log('[RawMD]     last item keys:', Object.keys(last || {}).slice(0, 30));
+                        // 打印所有字符串字段的前200字符
+                        Object.keys(last || {}).forEach(function(sk) {
+                            if (typeof last[sk] === 'string' && last[sk].length > 5) {
+                                console.log('[RawMD]     last.' + sk + ':', last[sk].substring(0, 200));
+                            }
+                        });
+                    }
+                } else if (typeof val === 'object' && val !== null) {
+                    console.log('[RawMD]   state.' + k + ' [object] keys:', Object.keys(val).slice(0, 20));
+                } else if (typeof val === 'string' && val.length > 5) {
+                    console.log('[RawMD]   state.' + k + ' [string]:', val.substring(0, 200));
+                }
+            });
+        }
+        if (store.getters) {
+            console.log('[RawMD] Vuex getters:', Object.keys(store.getters).slice(0, 30));
+        }
+
+        // 订阅所有 mutations
+        store.subscribe(function(mutation, state) {
+            console.log('[RawMD] 📦 Mutation:', mutation.type);
+            if (mutation.payload !== undefined) {
+                var p = mutation.payload;
+                if (typeof p === 'string') {
+                    console.log('[RawMD]   payload (string):', p.substring(0, 500));
+                } else if (Array.isArray(p)) {
+                    console.log('[RawMD]   payload (array) len=' + p.length);
+                    if (p.length > 0) {
+                        console.log('[RawMD]     [0] keys:', Object.keys(p[0] || {}).slice(0, 30));
+                        // 打印第一个元素的所有字段
+                        Object.keys(p[0] || {}).forEach(function(sk) {
+                            var sv = p[0][sk];
+                            if (typeof sv === 'string' && sv.length > 5) {
+                                console.log('[RawMD]     [0].' + sk + ':', sv.substring(0, 300));
+                            } else if (typeof sv === 'number' || typeof sv === 'boolean') {
+                                console.log('[RawMD]     [0].' + sk + ':', sv);
+                            }
+                        });
+                    }
+                } else if (typeof p === 'object' && p !== null) {
+                    console.log('[RawMD]   payload (object) keys:', Object.keys(p).slice(0, 30));
+                    Object.keys(p).forEach(function(sk) {
+                        var sv = p[sk];
+                        if (typeof sv === 'string' && sv.length > 5) {
+                            console.log('[RawMD]   payload.' + sk + ':', sv.substring(0, 300));
+                        } else if (Array.isArray(sv)) {
+                            console.log('[RawMD]   payload.' + sk + ' [array] len=' + sv.length);
+                        } else if (typeof sv === 'number' || typeof sv === 'boolean') {
+                            console.log('[RawMD]   payload.' + sk + ':', sv);
+                        }
+                    });
+                }
+            }
+        });
+        console.log('[RawMD] ✅ 已订阅所有 Vuex mutations');
+
+        // 同时 patch markdown-it
+        patchMarkdownIt();
+    }
+
+    function patchStoreCommit(app) {
+        // 尝试在 Vue 初始化后获取 store
+        if (app.config && app.config.globalProperties) {
+            var origMounted = app.config.globalProperties.$mount;
+        }
+    }
+
+    function patchMarkdownIt() {
+        // 尝试拦截 markdown-it 渲染
+        var mdEl = document.querySelector('.markdown-body');
+        if (mdEl) {
+            // 找到该元素的 Vue 组件
+            var comp = mdEl.__vueParentComponent__;
+            if (comp) {
+                console.log('[RawMD] 找到 markdown-body 的 Vue component');
+                console.log('[RawMD]   component setupState keys:', Object.keys(comp.setupState || {}).slice(0, 30));
+                console.log('[RawMD]   component props keys:', Object.keys(comp.props || {}).slice(0, 30));
+                console.log('[RawMD]   component data keys:', Object.keys(comp.data || {}).slice(0, 30));
+                // 递归找上级
+                var parent = comp.parent;
+                var depth = 0;
+                while (parent && depth < 10) {
+                    console.log('[RawMD]   parent[' + depth + '] type:', parent.type ? (parent.type.name || parent.type.__name || 'anonymous') : 'unknown');
+                    if (parent.setupState) {
+                        var sKeys = Object.keys(parent.setupState);
+                        if (sKeys.length > 0) {
+                            console.log('[RawMD]     setupState keys:', sKeys.slice(0, 20));
+                            // 找 content/text/markdown 相关字段
+                            sKeys.forEach(function(sk) {
+                                var sv = parent.setupState[sk];
+                                if (typeof sv === 'string' && sv.length > 20) {
+                                    console.log('[RawMD]     setupState.' + sk + ':', sv.substring(0, 200));
+                                } else if (typeof sv === 'object' && sv !== null && !Array.isArray(sv)) {
+                                    var objKeys = Object.keys(sv);
+                                    if (objKeys.length < 30) {
+                                        console.log('[RawMD]     setupState.' + sk + ' keys:', objKeys);
+                                    }
+                                }
+                            });
+                        }
+                    }
+                    parent = parent.parent;
+                    depth++;
+                }
+            }
+        } else {
+            console.log('[RawMD] 页面上暂无 .markdown-body');
+        }
+    }
+
+    // 启动
+    waitForVueApp(function(app) {
+        probeStore(app);
+    });
+})();
+
+        
+      
+
+
+【/CodeEND】
+[2026-04-24 13:01:01] CREATE | D:\Documents\my\ChatGLM Raw Markdown\content.js
+[2026-04-24 13:01:01] RESULT | 已创建文件：D:\Documents\my\ChatGLM Raw Markdown\content.js（9481 字符）
+[2026-04-24 19:15:31] RECEIVED | list
+[2026-04-24 19:15:31] LIST | D:/Documents/my/ChatGLM Raw Markdown
+[2026-04-24 19:15:31] RESULT | 目录：D:/Documents/my/ChatGLM Raw Markdown
+
+ [DIR] .git
+ [FILE] .gitattributes (66 B)
+ [FILE] LICENSE (16.7 KB)
+ [FILE] README.md (24 B)
+ [FILE] content.js (6.5 KB)
+ [FILE] manifest.json (384 B)
+[2026-04-24 19:15:52] RECEIVED | read content.js
+[2026-04-24 19:15:52] READ-CLIPBOARD | content.js
+[2026-04-24 19:15:52] RESULT | clipboard_file
+[2026-04-24 19:19:38] RECEIVED | create content.js 【CodeSTART】 // ChatGLM Raw Markdown v2.2 // 原理：从 Vuex store 的 state.Conversation.dataList 直接读取原始 markdown， // 然后替换页面上对应的 .answer-content-wrap 元素内容。 // 不需要拦截任何网络请求，数据已经在内存里了。 // 使用 MutationObserver 事件链替代 setTimeout，确保替换时机精确。 (function() { 'use strict'; var TAG = '[RawMD]'; // ========== 工具函数 ========== // HTML 转义，防止原始 markdown 中的 < > & 被浏览器当成 HTML 解析 function escapeHtml(text) { var div = document.createElement('div'); div.textContent = text; return div.innerHTML; } // 从单条消息中提取 content_type === 'text' 的原始 markdown // answerArray 是多步数组，包含 think/tool_calls/tool_result/text 等类型 // 我们只需要 text 类型，那就是 LLM 输出的原始 markdown function getRawMarkdown(message) { if (!message || !Array.isArray(message.answerArray)) return null; var parts = []; for (var i = 0; i < message.answerArray.length; i++) { var item = message.answerArray[i]; // 只取最终回答，跳过思考过程和工具调用 if (item.content_type === 'text' && typeof item.text === 'string' && item.text.length > 0) { parts.push(item.text); } } return parts.length > 0 ? parts.join('\n\n') : null; } // 将原始 markdown 文本替换到指定的 DOM 元素中 // 用 <pre> 包裹，等宽字体，暗色背景，无圆角，左对齐 function replaceWithRaw(wrapEl, rawText) { if (!wrapEl || !rawText) return; wrapEl.innerHTML = '<pre style="' + 'white-space:pre-wrap;' + 'word-wrap:break-word;' + "font-family:Consolas,Monaco,'Courier New',monospace;" + 'margin:0;' + 'padding:16px;' + 'background:#1a1a2e;' + 'color:#e0e0e0;' + 'border-radius:0;' + 'font-size:13.5px;' + 'line-height:1.7;' + 'overflow-x:auto;' + 'tab-size:4;' + 'text-align:left;' + '">' + escapeHtml(rawText) + '</pre>'; } // ========== Store 获取 ========== // 从 Vue 3 app 获取 Vuex store // 已验证路径：app.config.globalProperties.$store（v2 探测脚本确认可用） function getStore() { var appEl = document.getElementById('app'); if (!appEl || !appEl.__vue_app__) return null; var app = appEl.__vue_app__; // 主路径（v2 验证过） if (app.config && app.config.globalProperties && app.config.globalProperties.$store) { return app.config.globalProperties.$store; } // 备用路径 if (app._instance && app._instance.proxy && app._instance.proxy.$store) { return app._instance.proxy.$store; } return null; } // 轮询等待 store 可用（页面加载时 Vue 可能还没挂载） function waitStore(callback) { var attempts = 0; var timer = setInterval(function() { var store = getStore(); attempts++; if (store) { clearInterval(timer); callback(store); } else if (attempts > 75) { // 15 秒超时 clearInterval(timer); console.error(TAG, '等待 Vuex store 超时'); } }, 200); } // ========== 核心替换逻辑 ========== // 替换页面上所有已有的回答（包括历史消息和新消息） // 返回成功替换的数量，供调用方判断是否需要继续等待 function replaceAll(store) { var dataList = store.state.Conversation.dataList; if (!dataList || !Array.isArray(dataList) || dataList.length === 0) return 0; // 获取页面上所有回答内容容器 var wrapEls = document.querySelectorAll('.answer-content-wrap'); if (wrapEls.length === 0) return 0; var replacedCount = 0; for (var w = 0; w < wrapEls.length; w++) { var wrapEl = wrapEls[w]; // 跳过已经被替换过的（检查是否包含我们注入的 <pre> 标记） if (wrapEl.querySelector('pre[style*="background:#1a1a2e"]')) continue; // 向上找 .answer 元素，获取 id 中的索引（格式：row-answer-0） var answerEl = wrapEl.closest('.answer'); if (!answerEl) continue; var answerId = answerEl.id || ''; var match = answerId.match(/row-answer-(\d+)/); if (!match) continue; var idx = parseInt(match[1], 10); if (idx >= dataList.length) continue; // 从 store 中取出原始 markdown 并替换 var rawText = getRawMarkdown(dataList[idx]); if (rawText) { replaceWithRaw(wrapEl, rawText); replacedCount++; } } if (replacedCount > 0) { console.log(TAG, '已替换 ' + replacedCount + ' 条回复为原始 Markdown'); } return replacedCount; } // ========== MutationObserver 事件链（替代 setTimeout） ========== // 当前活跃的 Observer 实例，null 表示未在监听 var replaceObserver = null; // Observer 关联的 store 引用 var observerStore = null; // 停止 Observer 监听 function stopReplaceObserver() { if (replaceObserver) { replaceObserver.disconnect(); replaceObserver = null; observerStore = null; } } // 请求执行替换：立即尝试一次，如果 DOM 还没准备好则启动 Observer 等待 // 形成事件链：数据写入(store watch/mutation) → requestReplace → 立即尝试/启动Observer → DOM渲染 → Observer捕获 → 替换完成 function requestReplace(store) { // 立即尝试一次替换，如果 DOM 已经渲染好就直接完成 var result = replaceAll(store); if (result > 0) { // 替换成功，无需监听 stopReplaceObserver(); return; } // 立即尝试没成功，说明 DOM 还没渲染，启动 Observer 等待 // 如果已经有 Observer 在为同一个 store 监听，不重复创建 if (replaceObserver && observerStore === store) return; // 先停掉可能残留的旧 Observer stopReplaceObserver(); observerStore = store; replaceObserver = new MutationObserver(function() { // 先暂停监听，防止我们自己的 innerHTML 修改触发循环 replaceObserver.disconnect(); // 尝试替换 var count = replaceAll(store); if (count > 0) { // 替换成功，彻底停止 Observer replaceObserver = null; observerStore = null; } else { // 仍然没有可替换的元素，继续监听等待 DOM 变化 replaceObserver.observe(document.body, { childList: true, subtree: true }); } }); replaceObserver.observe(document.body, { childList: true, subtree: true }); } // ========== 初始化 ========== waitStore(function(store) { console.log(TAG, '✅ Store 已找到，开始监控对话'); // 触发 1：页面加载后替换已有的历史消息 // 不用 setTimeout，直接请求替换；如果 DOM 还没渲染完，Observer 会自动等待 requestReplace(store); // 触发 2：监听 isSearching 状态变化 // true → false 表示 AI 回答完成，此时 store 中的数据已完整 var wasSearching = store.state.Conversation.isSearching; store.watch( function(state) { return state.Conversation.isSearching; }, function(newVal) { if (wasSearching && !newVal) { // 回答完成，请求替换（Observer 会处理 DOM 还没渲染好的情况） requestReplace(store); } wasSearching = newVal; } ); // 触发 3：监听 SET_DATA_LIST mutation // 加载历史对话、切换会话时都会触发 store.subscribe(function(mutation) { if (mutation.type === 'Conversation/SET_DATA_LIST') { // 请求替换，Observer 处理时机 requestReplace(store); } }); console.log(TAG, '💡 监控已启动，新消息回复完成后将自动替换为原始 Markdown'); }); })(); 【/CodeEND】
+[2026-04-24 19:19:38] CREATE | D:\Documents\my\ChatGLM Raw Markdown\content.js
+[2026-04-24 19:19:38] RESULT | 已创建文件：D:\Documents\my\ChatGLM Raw Markdown\content.js（0 字符）
+[2026-04-24 19:19:40] RECEIVED | create content.js 【CodeSTART】 ``` // ChatGLM Raw Markdown v2.2 // 原理：从 Vuex store 的 state.Conversation.dataList 直接读取原始 markdown， // 然后替换页面上对应的 .answer-content-wrap 元素内容。 // 不需要拦截任何网络请求，数据已经在内存里了。 // 使用 MutationObserver 事件链替代 setTimeout，确保替换时机精确。 (function() { 'use strict'; var TAG = '[RawMD]'; // ========== 工具函数 ========== // HTML 转义，防止原始 markdown 中的 < > & 被浏览器当成 HTML 解析 function escapeHtml(text) { var div = document.createElement('div'); div.textContent = text; return div.innerHTML; } // 从单条消息中提取 content_type === 'text' 的原始 markdown // answerArray 是多步数组，包含 think/tool_calls/tool_result/text 等类型 // 我们只需要 text 类型，那就是 LLM 输出的原始 markdown function getRawMarkdown(message) { if (!message || !Array.isArray(message.answerArray)) return null; var parts = []; for (var i = 0; i < message.answerArray.length; i++) { var item = message.answerArray[i]; // 只取最终回答，跳过思考过程和工具调用 if (item.content_type === 'text' && typeof item.text === 'string' && item.text.length > 0) { parts.push(item.text); } } return parts.length > 0 ? parts.join('\n\n') : null; } // 将原始 markdown 文本替换到指定的 DOM 元素中 // 用 <pre> 包裹，等宽字体，暗色背景，无圆角，左对齐 function replaceWithRaw(wrapEl, rawText) { if (!wrapEl || !rawText) return; wrapEl.innerHTML = '<pre style="' + 'white-space:pre-wrap;' + 'word-wrap:break-word;' + "font-family:Consolas,Monaco,'Courier New',monospace;" + 'margin:0;' + 'padding:16px;' + 'background:#1a1a2e;' + 'color:#e0e0e0;' + 'border-radius:0;' + 'font-size:13.5px;' + 'line-height:1.7;' + 'overflow-x:auto;' + 'tab-size:4;' + 'text-align:left;' + '">' + escapeHtml(rawText) + '</pre>'; } // ========== Store 获取 ========== // 从 Vue 3 app 获取 Vuex store // 已验证路径：app.config.globalProperties.$store（v2 探测脚本确认可用） function getStore() { var appEl = document.getElementById('app'); if (!appEl || !appEl.__vue_app__) return null; var app = appEl.__vue_app__; // 主路径（v2 验证过） if (app.config && app.config.globalProperties && app.config.globalProperties.$store) { return app.config.globalProperties.$store; } // 备用路径 if (app._instance && app._instance.proxy && app._instance.proxy.$store) { return app._instance.proxy.$store; } return null; } // 轮询等待 store 可用（页面加载时 Vue 可能还没挂载） function waitStore(callback) { var attempts = 0; var timer = setInterval(function() { var store = getStore(); attempts++; if (store) { clearInterval(timer); callback(store); } else if (attempts > 75) { // 15 秒超时 clearInterval(timer); console.error(TAG, '等待 Vuex store 超时'); } }, 200); } // ========== 核心替换逻辑 ========== // 替换页面上所有已有的回答（包括历史消息和新消息） // 返回成功替换的数量，供调用方判断是否需要继续等待 function replaceAll(store) { var dataList = store.state.Conversation.dataList; if (!dataList || !Array.isArray(dataList) || dataList.length === 0) return 0; // 获取页面上所有回答内容容器 var wrapEls = document.querySelectorAll('.answer-content-wrap'); if (wrapEls.length === 0) return 0; var replacedCount = 0; for (var w = 0; w < wrapEls.length; w++) { var wrapEl = wrapEls[w]; // 跳过已经被替换过的（检查是否包含我们注入的 <pre> 标记） if (wrapEl.querySelector('pre[style*="background:#1a1a2e"]')) continue; // 向上找 .answer 元素，获取 id 中的索引（格式：row-answer-0） var answerEl = wrapEl.closest('.answer'); if (!answerEl) continue; var answerId = answerEl.id || ''; var match = answerId.match(/row-answer-(\d+)/); if (!match) continue; var idx = parseInt(match[1], 10); if (idx >= dataList.length) continue; // 从 store 中取出原始 markdown 并替换 var rawText = getRawMarkdown(dataList[idx]); if (rawText) { replaceWithRaw(wrapEl, rawText); replacedCount++; } } if (replacedCount > 0) { console.log(TAG, '已替换 ' + replacedCount + ' 条回复为原始 Markdown'); } return replacedCount; } // ========== MutationObserver 事件链（替代 setTimeout） ========== // 当前活跃的 Observer 实例，null 表示未在监听 var replaceObserver = null; // Observer 关联的 store 引用 var observerStore = null; // 停止 Observer 监听 function stopReplaceObserver() { if (replaceObserver) { replaceObserver.disconnect(); replaceObserver = null; observerStore = null; } } // 请求执行替换：立即尝试一次，如果 DOM 还没准备好则启动 Observer 等待 // 形成事件链：数据写入(store watch/mutation) → requestReplace → 立即尝试/启动Observer → DOM渲染 → Observer捕获 → 替换完成 function requestReplace(store) { // 立即尝试一次替换，如果 DOM 已经渲染好就直接完成 var result = replaceAll(store); if (result > 0) { // 替换成功，无需监听 stopReplaceObserver(); return; } // 立即尝试没成功，说明 DOM 还没渲染，启动 Observer 等待 // 如果已经有 Observer 在为同一个 store 监听，不重复创建 if (replaceObserver && observerStore === store) return; // 先停掉可能残留的旧 Observer stopReplaceObserver(); observerStore = store; replaceObserver = new MutationObserver(function() { // 先暂停监听，防止我们自己的 innerHTML 修改触发循环 replaceObserver.disconnect(); // 尝试替换 var count = replaceAll(store); if (count > 0) { // 替换成功，彻底停止 Observer replaceObserver = null; observerStore = null; } else { // 仍然没有可替换的元素，继续监听等待 DOM 变化 replaceObserver.observe(document.body, { childList: true, subtree: true }); } }); replaceObserver.observe(document.body, { childList: true, subtree: true }); } // ========== 初始化 ========== waitStore(function(store) { console.log(TAG, '✅ Store 已找到，开始监控对话'); // 触发 1：页面加载后替换已有的历史消息 // 不用 setTimeout，直接请求替换；如果 DOM 还没渲染完，Observer 会自动等待 requestReplace(store); // 触发 2：监听 isSearching 状态变化 // true → false 表示 AI 回答完成，此时 store 中的数据已完整 var wasSearching = store.state.Conversation.isSearching; store.watch( function(state) { return state.Conversation.isSearching; }, function(newVal) { if (wasSearching && !newVal) { // 回答完成，请求替换（Observer 会处理 DOM 还没渲染好的情况） requestReplace(store); } wasSearching = newVal; } ); // 触发 3：监听 SET_DATA_LIST mutation // 加载历史对话、切换会话时都会触发 store.subscribe(function(mutation) { if (mutation.type === 'Conversation/SET_DATA_LIST') { // 请求替换，Observer 处理时机 requestReplace(store); } }); console.log(TAG, '💡 监控已启动，新消息回复完成后将自动替换为原始 Markdown'); }); })(); ``` 【/CodeEND】
+[2026-04-24 19:19:40] CREATE | D:\Documents\my\ChatGLM Raw Markdown\content.js
+[2026-04-24 19:19:40] RESULT | 已创建文件：D:\Documents\my\ChatGLM Raw Markdown\content.js（0 字符）
+[2026-04-24 19:28:42] RECEIVED | create content.js 【CodeSTART】
+
+
+
+
+
+
+        
+
+          
+// ChatGLM Raw Markdown v2.2
+// 原理：从 Vuex store 的 state.Conversation.dataList 直接读取原始 markdown，
+// 然后替换页面上对应的 .answer-content-wrap 元素内容。
+// 不需要拦截任何网络请求，数据已经在内存里了。
+// 使用 MutationObserver 事件链替代 setTimeout，确保替换时机精确。
+(function() {
+    'use strict';
+
+    var TAG = '[RawMD]';
+
+    // ========== 工具函数 ==========
+
+    // HTML 转义，防止原始 markdown 中的 < > & 被浏览器当成 HTML 解析
+    function escapeHtml(text) {
+        var div = document.createElement('div');
+        div.textContent = text;
+        return div.innerHTML;
+    }
+
+    // 从单条消息中提取 content_type === 'text' 的原始 markdown
+    // answerArray 是多步数组，包含 think/tool_calls/tool_result/text 等类型
+    // 我们只需要 text 类型，那就是 LLM 输出的原始 markdown
+    function getRawMarkdown(message) {
+        if (!message || !Array.isArray(message.answerArray)) return null;
+        var parts = [];
+        for (var i = 0; i < message.answerArray.length; i++) {
+            var item = message.answerArray[i];
+            // 只取最终回答，跳过思考过程和工具调用
+            if (item.content_type === 'text' && typeof item.text === 'string' && item.text.length > 0) {
+                parts.push(item.text);
+            }
+        }
+        return parts.length > 0 ? parts.join('\n\n') : null;
+    }
+
+    // 将原始 markdown 文本替换到指定的 DOM 元素中
+    // 用 <pre> 包裹，等宽字体，暗色背景，无圆角，左对齐
+    function replaceWithRaw(wrapEl, rawText) {
+        if (!wrapEl || !rawText) return;
+        wrapEl.innerHTML = '<pre style="'
+            + 'white-space:pre-wrap;'
+            + 'word-wrap:break-word;'
+            + "font-family:Consolas,Monaco,'Courier New',monospace;"
+            + 'margin:0;'
+            + 'padding:16px;'
+            + 'background:#1a1a2e;'
+            + 'color:#e0e0e0;'
+            + 'border-radius:0;'
+            + 'font-size:13.5px;'
+            + 'line-height:1.7;'
+            + 'overflow-x:auto;'
+            + 'tab-size:4;'
+            + 'text-align:left;'
+            + '">'
+            + escapeHtml(rawText)
+            + '</pre>';
+    }
+
+    // ========== Store 获取 ==========
+
+    // 从 Vue 3 app 获取 Vuex store
+    // 已验证路径：app.config.globalProperties.$store（v2 探测脚本确认可用）
+    function getStore() {
+        var appEl = document.getElementById('app');
+        if (!appEl || !appEl.__vue_app__) return null;
+        var app = appEl.__vue_app__;
+        // 主路径（v2 验证过）
+        if (app.config && app.config.globalProperties && app.config.globalProperties.$store) {
+            return app.config.globalProperties.$store;
+        }
+        // 备用路径
+        if (app._instance && app._instance.proxy && app._instance.proxy.$store) {
+            return app._instance.proxy.$store;
+        }
+        return null;
+    }
+
+    // 轮询等待 store 可用（页面加载时 Vue 可能还没挂载）
+    function waitStore(callback) {
+        var attempts = 0;
+        var timer = setInterval(function() {
+            var store = getStore();
+            attempts++;
+            if (store) {
+                clearInterval(timer);
+                callback(store);
+            } else if (attempts > 75) { // 15 秒超时
+                clearInterval(timer);
+                console.error(TAG, '等待 Vuex store 超时');
+            }
+        }, 200);
+    }
+
+    // ========== 核心替换逻辑 ==========
+
+    // 替换页面上所有已有的回答（包括历史消息和新消息）
+    // 返回成功替换的数量，供调用方判断是否需要继续等待
+    function replaceAll(store) {
+        var dataList = store.state.Conversation.dataList;
+        if (!dataList || !Array.isArray(dataList) || dataList.length === 0) return 0;
+
+        // 获取页面上所有回答内容容器
+        var wrapEls = document.querySelectorAll('.answer-content-wrap');
+        if (wrapEls.length === 0) return 0;
+
+        var replacedCount = 0;
+        for (var w = 0; w < wrapEls.length; w++) {
+            var wrapEl = wrapEls[w];
+            // 跳过已经被替换过的（检查是否包含我们注入的 <pre> 标记）
+            if (wrapEl.querySelector('pre[style*="background:#1a1a2e"]')) continue;
+            // 向上找 .answer 元素，获取 id 中的索引（格式：row-answer-0）
+            var answerEl = wrapEl.closest('.answer');
+            if (!answerEl) continue;
+            var answerId = answerEl.id || '';
+            var match = answerId.match(/row-answer-(\d+)/);
+            if (!match) continue;
+            var idx = parseInt(match[1], 10);
+            if (idx >= dataList.length) continue;
+            // 从 store 中取出原始 markdown 并替换
+            var rawText = getRawMarkdown(dataList[idx]);
+            if (rawText) {
+                replaceWithRaw(wrapEl, rawText);
+                replacedCount++;
+            }
+        }
+        if (replacedCount > 0) {
+            console.log(TAG, '已替换 ' + replacedCount + ' 条回复为原始 Markdown');
+        }
+        return replacedCount;
+    }
+
+    // ========== MutationObserver 事件链（替代 setTimeout） ==========
+
+    // 当前活跃的 Observer 实例，null 表示未在监听
+    var replaceObserver = null;
+    // Observer 关联的 store 引用
+    var observerStore = null;
+
+    // 停止 Observer 监听
+    function stopReplaceObserver() {
+        if (replaceObserver) {
+            replaceObserver.disconnect();
+            replaceObserver = null;
+            observerStore = null;
+        }
+    }
+
+    // 请求执行替换：立即尝试一次，如果 DOM 还没准备好则启动 Observer 等待
+    // 事件链：数据写入(store watch/mutation) → requestReplace → 立即尝试/启动Observer → DOM渲染 → Observer捕获 → 替换完成
+    function requestReplace(store) {
+        // 立即尝试一次替换，如果 DOM 已经渲染好就直接完成
+        var result = replaceAll(store);
+        if (result > 0) {
+            stopReplaceObserver();
+            return;
+        }
+        // 立即尝试没成功，说明 DOM 还没渲染，启动 Observer 等待
+        // 如果已经有 Observer 在为同一个 store 监听，不重复创建
+        if (replaceObserver && observerStore === store) return;
+        stopReplaceObserver();
+        observerStore = store;
+        replaceObserver = new MutationObserver(function() {
+            // 先暂停监听，防止我们自己的 innerHTML 修改触发循环
+            replaceObserver.disconnect();
+            // 尝试替换
+            var count = replaceAll(store);
+            if (count > 0) {
+                // 替换成功，彻底停止 Observer
+                replaceObserver = null;
+                observerStore = null;
+            } else {
+                // 仍然没有可替换的元素，继续监听等待 DOM 变化
+                replaceObserver.observe(document.body, { childList: true, subtree: true });
+            }
+        });
+        replaceObserver.observe(document.body, { childList: true, subtree: true });
+    }
+
+    // ========== 初始化 ==========
+
+    waitStore(function(store) {
+        console.log(TAG, '✅ Store 已找到，开始监控对话');
+
+        // 触发 1：页面加载后替换已有的历史消息
+        // 不用 setTimeout，直接请求替换；如果 DOM 还没渲染完，Observer 会自动等待
+        requestReplace(store);
+
+        // 触发 2：监听 isSearching 状态变化
+        // true → false 表示 AI 回答完成，此时 store 中的数据已完整
+        var wasSearching = store.state.Conversation.isSearching;
+        store.watch(
+            function(state) { return state.Conversation.isSearching; },
+            function(newVal) {
+                if (wasSearching && !newVal) {
+                    // 回答完成，请求替换（Observer 会处理 DOM 还没渲染好的情况）
+                    requestReplace(store);
+                }
+                wasSearching = newVal;
+            }
+        );
+
+        // 触发 3：监听 SET_DATA_LIST mutation
+        // 加载历史对话、切换会话时都会触发
+        store.subscribe(function(mutation) {
+            if (mutation.type === 'Conversation/SET_DATA_LIST') {
+                // 请求替换，Observer 处理时机
+                requestReplace(store);
+            }
+        });
+
+        console.log(TAG, '💡 监控已启动，新消息回复完成后将自动替换为原始 Markdown');
+    });
+})();
+
+        
+      
+
+
+【/CodeEND】
+[2026-04-24 19:28:42] CREATE | D:\Documents\my\ChatGLM Raw Markdown\content.js
+[2026-04-24 19:28:42] RESULT | 已创建文件：D:\Documents\my\ChatGLM Raw Markdown\content.js（7262 字符）
+[2026-04-24 19:28:43] RECEIVED | create content.js 【CodeSTART】 ```
+// ChatGLM Raw Markdown v2.2
+// 原理：从 Vuex store 的 state.Conversation.dataList 直接读取原始 markdown，
+// 然后替换页面上对应的 .answer-content-wrap 元素内容。
+// 不需要拦截任何网络请求，数据已经在内存里了。
+// 使用 MutationObserver 事件链替代 setTimeout，确保替换时机精确。
+(function() {
+    'use strict';
+
+    var TAG = '[RawMD]';
+
+    // ========== 工具函数 ==========
+
+    // HTML 转义，防止原始 markdown 中的 < > & 被浏览器当成 HTML 解析
+    function escapeHtml(text) {
+        var div = document.createElement('div');
+        div.textContent = text;
+        return div.innerHTML;
+    }
+
+    // 从单条消息中提取 content_type === 'text' 的原始 markdown
+    // answerArray 是多步数组，包含 think/tool_calls/tool_result/text 等类型
+    // 我们只需要 text 类型，那就是 LLM 输出的原始 markdown
+    function getRawMarkdown(message) {
+        if (!message || !Array.isArray(message.answerArray)) return null;
+        var parts = [];
+        for (var i = 0; i < message.answerArray.length; i++) {
+            var item = message.answerArray[i];
+            // 只取最终回答，跳过思考过程和工具调用
+            if (item.content_type === 'text' && typeof item.text === 'string' && item.text.length > 0) {
+                parts.push(item.text);
+            }
+        }
+        return parts.length > 0 ? parts.join('\n\n') : null;
+    }
+
+    // 将原始 markdown 文本替换到指定的 DOM 元素中
+    // 用 <pre> 包裹，等宽字体，暗色背景，无圆角，左对齐
+    function replaceWithRaw(wrapEl, rawText) {
+        if (!wrapEl || !rawText) return;
+        wrapEl.innerHTML = '<pre style="'
+            + 'white-space:pre-wrap;'
+            + 'word-wrap:break-word;'
+            + "font-family:Consolas,Monaco,'Courier New',monospace;"
+            + 'margin:0;'
+            + 'padding:16px;'
+            + 'background:#1a1a2e;'
+            + 'color:#e0e0e0;'
+            + 'border-radius:0;'
+            + 'font-size:13.5px;'
+            + 'line-height:1.7;'
+            + 'overflow-x:auto;'
+            + 'tab-size:4;'
+            + 'text-align:left;'
+            + '">'
+            + escapeHtml(rawText)
+            + '</pre>';
+    }
+
+    // ========== Store 获取 ==========
+
+    // 从 Vue 3 app 获取 Vuex store
+    // 已验证路径：app.config.globalProperties.$store（v2 探测脚本确认可用）
+    function getStore() {
+        var appEl = document.getElementById('app');
+        if (!appEl || !appEl.__vue_app__) return null;
+        var app = appEl.__vue_app__;
+        // 主路径（v2 验证过）
+        if (app.config && app.config.globalProperties && app.config.globalProperties.$store) {
+            return app.config.globalProperties.$store;
+        }
+        // 备用路径
+        if (app._instance && app._instance.proxy && app._instance.proxy.$store) {
+            return app._instance.proxy.$store;
+        }
+        return null;
+    }
+
+    // 轮询等待 store 可用（页面加载时 Vue 可能还没挂载）
+    function waitStore(callback) {
+        var attempts = 0;
+        var timer = setInterval(function() {
+            var store = getStore();
+            attempts++;
+            if (store) {
+                clearInterval(timer);
+                callback(store);
+            } else if (attempts > 75) { // 15 秒超时
+                clearInterval(timer);
+                console.error(TAG, '等待 Vuex store 超时');
+            }
+        }, 200);
+    }
+
+    // ========== 核心替换逻辑 ==========
+
+    // 替换页面上所有已有的回答（包括历史消息和新消息）
+    // 返回成功替换的数量，供调用方判断是否需要继续等待
+    function replaceAll(store) {
+        var dataList = store.state.Conversation.dataList;
+        if (!dataList || !Array.isArray(dataList) || dataList.length === 0) return 0;
+
+        // 获取页面上所有回答内容容器
+        var wrapEls = document.querySelectorAll('.answer-content-wrap');
+        if (wrapEls.length === 0) return 0;
+
+        var replacedCount = 0;
+        for (var w = 0; w < wrapEls.length; w++) {
+            var wrapEl = wrapEls[w];
+            // 跳过已经被替换过的（检查是否包含我们注入的 <pre> 标记）
+            if (wrapEl.querySelector('pre[style*="background:#1a1a2e"]')) continue;
+            // 向上找 .answer 元素，获取 id 中的索引（格式：row-answer-0）
+            var answerEl = wrapEl.closest('.answer');
+            if (!answerEl) continue;
+            var answerId = answerEl.id || '';
+            var match = answerId.match(/row-answer-(\d+)/);
+            if (!match) continue;
+            var idx = parseInt(match[1], 10);
+            if (idx >= dataList.length) continue;
+            // 从 store 中取出原始 markdown 并替换
+            var rawText = getRawMarkdown(dataList[idx]);
+            if (rawText) {
+                replaceWithRaw(wrapEl, rawText);
+                replacedCount++;
+            }
+        }
+        if (replacedCount > 0) {
+            console.log(TAG, '已替换 ' + replacedCount + ' 条回复为原始 Markdown');
+        }
+        return replacedCount;
+    }
+
+    // ========== MutationObserver 事件链（替代 setTimeout） ==========
+
+    // 当前活跃的 Observer 实例，null 表示未在监听
+    var replaceObserver = null;
+    // Observer 关联的 store 引用
+    var observerStore = null;
+
+    // 停止 Observer 监听
+    function stopReplaceObserver() {
+        if (replaceObserver) {
+            replaceObserver.disconnect();
+            replaceObserver = null;
+            observerStore = null;
+        }
+    }
+
+    // 请求执行替换：立即尝试一次，如果 DOM 还没准备好则启动 Observer 等待
+    // 事件链：数据写入(store watch/mutation) → requestReplace → 立即尝试/启动Observer → DOM渲染 → Observer捕获 → 替换完成
+    function requestReplace(store) {
+        // 立即尝试一次替换，如果 DOM 已经渲染好就直接完成
+        var result = replaceAll(store);
+        if (result > 0) {
+            stopReplaceObserver();
+            return;
+        }
+        // 立即尝试没成功，说明 DOM 还没渲染，启动 Observer 等待
+        // 如果已经有 Observer 在为同一个 store 监听，不重复创建
+        if (replaceObserver && observerStore === store) return;
+        stopReplaceObserver();
+        observerStore = store;
+        replaceObserver = new MutationObserver(function() {
+            // 先暂停监听，防止我们自己的 innerHTML 修改触发循环
+            replaceObserver.disconnect();
+            // 尝试替换
+            var count = replaceAll(store);
+            if (count > 0) {
+                // 替换成功，彻底停止 Observer
+                replaceObserver = null;
+                observerStore = null;
+            } else {
+                // 仍然没有可替换的元素，继续监听等待 DOM 变化
+                replaceObserver.observe(document.body, { childList: true, subtree: true });
+            }
+        });
+        replaceObserver.observe(document.body, { childList: true, subtree: true });
+    }
+
+    // ========== 初始化 ==========
+
+    waitStore(function(store) {
+        console.log(TAG, '✅ Store 已找到，开始监控对话');
+
+        // 触发 1：页面加载后替换已有的历史消息
+        // 不用 setTimeout，直接请求替换；如果 DOM 还没渲染完，Observer 会自动等待
+        requestReplace(store);
+
+        // 触发 2：监听 isSearching 状态变化
+        // true → false 表示 AI 回答完成，此时 store 中的数据已完整
+        var wasSearching = store.state.Conversation.isSearching;
+        store.watch(
+            function(state) { return state.Conversation.isSearching; },
+            function(newVal) {
+                if (wasSearching && !newVal) {
+                    // 回答完成，请求替换（Observer 会处理 DOM 还没渲染好的情况）
+                    requestReplace(store);
+                }
+                wasSearching = newVal;
+            }
+        );
+
+        // 触发 3：监听 SET_DATA_LIST mutation
+        // 加载历史对话、切换会话时都会触发
+        store.subscribe(function(mutation) {
+            if (mutation.type === 'Conversation/SET_DATA_LIST') {
+                // 请求替换，Observer 处理时机
+                requestReplace(store);
+            }
+        });
+
+        console.log(TAG, '💡 监控已启动，新消息回复完成后将自动替换为原始 Markdown');
+    });
+})();
+``` 【/CodeEND】
+[2026-04-24 19:28:43] CREATE | D:\Documents\my\ChatGLM Raw Markdown\content.js
+[2026-04-24 19:28:43] RESULT | 已创建文件：D:\Documents\my\ChatGLM Raw Markdown\content.js（7266 字符）
+[2026-04-26 14:08:18] RECEIVED | replace content.js 【CodeSTART】
+
+
+
+
+
+
+        
+
+          
+    // 请求执行替换：立即尝试一次，如果 DOM 还没准备好则启动 Observer 等待
+    // 事件链：数据写入(store watch/mutation) → requestReplace → 立即尝试/启动Observer → DOM渲染 → Observer捕获 → 替换完成
+    function requestReplace(store) {
+        // 立即尝试一次替换，如果 DOM 已经渲染好就直接完成
+        var result = replaceAll(store);
+        if (result > 0) {
+            stopReplaceObserver();
+            return;
+        }
+        // 立即尝试没成功，说明 DOM 还没渲染，启动 Observer 等待
+        // 如果已经有 Observer 在为同一个 store 监听，不重复创建
+        if (replaceObserver && observerStore === store) return;
+        stopReplaceObserver();
+        observerStore = store;
+        replaceObserver = new MutationObserver(function() {
+            // 先暂停监听，防止我们自己的 innerHTML 修改触发循环
+            replaceObserver.disconnect();
+            // 尝试替换
+            var count = replaceAll(store);
+            if (count > 0) {
+                // 替换成功，彻底停止 Observer
+                replaceObserver = null;
+                observerStore = null;
+            } else {
+                // 仍然没有可替换的元素，继续监听等待 DOM 变化
+                replaceObserver.observe(document.body, { childList: true, subtree: true });
+            }
+        });
+        replaceObserver.observe(document.body, { childList: true, subtree: true });
+        // 保底：用 rAF 连续检查几帧，覆盖 Observer 可能漏掉的场景
+        // （比如 DOM 在 Observer 启动前就已渲染完，或 Vue 在同微任务内完成渲染没产生新 mutation）
+        var frame = 0;
+        (function poll() {
+            if (!replaceObserver || frame++ >= 30) return; // Observer已成功或已尝试30帧(~500ms)
+            var count = replaceAll(store);
+            if (count > 0) {
+                stopReplaceObserver();
+            } else {
+                requestAnimationFrame(poll);
+            }
+        })();
+    }
+
+        
+      
+
+
+【/CodeEND】 【CodeSTART】
+
+
+
+
+
+
+        
+
+          
+    // 请求执行替换：立即尝试一次，如果 DOM 还没准备好则启动 Observer + rAF 保底轮询
+    // Observer 负责响应 DOM 变化（最快），rAF 轮询负责兜底（覆盖 Observer 漏掉的场景）
+    function requestReplace(store) {
+        // 立即尝试一次替换，如果 DOM 已经渲染好就直接完成
+        var result = replaceAll(store);
+        if (result > 0) {
+            stopReplaceObserver();
+            return;
+        }
+        // 立即尝试没成功，说明 DOM 还没渲染
+        // 如果已经有 Observer 在为同一个 store 监听，不重复创建
+        if (replaceObserver && observerStore === store) return;
+        stopReplaceObserver();
+        observerStore = store;
+        // Observer：响应 DOM 变化（主力机制）
+        replaceObserver = new MutationObserver(function() {
+            // 先暂停监听，防止我们自己的 innerHTML 修改触发循环
+            replaceObserver.disconnect();
+            var count = replaceAll(store);
+            if (count > 0) {
+                replaceObserver = null;
+                observerStore = null;
+            } else {
+                replaceObserver.observe(document.body, { childList: true, subtree: true });
+            }
+        });
+        replaceObserver.observe(document.body, { childList: true, subtree: true });
+        // rAF 保底轮询：连续检查几帧，覆盖 Observer 可能漏掉的场景
+        // （DOM 在 Observer 启动前已渲染完、Vue 同微任务内完成渲染没产生新 mutation 等）
+        var frame = 0;
+        (function poll() {
+            if (!replaceObserver || frame++ >= 30) return;
+            var count = replaceAll(store);
+            if (count > 0) {
+                stopReplaceObserver();
+            } else {
+                requestAnimationFrame(poll);
+            }
+        })();
+    }
+
+        
+      
+
+
+【/CodeEND】
+[2026-04-26 14:08:18] RESULT | [指令 1] 错误：缺少参数。用法：replace <路径> [选项]
+---
+[指令 2] 未知指令：//
+输入 @@help 查看可用指令列表。
+---
+[指令 3] 未知指令：//
+输入 @@help 查看可用指令列表。
+---
+[指令 4] 未知指令：function
+输入 @@help 查看可用指令列表。
+---
+[指令 5] 未知指令：//
+输入 @@help 查看可用指令列表。
+---
+[指令 6] 未知指令：var
+输入 @@help 查看可用指令列表。
+---
+[指令 7] 未知指令：if
+输入 @@help 查看可用指令列表。
+---
+[指令 8] 未知指令：stopreplaceobserver();
+输入 @@help 查看可用指令列表。
+---
+[指令 9] 未知指令：return;
+输入 @@help 查看可用指令列表。
+---
+[指令 10] 未知指令：}
+输入 @@help 查看可用指令列表。
+---
+[指令 11] 未知指令：//
+输入 @@help 查看可用指令列表。
+---
+[指令 12] 未知指令：//
+输入 @@help 查看可用指令列表。
+---
+[指令 13] 未知指令：if
+输入 @@help 查看可用指令列表。
+---
+[指令 14] 未知指令：stopreplaceobserver();
+输入 @@help 查看可用指令列表。
+---
+[指令 15] 未知指令：observerstore
+输入 @@help 查看可用指令列表。
+---
+[指令 16] 未知指令：//
+输入 @@help 查看可用指令列表。
+---
+[指令 17] 未知指令：replaceobserver
+输入 @@help 查看可用指令列表。
+---
+[指令 18] 未知指令：//
+输入 @@help 查看可用指令列表。
+---
+[指令 19] 未知指令：replaceobserver.disconnect();
+输入 @@help 查看可用指令列表。
+---
+[指令 20] 未知指令：var
+输入 @@help 查看可用指令列表。
+---
+[指令 21] 未知指令：if
+输入 @@help 查看可用指令列表。
+---
+[指令 22] 未知指令：replaceobserver
+输入 @@help 查看可用指令列表。
+---
+[指令 23] 未知指令：observerstore
+输入 @@help 查看可用指令列表。
+---
+[指令 24] 未知指令：}
+输入 @@help 查看可用指令列表。
+---
+[指令 25] 未知指令：replaceobserver.observe(document.body,
+输入 @@help 查看可用指令列表。
+---
+[指令 26] 未知指令：}
+输入 @@help 查看可用指令列表。
+---
+[指令 27] 未知指令：});
+输入 @@help 查看可用指令列表。
+---
+[指令 28] 未知指令：replaceobserver.observe(document.body,
+输入 @@help 查看可用指令列表。
+---
+[指令 29] 未知指令：//
+输入 @@help 查看可用指令列表。
+---
+[指令 30] 未知指令：//
+输入 @@help 查看可用指令列表。
+---
+[指令 31] 未知指令：var
+输入 @@help 查看可用指令列表。
+---
+[指令 32] 未知指令：(function
+输入 @@help 查看可用指令列表。
+---
+[指令 33] 未知指令：if
+输入 @@help 查看可用指令列表。
+---
+[指令 34] 未知指令：var
+输入 @@help 查看可用指令列表。
+---
+[指令 35] 未知指令：if
+输入 @@help 查看可用指令列表。
+---
+[指令 36] 未知指令：stopreplaceobserver();
+输入 @@help 查看可用指令列表。
+---
+[指令 37] 未知指令：}
+输入 @@help 查看可用指令列表。
+---
+[指令 38] 未知指令：requestanimationframe(poll);
+输入 @@help 查看可用指令列表。
+---
+[指令 39] 未知指令：}
+输入 @@help 查看可用指令列表。
+---
+[指令 40] 未知指令：})();
+输入 @@help 查看可用指令列表。
+---
+[指令 41] 未知指令：}
+输入 @@help 查看可用指令列表。
+---
+[指令 42] 未知指令：【/codeend】
+输入 @@help 查看可用指令列表。
+[2026-04-26 14:08:19] RECEIVED | replace content.js 【CodeSTART】 ```
+    // 请求执行替换：立即尝试一次，如果 DOM 还没准备好则启动 Observer 等待
+    // 事件链：数据写入(store watch/mutation) → requestReplace → 立即尝试/启动Observer → DOM渲染 → Observer捕获 → 替换完成
+    function requestReplace(store) {
+        // 立即尝试一次替换，如果 DOM 已经渲染好就直接完成
+        var result = replaceAll(store);
+        if (result > 0) {
+            stopReplaceObserver();
+            return;
+        }
+        // 立即尝试没成功，说明 DOM 还没渲染，启动 Observer 等待
+        // 如果已经有 Observer 在为同一个 store 监听，不重复创建
+        if (replaceObserver && observerStore === store) return;
+        stopReplaceObserver();
+        observerStore = store;
+        replaceObserver = new MutationObserver(function() {
+            // 先暂停监听，防止我们自己的 innerHTML 修改触发循环
+            replaceObserver.disconnect();
+            // 尝试替换
+            var count = replaceAll(store);
+            if (count > 0) {
+                // 替换成功，彻底停止 Observer
+                replaceObserver = null;
+                observerStore = null;
+            } else {
+                // 仍然没有可替换的元素，继续监听等待 DOM 变化
+                replaceObserver.observe(document.body, { childList: true, subtree: true });
+            }
+        });
+        replaceObserver.observe(document.body, { childList: true, subtree: true });
+        // 保底：用 rAF 连续检查几帧，覆盖 Observer 可能漏掉的场景
+        // （比如 DOM 在 Observer 启动前就已渲染完，或 Vue 在同微任务内完成渲染没产生新 mutation）
+        var frame = 0;
+        (function poll() {
+            if (!replaceObserver || frame++ >= 30) return; // Observer已成功或已尝试30帧(~500ms)
+            var count = replaceAll(store);
+            if (count > 0) {
+                stopReplaceObserver();
+            } else {
+                requestAnimationFrame(poll);
+            }
+        })();
+    }
+``` 【/CodeEND】 【CodeSTART】 ```
+    // 请求执行替换：立即尝试一次，如果 DOM 还没准备好则启动 Observer + rAF 保底轮询
+    // Observer 负责响应 DOM 变化（最快），rAF 轮询负责兜底（覆盖 Observer 漏掉的场景）
+    function requestReplace(store) {
+        // 立即尝试一次替换，如果 DOM 已经渲染好就直接完成
+        var result = replaceAll(store);
+        if (result > 0) {
+            stopReplaceObserver();
+            return;
+        }
+        // 立即尝试没成功，说明 DOM 还没渲染
+        // 如果已经有 Observer 在为同一个 store 监听，不重复创建
+        if (replaceObserver && observerStore === store) return;
+        stopReplaceObserver();
+        observerStore = store;
+        // Observer：响应 DOM 变化（主力机制）
+        replaceObserver = new MutationObserver(function() {
+            // 先暂停监听，防止我们自己的 innerHTML 修改触发循环
+            replaceObserver.disconnect();
+            var count = replaceAll(store);
+            if (count > 0) {
+                replaceObserver = null;
+                observerStore = null;
+            } else {
+                replaceObserver.observe(document.body, { childList: true, subtree: true });
+            }
+        });
+        replaceObserver.observe(document.body, { childList: true, subtree: true });
+        // rAF 保底轮询：连续检查几帧，覆盖 Observer 可能漏掉的场景
+        // （DOM 在 Observer 启动前已渲染完、Vue 同微任务内完成渲染没产生新 mutation 等）
+        var frame = 0;
+        (function poll() {
+            if (!replaceObserver || frame++ >= 30) return;
+            var count = replaceAll(store);
+            if (count > 0) {
+                stopReplaceObserver();
+            } else {
+                requestAnimationFrame(poll);
+            }
+        })();
+    }
+``` 【/CodeEND】
+[2026-04-26 14:08:19] RESULT | 错误：缺少参数。用法：replace <路径> [选项]
+[2026-04-26 14:12:43] RECEIVED | replace content.js 【CodeSTART】
+
+
+
+
+
+
+        
+
+          
+    // 请求执行替换：立即尝试一次，如果 DOM 还没准备好则启动 Observer 等待
+    // 事件链：数据写入(store watch/mutation) → requestReplace → 立即尝试/启动Observer → DOM渲染 → Observer捕获 → 替换完成
+    function requestReplace(store) {
+        // 立即尝试一次替换，如果 DOM 已经渲染好就直接完成
+        var result = replaceAll(store);
+        if (result > 0) {
+            stopReplaceObserver();
+            return;
+        }
+        // 立即尝试没成功，说明 DOM 还没渲染，启动 Observer 等待
+        // 如果已经有 Observer 在为同一个 store 监听，不重复创建
+        if (replaceObserver && observerStore === store) return;
+        stopReplaceObserver();
+        observerStore = store;
+        replaceObserver = new MutationObserver(function() {
+            // 先暂停监听，防止我们自己的 innerHTML 修改触发循环
+            replaceObserver.disconnect();
+            // 尝试替换
+            var count = replaceAll(store);
+            if (count > 0) {
+                // 替换成功，彻底停止 Observer
+                replaceObserver = null;
+                observerStore = null;
+            } else {
+                // 仍然没有可替换的元素，继续监听等待 DOM 变化
+                replaceObserver.observe(document.body, { childList: true, subtree: true });
+            }
+        });
+        replaceObserver.observe(document.body, { childList: true, subtree: true });
+        // 保底：用 rAF 连续检查几帧，覆盖 Observer 可能漏掉的场景
+        // （比如 DOM 在 Observer 启动前就已渲染完，或 Vue 在同微任务内完成渲染没产生新 mutation）
+        var frame = 0;
+        (function poll() {
+            if (!replaceObserver || frame++ >= 30) return; // Observer已成功或已尝试30帧(~500ms)
+            var count = replaceAll(store);
+            if (count > 0) {
+                stopReplaceObserver();
+            } else {
+                requestAnimationFrame(poll);
+            }
+        })();
+    }
+
+        
+      
+
+
+【/CodeEND】 【CodeSTART】
+
+
+
+
+
+
+        
+
+          
+    // 请求执行替换：立即尝试一次，如果 DOM 还没准备好则启动 Observer + rAF 保底轮询
+    // Observer 负责响应 DOM 变化（最快），rAF 轮询负责兜底（覆盖 Observer 漏掉的场景）
+    function requestReplace(store) {
+        // 立即尝试一次替换，如果 DOM 已经渲染好就直接完成
+        var result = replaceAll(store);
+        if (result > 0) {
+            stopReplaceObserver();
+            return;
+        }
+        // 立即尝试没成功，说明 DOM 还没渲染
+        // 如果已经有 Observer 在为同一个 store 监听，不重复创建
+        if (replaceObserver && observerStore === store) return;
+        stopReplaceObserver();
+        observerStore = store;
+        // Observer：响应 DOM 变化（主力机制）
+        replaceObserver = new MutationObserver(function() {
+            // 先暂停监听，防止我们自己的 innerHTML 修改触发循环
+            replaceObserver.disconnect();
+            var count = replaceAll(store);
+            if (count > 0) {
+                replaceObserver = null;
+                observerStore = null;
+            } else {
+                replaceObserver.observe(document.body, { childList: true, subtree: true });
+            }
+        });
+        replaceObserver.observe(document.body, { childList: true, subtree: true });
+        // rAF 保底轮询：连续检查几帧，覆盖 Observer 可能漏掉的场景
+        // （DOM 在 Observer 启动前已渲染完、Vue 同微任务内完成渲染没产生新 mutation 等）
+        var frame = 0;
+        (function poll() {
+            if (!replaceObserver || frame++ >= 30) return;
+            var count = replaceAll(store);
+            if (count > 0) {
+                stopReplaceObserver();
+            } else {
+                requestAnimationFrame(poll);
+            }
+        })();
+    }
+
+        
+      
+
+
+【/CodeEND】
+[2026-04-26 14:12:43] RESULT | [指令 1] 错误：缺少参数。用法：replace <路径> [选项]
+---
+[指令 2] 未知指令：//
+输入 @@help 查看可用指令列表。
+---
+[指令 3] 未知指令：//
+输入 @@help 查看可用指令列表。
+---
+[指令 4] 未知指令：function
+输入 @@help 查看可用指令列表。
+---
+[指令 5] 未知指令：//
+输入 @@help 查看可用指令列表。
+---
+[指令 6] 未知指令：var
+输入 @@help 查看可用指令列表。
+---
+[指令 7] 未知指令：if
+输入 @@help 查看可用指令列表。
+---
+[指令 8] 未知指令：stopreplaceobserver();
+输入 @@help 查看可用指令列表。
+---
+[指令 9] 未知指令：return;
+输入 @@help 查看可用指令列表。
+---
+[指令 10] 未知指令：}
+输入 @@help 查看可用指令列表。
+---
+[指令 11] 未知指令：//
+输入 @@help 查看可用指令列表。
+---
+[指令 12] 未知指令：//
+输入 @@help 查看可用指令列表。
+---
+[指令 13] 未知指令：if
+输入 @@help 查看可用指令列表。
+---
+[指令 14] 未知指令：stopreplaceobserver();
+输入 @@help 查看可用指令列表。
+---
+[指令 15] 未知指令：observerstore
+输入 @@help 查看可用指令列表。
+---
+[指令 16] 未知指令：//
+输入 @@help 查看可用指令列表。
+---
+[指令 17] 未知指令：replaceobserver
+输入 @@help 查看可用指令列表。
+---
+[指令 18] 未知指令：//
+输入 @@help 查看可用指令列表。
+---
+[指令 19] 未知指令：replaceobserver.disconnect();
+输入 @@help 查看可用指令列表。
+---
+[指令 20] 未知指令：var
+输入 @@help 查看可用指令列表。
+---
+[指令 21] 未知指令：if
+输入 @@help 查看可用指令列表。
+---
+[指令 22] 未知指令：replaceobserver
+输入 @@help 查看可用指令列表。
+---
+[指令 23] 未知指令：observerstore
+输入 @@help 查看可用指令列表。
+---
+[指令 24] 未知指令：}
+输入 @@help 查看可用指令列表。
+---
+[指令 25] 未知指令：replaceobserver.observe(document.body,
+输入 @@help 查看可用指令列表。
+---
+[指令 26] 未知指令：}
+输入 @@help 查看可用指令列表。
+---
+[指令 27] 未知指令：});
+输入 @@help 查看可用指令列表。
+---
+[指令 28] 未知指令：replaceobserver.observe(document.body,
+输入 @@help 查看可用指令列表。
+---
+[指令 29] 未知指令：//
+输入 @@help 查看可用指令列表。
+---
+[指令 30] 未知指令：//
+输入 @@help 查看可用指令列表。
+---
+[指令 31] 未知指令：var
+输入 @@help 查看可用指令列表。
+---
+[指令 32] 未知指令：(function
+输入 @@help 查看可用指令列表。
+---
+[指令 33] 未知指令：if
+输入 @@help 查看可用指令列表。
+---
+[指令 34] 未知指令：var
+输入 @@help 查看可用指令列表。
+---
+[指令 35] 未知指令：if
+输入 @@help 查看可用指令列表。
+---
+[指令 36] 未知指令：stopreplaceobserver();
+输入 @@help 查看可用指令列表。
+---
+[指令 37] 未知指令：}
+输入 @@help 查看可用指令列表。
+---
+[指令 38] 未知指令：requestanimationframe(poll);
+输入 @@help 查看可用指令列表。
+---
+[指令 39] 未知指令：}
+输入 @@help 查看可用指令列表。
+---
+[指令 40] 未知指令：})();
+输入 @@help 查看可用指令列表。
+---
+[指令 41] 未知指令：}
+输入 @@help 查看可用指令列表。
+---
+[指令 42] 未知指令：【/codeend】
+输入 @@help 查看可用指令列表。

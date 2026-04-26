@@ -270,6 +270,7 @@ Hello World!
 按编码查看文件（如UTF-8）：exec powershell "Get-Content <文件路径> -Encoding UTF8"
 
 ## 注意事项
+- **此文件是存在换行的,如果你在看到这个文件内容时没有换行证明有些信息在传输过程中丢失了,立刻停止所有动作并告知用户**
 - 写入多行内容时，必须在外层使用 【CodeSTART】 和 【/CodeEND】 包裹，内侧用 ``` 包裹代码使其变为代码块。
 - 替换整个文件内容用create覆写,而不是replace
 - 如果要写入的内容本身包含三个反引号，请用 TICK3 代替避免在浏览器处理文本后打乱排版格式（后端会自动还原）。
@@ -279,3 +280,21 @@ Hello World!
 - 如果此文档中指令说明更新的不及时，你可以读取此项目下根目录的`agent_server.py`源文件以确定某个指令在代码中的实现方式。
 - 【CodeSTART】 和 【/CodeEND】的作用就是标记代码块的起始和结束,所以在指令中每个代码块都必须用【CodeSTART】 和 【/CodeEND】包裹,【CodeSTART】 和 【/CodeEND】必须和代码块同时存在,如果没有代码块就不要用【CodeSTART】 和 【/CodeEND】
 - 如果你不知道要修改的文件的内容,就不要操作文件,不要猜测,先read要修改的文件
+- 任何情况下,指令内用于包裹代码的```的同一行都不能出现任何标识代码块的编程语言标签
+不要写:
+【cmd】hello.txt 
+【CodeSTART】
+```java
+something
+```
+【/CodeEND】
+【/cmd】
+
+写:
+【cmd】hello.txt 
+【CodeSTART】
+```
+something
+```
+【/CodeEND】
+【/cmd】
