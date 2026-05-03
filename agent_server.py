@@ -743,10 +743,17 @@ def execute_line(line):
             return '错误：缺少命令。用法：exec <系统命令>' 
         log_action('EXEC', arg.strip()) 
         try: 
-            result = subprocess.run( 
-                f'cmd /c {arg.strip()}', shell=True, capture_output=True, text=True, timeout=60, cwd=W 
-            ) 
-            output = (result.stdout + result.stderr).strip() 
+            result = subprocess.run(
+                f'cmd /c {arg.strip()}',
+                shell=True,
+                capture_output=True,
+                timeout=60,
+                cwd=W
+            )
+            out = (result.stdout or b'').decode('utf-8', errors='replace')
+            err = (result.stderr or b'').decode('utf-8', errors='replace')
+            output = (out + err).strip()
+
             if not output: 
                 output = '（命令已执行，无输出）' 
             if len(output) > 8000: 
@@ -766,10 +773,16 @@ def execute_line(line):
             return f'错误：脚本不存在：{script}' 
         log_action('RUN', script) 
         try: 
-            result = subprocess.run( 
-                ['python', script], capture_output=True, text=True, timeout=60, cwd=W 
-            ) 
-            output = (result.stdout + result.stderr).strip() 
+            result = subprocess.run(
+                ['python', script],
+                capture_output=True,
+                timeout=60,
+                cwd=W
+            )
+            out = (result.stdout or b'').decode('utf-8', errors='replace')
+            err = (result.stderr or b'').decode('utf-8', errors='replace')
+            output = (out + err).strip()
+
             if not output: 
                 output = '（脚本已执行，无输出）' 
             if len(output) > 8000: 

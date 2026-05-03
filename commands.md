@@ -216,6 +216,8 @@ exec后的文本即是输入进cmd中的内容
 【cmd】exec python --version【/cmd】
 【cmd】exec dir【/cmd】
 
+解码格式UTF-8
+
 ### run <脚本路径>
 运行 Python 脚本，返回输出。
 示例：
