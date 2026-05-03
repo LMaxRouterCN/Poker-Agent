@@ -20,17 +20,24 @@
 示例：
 【cmd】count main.py【/cmd】
 
-### find <文件路径> [选项]
+### find <文件路径> [选项] <查找内容>
 精确查找文件内的文本，返回所有匹配的行号及内容。
 选项：
 - -i ：忽略大小写
 - -w ：全词匹配（仅英文）
-如果是多行查找，内容需要换行并用标签包裹。
+
+示例:
+【cmd】find test.txt hello【/cmd】
+【cmd】find test.txt -i -w hello【/cmd】
+单行简写时查找内容不允许有空格。
+
+多行查找，内容需要换行并用标签包裹。
 示例：
 【cmd】find test.txt -i -w 
 【CodeSTART】
 ```
 hello world
+hello world1
 ```
 【/CodeEND】
 【/cmd】
@@ -41,9 +48,10 @@ hello world
 - -a ：替换所有（默认只替换第一个）
 - -i ：忽略大小写
 - -s ：忽略缩进（按去除首尾空格后的内容匹配，替换时自动继承目标行的缩进）
-**用两个独立的代码块分别提供旧文本和新文本**，第一个代码块是旧文本，第二个是新文本。
+- -r <行号范围> ：按行号替换，格式为 `-r 5`（单行）或 `-r 5-20`（范围），只需提供一个代码块（新文本）
+**内容匹配模式**（默认）：用两个独立的代码块分别提供旧文本和新文本，第一个代码块是旧文本，第二个是新文本。
 示例：
-【cmd】replace config.json -a
+【cmd】replace config.json -a -s
 【CodeSTART】
 ```
 "debug": false
@@ -55,8 +63,17 @@ hello world
 ```
 【/CodeEND】
 【/cmd】
+**行号模式**（-r）：直接指定要替换的行范围，只提供新文本。
+示例：
+【cmd】replace config.json -r 10-15
+【CodeSTART】
+```
+// 新的代码
+```
+【/CodeEND】
+【/cmd】
 
-注意replace指令不支持多行分别查找替换, 指令会把代码块内的所有内容作为一个整体
+注意replace指令*不支持*多行分别查找替换, 指令会把代码块内的所有内容作为一个整体
 
 ### insert <文件路径> -after/-before <行号或文本>
 在指定位置插入内容。可以指定行号，也可以指定一段目标文本。
@@ -194,6 +211,7 @@ Hello World!
 
 ### exec <系统命令>
 执行系统命令，返回输出。
+exec后的文本即是输入进cmd中的内容
 示例：
 【cmd】exec python --version【/cmd】
 【cmd】exec dir【/cmd】
@@ -298,3 +316,6 @@ something
 ```
 【/CodeEND】
 【/cmd】
+
+# 已安装的CLI扩展程序 - 对应的起始指令
+1. OpenCLI - 【cmd】exec opencli list【/cmd】

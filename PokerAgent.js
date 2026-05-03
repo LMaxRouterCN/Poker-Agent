@@ -205,7 +205,18 @@
   #agent-pick-dim{position:fixed;inset:0;background:rgba(0,0,0,.28);z-index:2147483645;pointer-events:none}
   #agent-pick-hl{position:fixed;border:2.5px solid #818cf8;background:rgba(129,140,248,.08);border-radius:0;pointer-events:none;z-index:2147483646;transition:left .06s,top .06s,width .06s,height .06s;box-shadow:0 0 0 4000px rgba(0,0,0,.25);display:none}
   #agent-pick-lock-hl{position:fixed;border:2.5px solid #f472b6;background:rgba(244,114,182,.06);border-radius:0;pointer-events:none;z-index:2147483646;transition:left .06s,top .06s,width .06s,height .06s;display:none}
-  #agent-pick-tip{position:fixed;background:#1a1b2e;color:#c4b5fd;border:1px solid #3f3f46;padding:5px 10px;border-radius:0;font:11px/1.4 'SF Mono',Consolas,monospace;z-index:2147483647;pointer-events:none;max-width:500px;word-break:break-all;box-shadow:0 4px 16px rgba(0,0,0,.4);opacity:0;transition:opacity .08s;display:flex;align-items:center;gap:0}
+  #agent-pick-tip{position:fixed;background:#1a1b2e;color:#c4b5fd;border:1px solid #3f3f46;padding:5px 10px;border-radius:0;font:11px/1.4 'SF Mono',Consolas,monospace;z-index:2147483647;pointer-events:none;max-width:560px;word-break:break-all;box-shadow:0 4px 16px rgba(0,0,0,.4);opacity:0;transition:opacity .08s;display:flex;flex-direction:column;gap:3px}
+.ag-tip-sel{display:flex;align-items:center;gap:0;flex-wrap:wrap}
+.ag-diag-line{display:flex;align-items:center;gap:4px;flex-wrap:wrap;font-size:10px;color:#71717a;border-top:1px solid #2e3047;padding-top:3px}
+.ag-diag-text{color:#86efac;max-width:200px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.ag-diag-children{color:#a1a1aa}
+.ag-diag-size{color:#52525b}
+.ag-diag-ok{color:#86efac}
+.ag-diag-warn{color:#facc15}
+.ag-diag-err{color:#f472b6}
+.ag-diag-shadow{color:#818cf8;background:rgba(129,140,248,.15);padding:0 4px}
+.ag-diag-scroll{color:#facc15;background:rgba(250,204,21,.1);padding:0 4px}
+.ag-diag-sep{color:#3f3f46;margin:0 1px}
   #agent-pick-bar{position:fixed;top:14px;left:50%;transform:translateX(-50%);background:#1a1b2e;color:#d4d4d8;border:1px solid #818cf8;padding:10px 28px;border-radius:0;font-size:14px;z-index:2147483647;box-shadow:0 6px 24px rgba(0,0,0,.5);pointer-events:none}
   #agent-pick-level{color:#86efac; margin-left: 8px; font-weight: bold;}
   #ag-show-levels{pointer-events:auto;cursor:pointer;color:#f472b6;margin-right:8px;border-right:1px solid #3f3f46;padding-right:8px;white-space:nowrap;flex-shrink:0;transition:color .1s}
@@ -401,10 +412,18 @@
       showPanel();
   }
   
-  function _targetAt(x, y) { 
-      let el = document.elementFromPoint(x, y); 
-      while (el && PICKER_IDS.has(el.id)) el = el.parentElement; 
-      return el; 
+  // 穿透 Shadow DOM 获取最内层实际元素
+  function _targetAt(x, y) {
+      let el = document.elementFromPoint(x, y);
+      // 如果命中的是 Shadow Host，递归穿透到 Shadow Root 内部
+      while (el && el.shadowRoot) {
+          const inner = el.shadowRoot.elementFromPoint(x, y);
+          if (!inner || inner === el) break;
+          el = inner;
+      }
+      // 跳过选择器自身的 UI 元素
+      while (el && PICKER_IDS.has(el.id)) el = el.parentElement;
+      return el;
   }
   
   function _onMove(e) { 
