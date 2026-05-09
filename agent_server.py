@@ -219,10 +219,10 @@ def execute_line(line):
             return '错误：缺少文件路径。' 
         filepath = safe_path(W, tokens[0]) 
         flags = tokens[1:] if len(tokens) > 1 else [] 
-        # 解析 -r 行号选项（格式：-r 5 或 -r 5-20）
+        # 解析 -l 行号选项（格式：-l 5 或 -l 5-20）
         line_range = None
         for idx_f, flag in enumerate(flags):
-            if flag == '-r' and idx_f + 1 < len(flags):
+            if flag == '-l' and idx_f + 1 < len(flags):
                 r_match = re.match(r'^(\d+)(?:-(\d+))?$', flags[idx_f + 1])
                 if r_match:
                     start = int(r_match.group(1))
@@ -232,7 +232,7 @@ def execute_line(line):
         if line_range:
             # 行号模式：只需要一个代码块（新文本）
             if len(parts) < 2:
-                return '错误：行号模式需要提供新文本。用法：replace <路径> -r <行号范围>'
+                return '错误：行号模式需要提供新文本。用法：replace <路径> -l <行号范围>'
             new_text = parts[1].strip().replace('TICK3', '```')
             old_text = ''
         else:
@@ -439,6 +439,133 @@ def execute_line(line):
             return f'已在 {filepath} 的第 {insert_idx+1} 行处插入内容。' 
         except Exception as e: 
             return f'插入失败：{e}' 
+    elif cmd == 'deleteline':
+        if not arg.strip():
+            return '错误：缺少参数。用法：deleteline <路径> -l <行号或范围> 或 deleteline <路径> [选项] <要删除的文本>'
+        
+        # 解析选项和文件路径
+        parts = arg.split()
+        filepath = safe_path(W, parts[0])
+        err = _check_permission('deleteline', filepath)
+        if err:
+            return err
+
+        # 检查是否为行号模式
+        if '-l' in parts:
+            # 行号模式
+            l_index = parts.index('-l')
+            if l_index + 1 >= len(parts):
+                return '错误：-l 选项后需要指定行号或范围'
+            line_spec = parts[l_index + 1]
+            # 解析行号或范围
+            if '-' in line_spec:
+                start, end = line_spec.split('-', 1)
+                try:
+                    start = int(start)
+                    end = int(end)
+                except ValueError:
+                    return '错误：行号范围格式不正确，应为 数字-数字'
+            else:
+                try:
+                    start = int(line_spec)
+                    end = start
+                except ValueError:
+                    return '错误：行号格式不正确，应为数字'
+
+            # 读取文件
+            try:
+                with open(filepath, 'r', encoding='utf-8') as f:
+                    lines = f.readlines()
+                
+                if start < 1 or end > len(lines):
+                    return f'错误：行号范围 {start}-{end} 超出文件范围 (1-{len(lines)})'
+                
+                # 删除指定行
+                del lines[start-1:end]
+                
+                # 写回文件
+                with open(filepath, 'w', encoding='utf-8') as f:
+                    f.writelines(lines)
+                
+                log_action('DELETELINE', f'{filepath} 行 {start}-{end}')
+                return f'已删除 {filepath} 的第 {start} 到 {end} 行'
+            except Exception as e:
+                return f'删除行失败：{e}'
+        else:
+            # 文本模式
+            # 解析选项：-i, -w, -a
+            flags = [part for part in parts if part.startswith('-')]
+            ignore_case = '-i' in flags
+            whole_word = '-w' in flags
+            delete_all = '-a' in flags
+
+            # 获取要删除的文本，通过 \x00 分隔
+            if '\x00' in arg:
+                opts_str, delete_text = arg.split('\x00', 1)
+            else:
+                # 如果没有代码块，那么可能是单行文本
+                # 但是，单行文本可能包含空格，所以我们需要从 parts 中重新组合
+                # 首先，找到非选项的部分
+                non_flag_parts = [part for part in parts if not part.startswith('-')]
+                # 第一个非选项部分是文件路径，已经处理过
+                # 剩下的非选项部分组合成要删除的文本
+                delete_text = ' '.join(non_flag_parts[1:]) if len(non_flag_parts) > 1 else ''
+                opts_str = ' '.join(parts[:1] + [part for part in parts if part.startswith('-')])
+
+            # 重新解析选项，因为 opts_str 可能包含文件路径和选项
+            tokens = opts_str.split()
+            filepath = safe_path(W, tokens[0])
+            flags = tokens[1:] if len(tokens) > 1 else []
+            ignore_case = '-i' in flags
+            whole_word = '-w' in flags
+            delete_all = '-a' in flags
+
+            if not delete_text:
+                return '错误：缺少要删除的文本'
+
+            # 读取文件
+            try:
+                with open(filepath, 'r', encoding='utf-8') as f:
+                    content = f.read()
+                
+                # 查找要删除的文本
+                # 这里使用简单的字符串查找，可以支持多行文本
+                # 我们可以使用正则表达式，考虑忽略大小写和全词匹配
+                if ignore_case:
+                    flags_re = re.IGNORECASE
+                else:
+                    flags_re = 0
+
+                if whole_word:
+                    pattern = r'\b' + re.escape(delete_text) + r'\b'
+                else:
+                    pattern = re.escape(delete_text)
+
+                regex = re.compile(pattern, flags_re)
+
+                # 查找所有匹配
+                matches = list(regex.finditer(content))
+                if not matches:
+                    return f'未找到要删除的文本：{delete_text[:50]}'
+
+                # 删除匹配的文本
+                new_content = content
+                count = 0
+                # 从后往前删除，避免位置变化
+                for match in reversed(matches):
+                    if not delete_all and count >= 1:
+                        break
+                    new_content = new_content[:match.start()] + new_content[match.end():]
+                    count += 1
+
+                # 写回文件
+                with open(filepath, 'w', encoding='utf-8') as f:
+                    f.write(new_content)
+
+                log_action('DELETELINE', f'{filepath} ({count} 处)')
+                return f'已删除 {filepath} 中的 {count} 处文本'
+            except Exception as e:
+                return f'删除文本失败：{e}'
     elif cmd == 'grep': 
         stripped = arg.strip() 
         if stripped and stripped[0] in ('"', "'"): 
@@ -920,7 +1047,7 @@ def agent_exec():
                     results.append(result) 
                 i = peek 
                 continue 
-            elif len(blocks) == 1 and '-r' in arg: 
+            elif len(blocks) == 1 and '-l' in arg: 
                 # 行号模式只需一个代码块（新文本）
                 final_cmd = f"replace {arg}\x00{blocks[0].strip(chr(10))}" 
                 print(f"[DEBUG] final_cmd = {repr(final_cmd)}") 
@@ -929,10 +1056,18 @@ def agent_exec():
                     results.append(result) 
                 i = peek 
                 continue 
-        if cmd in ('create', 'append', 'replace', 'insert', 'find'): 
-            peek = i + 1 
-            content_lines = [] 
-            has_code_start = False 
+        if cmd in ('create', 'append', 'replace', 'insert', 'find', 'deleteline'):
+            # 对于 deleteline 指令，如果包含 -l 选项，则不收集代码块，直接执行
+            if cmd == 'deleteline' and '-l' in arg:
+                result = execute_line(line)
+                if result is not None:
+                    results.append(result)
+                i += 1
+                continue
+            else:
+                peek = i + 1
+                content_lines = []
+                has_code_start = False
             # 情况1：指令行自身包含【CodeSTART】（LLM没换行）
             if '【codestart】' in lines[i].lower(): 
                 has_code_start = True 
@@ -985,9 +1120,13 @@ def agent_exec():
                 content_lines.pop(0) 
             while content_lines and not content_lines[-1].strip(): 
                 content_lines.pop() 
-            content = '\n'.join(content_lines) 
-            final_cmd = f"{cmd} {arg}\x00{content}" 
-            result = execute_line(final_cmd) 
+            if content_lines:
+                content = '\n'.join(content_lines)
+                final_cmd = f"{cmd} {arg}\x00{content}"
+                result = execute_line(final_cmd)
+            else:
+                # 单行简写模式：无代码块内容，直接执行原始指令行
+                result = execute_line(line)
             if result is not None: 
                 results.append(result) 
             continue 

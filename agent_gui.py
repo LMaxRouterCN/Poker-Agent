@@ -1,4 +1,4 @@
-"""低配版Agent - GUI 控制台
+"""PokerAgent - GUI 控制台
 用法：python agent_gui.py（不要和 agent_server.py 同时运行）
 依赖：flask, flask-cors, werkzeug（与 agent_server.py 相同）
 """
@@ -102,7 +102,7 @@ class AgentGUI:
 
     def __init__(self):
         self.root = tk.Tk()
-        self.root.title("低配版Agent")
+        self.root.title("PokerAgent")
         self.root.configure(bg=BG)
         self.root.minsize(780, 480)
 
@@ -359,7 +359,7 @@ class AgentGUI:
 
         # 启动横幅 / Agent 自身日志
         stripped = line.strip()
-        if (stripped.startswith('===') or stripped.startswith('低配版') or
+        if (stripped.startswith('===') or stripped.startswith('PokerAgent') or
             stripped.startswith('监听') or stripped.startswith('工作') or
             stripped.startswith('帮助') or stripped.startswith('操作') or
             stripped.startswith('[Agent]')):

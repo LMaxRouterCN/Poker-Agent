@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         PokerAgent
 // @namespace    http://tampermonkey.net/
-// @version      6.1
+// @version      7
 // @author       LMaxRouterCN
 // @description  PokerAgent的浏览器端核心脚本，提供元素选择、配置管理、调试日志等功能，支持多站点独立配置和自动发送功能。
 // @match        *://*/*
@@ -233,7 +233,7 @@
   .ag-level-target{background:rgba(244,114,182,.06);border-left-color:#f472b6;}
   .ag-level-idx{color:#52525b;font-size:10px;min-width:18px;text-align:right;flex-shrink:0;}
   .ag-level-tag{color:#86efac;font-weight:600;min-width:60px;flex-shrink:0;}
-  .ag-level-cls{color:#a1a1aa;flex:1;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;}
+.ag-level-digest{color:#93c5fd;flex:1;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;font-style:italic;}
   .ag-level-sel{color:#52525b;font-size:10px;max-width:120px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;flex-shrink:0;}
   /* --- 调试浮窗 --- */
   #agent-debug{position:fixed;top:10px;right:10px;width:380px;max-height:60vh;background:rgba(15,15,30,.92);border:1px solid #3f3f46;border-radius:0;box-shadow:0 10px 40px rgba(0,0,0,.5);z-index:2147483644;display:flex;flex-direction:column;font:12px/1.5 'SF Mono',Consolas,monospace;backdrop-filter:blur(8px);color:#a1a1aa;}
@@ -346,27 +346,100 @@
   
   const TYPE_LABEL = { chat: '聊天记录容器', input: '输入框', send: '发送按钮' };
   
+// 检测纯哈希类名（无语义，每次构建都可能变化）
+  function _isPureHashClass(c) {
+      // 纯十六进制: d7dc56a8, a3f8b2
+      if (/^[a-f0-9]{5,}$/i.test(c)) return true;
+      // styled-components / Emotion: css-1a2b3c, sc-abc123
+      if (/^(css|sc|emotion|styled)-[a-z0-9]{4,}$/i.test(c)) return true;
+      return false;
+  }
+
+  // 剥离类名末尾的哈希后缀
+  // chatContainer_a3f8b2 → chatContainer
+  // chat-container-1a2b3c → chat-container
+  function _stripClassHash(c) {
+      return c.replace(/[_-][a-f0-9]{5,8}$/i, '');
+  }
+
   function genSelector(el) {
       if (!el || el === document.body || el === document.documentElement) return '';
-      const segs = []; 
+
+      // ===== 第一阶段：尝试短选择器（稳定性高，优先使用）=====
+
+      // 1. ID 选择器（最稳定）
+      if (el.id && !/\d/.test(el.id)) {
+          const sel = '#' + CSS.escape(el.id);
+          try { if (document.querySelectorAll(sel).length === 1) return sel; } catch(_) {}
+      }
+
+      // 2. 语义化 data 属性
+      for (const attr of ['data-testid', 'data-test-id', 'data-role', 'data-cy']) {
+          const val = el.getAttribute(attr);
+          if (val) {
+              const sel = `${el.tagName.toLowerCase()}[${attr}="${CSS.escape(val)}"]`;
+              try { if (document.querySelectorAll(sel).length === 1) return sel; } catch(_) {}
+          }
+      }
+
+      // 3. ARIA role
+      const role = el.getAttribute('role');
+      if (role) {
+          const sel = `${el.tagName.toLowerCase()}[role="${CSS.escape(role)}"]`;
+          try { if (document.querySelectorAll(sel).length === 1) return sel; } catch(_) {}
+      }
+
+      // 4. 干净的类名（无哈希后缀，如 chatScrollContainer、ds-virtual-list-items）
+      if (el.className && typeof el.className === 'string') {
+          const allCls = el.className.trim().split(/\s+/).filter(c => c);
+          const cleanCls = allCls.filter(c =>
+              !_isPureHashClass(c) &&
+              !/^(_|-{2})/.test(c) &&
+              !/^(is|has|can|should)/.test(c) &&
+              !/[_-][a-f0-9]{5,8}$/i.test(c)
+          );
+
+          if (cleanCls.length) {
+              const sel = `${el.tagName.toLowerCase()}.${cleanCls.map(c => CSS.escape(c)).join('.')}`;
+              try { if (document.querySelectorAll(sel).length === 1) return sel; } catch(_) {}
+          }
+
+          // 5. 带哈希后缀的类名做部分匹配（chatContainer_a3f8b2 → [class*="chatContainer"]）
+          const hashCls = allCls.filter(c =>
+              !_isPureHashClass(c) &&
+              !/^(_|-{2})/.test(c) &&
+              !/^(is|has|can|should)/.test(c) &&
+              /[_-][a-f0-9]{5,8}$/i.test(c)
+          );
+          if (hashCls.length) {
+              const stripped = hashCls.map(c => _stripClassHash(c)).filter(s => s.length >= 3);
+              if (stripped.length) {
+                  const sel = `${el.tagName.toLowerCase()}${stripped.map(s => `[class*="${CSS.escape(s)}"]`).join('')}`;
+                  try { if (document.querySelectorAll(sel).length === 1) return sel; } catch(_) {}
+              }
+          }
+      }
+
+      // ===== 第二阶段：路径兜底（过滤掉纯哈希类名）=====
+      const segs = [];
       let cur = el;
       while (cur && cur !== document.body && cur !== document.documentElement && segs.length < 5) {
           let seg = cur.tagName.toLowerCase();
-          if (cur.id && !/\d/.test(cur.id)) { 
-              segs.unshift('#' + CSS.escape(cur.id)); 
-              break; 
+          if (cur.id && !/\d/.test(cur.id)) {
+              segs.unshift('#' + CSS.escape(cur.id));
+              break;
           }
-          if (cur.className && typeof cur.className === 'string') { 
+          if (cur.className && typeof cur.className === 'string') {
               const cls = cur.className.trim().split(/\s+/)
-                  .filter(c => c && !/^(_|-{2})/.test(c) && !/^(is|has|can|should)/.test(c))
-                  .slice(0, 3); 
-              if (cls.length) seg += '.' + cls.map(c => CSS.escape(c)).join('.'); 
+                  .filter(c => c && !_isPureHashClass(c) && !/^(_|-{2})/.test(c) && !/^(is|has|can|should)/.test(c))
+                  .slice(0, 3);
+              if (cls.length) seg += '.' + cls.map(c => CSS.escape(c)).join('.');
           }
-          if (cur !== el && cur.parentElement) { 
-              const sib = [...cur.parentElement.children].filter(n => n.tagName === cur.tagName); 
-              if (sib.length > 1) seg += ':nth-child(' + ([...cur.parentElement.children].indexOf(cur) + 1) + ')'; 
+          if (cur !== el && cur.parentElement) {
+              const sib = [...cur.parentElement.children].filter(n => n.tagName === cur.tagName);
+              if (sib.length > 1) seg += ':nth-child(' + ([...cur.parentElement.children].indexOf(cur) + 1) + ')';
           }
-          segs.unshift(seg); 
+          segs.unshift(seg);
           cur = cur.parentElement;
       }
       const sel = segs.join(' > ');
@@ -436,19 +509,72 @@
       } 
   }
   
-  function _highlightEl(el, mouseX, mouseY) {
-      const r = el.getBoundingClientRect(); 
+// 获取元素文本摘要（用于区分视觉相似元素）
+  function _getElementDigest(el) {
+      const tag = el.tagName.toLowerCase();
+      // 表单元素取 value
+      if (['input','textarea','select'].includes(tag)) {
+          const v = el.value;
+          return v ? `${tag}[value="${v.slice(0,50)}"]` : `${tag}`;
+      }
+      // img 取 alt 和 src 文件名
+      if (tag === 'img') {
+          const alt = el.alt ? `alt="${el.alt.slice(0,30)}"` : '';
+          const src = el.src ? el.src.split('/').pop().slice(0,40) : '';
+          return `img${alt ? ' '+alt : ''}${src ? ' src=…/'+src : ''}`;
+      }
+      // 通用：取直接文本内容（排除子元素标签）
+      let text = '';
+      for (const node of el.childNodes) {
+          if (node.nodeType === Node.TEXT_NODE) text += node.textContent;
+      }
+      text = text.replace(/\s+/g, ' ').trim().slice(0, 60);
+      if (text) return `${tag}: "${text}"`;
+      return tag;
+  }
+
+function _highlightEl(el, mouseX, mouseY) {
+      const r = el.getBoundingClientRect();
       _pickHL.style.display = 'block';
-      Object.assign(_pickHL.style, { 
-          left: (r.left-2)+'px', top: (r.top-2)+'px', 
-          width: (r.width+4)+'px', height: (r.height+4)+'px' 
+      Object.assign(_pickHL.style, {
+          left: (r.left-2)+'px', top: (r.top-2)+'px',
+          width: (r.width+4)+'px', height: (r.height+4)+'px'
       });
       const sel = genSelector(el);
-      _pickTip.innerHTML = _lockedBaseEl 
-          ? `<span id="ag-show-levels">展开所有层级</span><span>${esc(sel)} ← ${el.tagName.toLowerCase()}</span>` 
-          : `<span>${esc(sel)} ← ${el.tagName.toLowerCase()}</span>`;
-      _pickTip.style.opacity = '1'; 
-      _pickTip.style.left = Math.min(mouseX + 14, innerWidth - 510) + 'px'; 
+      const digest = _getElementDigest(el);
+      const tag = el.tagName.toLowerCase();
+      const digestStr = digest !== tag ? ` <span style="color:#888">${esc(digest)}</span>` : '';
+
+      // --- 构建诊断信息行 ---
+      const diagParts = [];
+      // 文本内容预览（最关键信息，帮用户直接判断"这是不是聊天区域"）
+      const textPreview = (el.textContent || '').replace(/\s+/g, ' ').trim().slice(0, 60);
+      if (textPreview) diagParts.push(`<span class="ag-diag-text">"${esc(textPreview)}"</span>`);
+      // 子元素数量（容器通常有大量子元素）
+      const childCount = el.children.length;
+      if (childCount > 0) diagParts.push(`<span class="ag-diag-children">子:${childCount}</span>`);
+      // 可滚动检测（聊天容器核心特征：纵向可滚动）
+      const isScrollY = el.scrollHeight > el.clientHeight + 2;
+      const isScrollX = el.scrollWidth > el.clientWidth + 2;
+      if (isScrollY || isScrollX) {
+          const dir = isScrollY && isScrollX ? 'xy' : isScrollY ? 'y' : 'x';
+          diagParts.push(`<span class="ag-diag-scroll">可滚动(${dir})</span>`);
+      }
+      // 元素视觉尺寸
+      const w = Math.round(r.width), h = Math.round(r.height);
+      diagParts.push(`<span class="ag-diag-size">${w}×${h}</span>`);
+      // Shadow DOM 边界提醒（选中后 querySelector 无法深入）
+      if (el.shadowRoot) diagParts.push(`<span class="ag-diag-shadow">ShadowDOM</span>`);
+
+      const diagHtml = diagParts.length
+          ? `<div class="ag-diag-line">${diagParts.join('<span class="ag-diag-sep">|</span>')}</div>`
+          : '';
+
+      _pickTip.innerHTML = _lockedBaseEl
+          ? `<span class="ag-tip-sel"><span id="ag-show-levels">展开所有层级</span><span>${esc(sel)} ←${tag}${digestStr}</span></span>${diagHtml}`
+          : `<span class="ag-tip-sel"><span>${esc(sel)} ←${tag}${digestStr}</span></span>${diagHtml}`;
+      _pickTip.style.opacity = '1';
+      _pickTip.style.left = Math.min(mouseX + 14, innerWidth - 510) + 'px';
       _pickTip.style.top = (mouseY + 22) + 'px';
   }
   
@@ -485,13 +611,13 @@
       }
       
       let html = '<div class="ag-level-head"><span>📐 层级结构 (点击选择)</span><button id="ag-level-close">✕</button></div><div class="ag-level-body">';
-      chain.forEach((el, i) => { 
-          const sel = genSelector(el) || '(无法生成)'; 
-          const tag = el.tagName.toLowerCase(); 
-          const rawCls = el.className && typeof el.className === 'string' ? el.className.trim() : ''; 
-          const clsSnippet = rawCls ? rawCls.split(/\s+/).filter(c => c).slice(0, 3).join('.') : ''; 
-          const isTarget = el === _lockedBaseEl; 
-          html += `<div class="ag-level-item ${isTarget ? 'ag-level-target' : ''}" data-idx="${i}"><span class="ag-level-idx">${i}</span><span class="ag-level-tag">&lt;${tag}&gt;</span><span class="ag-level-cls">${esc(clsSnippet)}</span><span class="ag-level-sel" title="${esc(sel)}">${esc(sel)}</span></div>`; 
+chain.forEach((el, i) => {
+          const sel = genSelector(el) || '(无法生成)';
+          const tag = el.tagName.toLowerCase();
+          const digest = _getElementDigest(el);
+          const digestStr = digest !== tag ? digest : '';
+          const isTarget = el === _lockedBaseEl;
+          html += `<div class="ag-level-item ${isTarget ? 'ag-level-target' : ''}" data-idx="${i}"><span class="ag-level-idx">${i}</span><span class="ag-level-tag">&lt;${tag}&gt;</span><span class="ag-level-digest">${esc(digestStr)}</span><span class="ag-level-sel" title="${esc(sel)}">${esc(sel)}</span></div>`;
       });
       html += '</div>'; 
       _levelPanel.innerHTML = html;
@@ -584,16 +710,27 @@
       _pickBar.innerHTML = `🎯 当前层级: <span style="color:#86efac">${_domStack.length}</span> (${_pickedEl.tagName.toLowerCase()}) | <span style="font-size:12px;opacity:0.7">左键↑ 右键↓ Shift+点击确认</span>`; 
   }
   
-  function _confirmSelection(el) {
-      const sel = genSelector(el); 
+function _confirmSelection(el) {
+      const sel = genSelector(el);
       if (!sel) { log('ERR', '无法生成选择器'); return; }
-      const c = cfgLoad(); 
-      if (_pickType === 'chat') c.selChatContainer = sel; 
-      if (_pickType === 'input') c.selInputBox = sel; 
+      const c = cfgLoad();
+      if (_pickType === 'chat') c.selChatContainer = sel;
+      if (_pickType === 'input') c.selInputBox = sel;
       if (_pickType === 'send') c.selSendButton = sel;
-      cfgSaveRuntime(c); 
-      log('OK', `已选择 [${TYPE_LABEL[_pickType]}]: ${sel}`); 
-      log('INFO', `目标元素详情: <${el.tagName.toLowerCase()}>, class="${el.className}", id="${el.id}"`); 
+      cfgSaveRuntime(c);
+      log('OK', `已选择 [${TYPE_LABEL[_pickType]}]:${sel}`);
+
+      // 构建并输出元素上下文链，方便 AI 理解 DOM 层级
+      const ctxChain = [];
+      let cur = el;
+      while (cur && cur !== document.documentElement) {
+          const tag = cur.tagName ? cur.tagName.toLowerCase() : '#document';
+          const digest = _getElementDigest(cur);
+          ctxChain.push(`${tag}${digest !== tag ? '('+digest+')' : ''}`);
+          cur = cur.parentElement;
+      }
+      log('INFO', `上下文链: ${ctxChain.reverse().join(' > ')}`);
+      log('INFO', `目标元素详情: <${el.tagName.toLowerCase()}>, class="${el.className}", id="${el.id}"`);
       pickerExit();
   }
   

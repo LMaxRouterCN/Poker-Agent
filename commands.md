@@ -42,13 +42,35 @@ hello world1
 【/CodeEND】
 【/cmd】
 
+### deleteline <文件路径> [选项]
+删除文件内的某一行或几行，或删除匹配的文本。
+**行号模式**：使用 `-l` 选项指定行号或范围。
+示例：
+【cmd】deleteline test.txt -l 5【/cmd】
+【cmd】deleteline test.txt -l 5-10【/cmd】
+**文本模式**：不使用 `-l` 选项，指定要删除的文本。
+支持选项
+- `-i`（忽略大小写）
+- `-w`（全词匹配）
+- `-a`（删除所有匹配）
+示例：
+【cmd】deleteline test.txt -i -w hello【/cmd】
+【cmd】deleteline test.txt -a 
+【CodeSTART】
+```
+hello
+world
+```
+【/CodeEND】
+【/cmd】
+
 ### replace <文件路径> [选项]
 精确替换文件内的文本。
 选项：
 - -a ：替换所有（默认只替换第一个）
 - -i ：忽略大小写
 - -s ：忽略缩进（按去除首尾空格后的内容匹配，替换时自动继承目标行的缩进）
-- -r <行号范围> ：按行号替换，格式为 `-r 5`（单行）或 `-r 5-20`（范围），只需提供一个代码块（新文本）
+- -l <行号范围> ：按行号替换，格式为 `-l 5`（单行）或 `-l 5-20`（范围），只需提供一个代码块（新文本）
 **内容匹配模式**（默认）：用两个独立的代码块分别提供旧文本和新文本，第一个代码块是旧文本，第二个是新文本。
 示例：
 【cmd】replace config.json -a -s
@@ -63,9 +85,9 @@ hello world1
 ```
 【/CodeEND】
 【/cmd】
-**行号模式**（-r）：直接指定要替换的行范围，只提供新文本。
+**行号模式**（-l）：直接指定要替换的行范围，只提供新文本。
 示例：
-【cmd】replace config.json -r 10-15
+【cmd】replace config.json -l 10-15
 【CodeSTART】
 ```
 // 新的代码
