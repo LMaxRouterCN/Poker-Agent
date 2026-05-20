@@ -1,53 +1,67 @@
 # Agent 指令列表
-
 用法：在 【cmd】和【/cmd】标签之间编写指令，多条指令按顺序执行。
-
+## 通用规则
+- **路径包含空格**：如果文件或目录路径中包含空格，必须使用双引号 `""` 将路径包裹起来，例如 `read "11111.md" 10-20`。不加引号时，空格会被视为参数分隔符。
+## 快速预览列表
+### @@help 显示本帮助文档。
+### count <文件路径>
+### find <文件路径> [选项] <查找内容>
+### deleteline <文件路径> [选项]
+### replace <文件路径> [选项]
+### insert <文件路径> -after/-before <行号或文本>
+### grep <关键词> <文件或目录>
+### head <文件路径> [行数]
+### tail <文件路径> [行数]
+### create <文件路径> [内容]
+### read <文件路径> [起始行]-[结束行]
+### append <文件路径> [内容]
+### delete <文件路径>
+### copy <源路径> <目标路径>
+### move <源路径> <目标路径>
+### list <目录路径>
+### mkdir <目录路径>
+### exec <系统命令>
+### run <脚本路径>
+### get <URL>
+### download <URL> <保存路径>
+**如果不清楚用法请在`commands.md`中查询对应的指令获取用法,或者寻求管理员**
 ---
-
 ## 系统指令
-
 ### @@help
 显示本帮助文档。
 示例：
 【cmd】@@help【/cmd】
-
 ---
-
 ## 精确内容操作
-
 ### count <文件路径>
 统计文件的行数、字数（中英文混合精确统计）和字符数。
 示例：
 【cmd】count main.py【/cmd】
-
+【cmd】count "my file.txt"【/cmd】
 ### find <文件路径> [选项] <查找内容>
 精确查找文件内的文本，返回所有匹配的行号及内容。
 选项：
 - -i ：忽略大小写
 - -w ：全词匹配（仅英文）
-
 示例:
 【cmd】find test.txt hello【/cmd】
-【cmd】find test.txt -i -w hello【/cmd】
+【cmd】find "test file.txt" -i -w hello【/cmd】
 单行简写时查找内容不允许有空格。
-
 多行查找，内容需要换行并用标签包裹。
 示例：
-【cmd】find test.txt -i -w 
-【CodeSTART】
+【cmd】find test.txt -i -w 【CodeSTART】
 ```
 hello world
 hello world1
 ```
 【/CodeEND】
 【/cmd】
-
 ### deleteline <文件路径> [选项]
 删除文件内的某一行或几行，或删除匹配的文本。
 **行号模式**：使用 `-l` 选项指定行号或范围。
 示例：
 【cmd】deleteline test.txt -l 5【/cmd】
-【cmd】deleteline test.txt -l 5-10【/cmd】
+【cmd】deleteline "test file.txt" -l 5-10【/cmd】
 **文本模式**：不使用 `-l` 选项，指定要删除的文本。
 支持选项
 - `-i`（忽略大小写）
@@ -55,15 +69,12 @@ hello world1
 - `-a`（删除所有匹配）
 示例：
 【cmd】deleteline test.txt -i -w hello【/cmd】
-【cmd】deleteline test.txt -a 
-【CodeSTART】
+【cmd】deleteline test.txt -a 【CodeSTART】
 ```
-hello
-world
+hello world
 ```
 【/CodeEND】
 【/cmd】
-
 ### replace <文件路径> [选项]
 精确替换文件内的文本。
 选项：
@@ -73,8 +84,7 @@ world
 - -l <行号范围> ：按行号替换，格式为 `-l 5`（单行）或 `-l 5-20`（范围），只需提供一个代码块（新文本）
 **内容匹配模式**（默认）：用两个独立的代码块分别提供旧文本和新文本，第一个代码块是旧文本，第二个是新文本。
 示例：
-【cmd】replace config.json -a -s
-【CodeSTART】
+【cmd】replace config.json -a -s 【CodeSTART】
 ```
 "debug": false
 ```
@@ -87,106 +97,87 @@ world
 【/cmd】
 **行号模式**（-l）：直接指定要替换的行范围，只提供新文本。
 示例：
-【cmd】replace config.json -l 10-15
-【CodeSTART】
+【cmd】replace "config file.json" -l 10-15 【CodeSTART】
 ```
 // 新的代码
 ```
 【/CodeEND】
 【/cmd】
-
 注意replace指令*不支持*多行分别查找替换, 指令会把代码块内的所有内容作为一个整体
-
 ### insert <文件路径> -after/-before <行号或文本>
 在指定位置插入内容。可以指定行号，也可以指定一段目标文本。
 示例（在第10行后插入）：
-【cmd】insert main.py -after 10 
-【CodeSTART】
+【cmd】insert main.py -after 10 【CodeSTART】
 ```
 print("插入的内容")
 ```
 【/CodeEND】
 【/cmd】
 示例（在目标文本前插入）：
-【cmd】insert main.py -before "def main():" 
-【CodeSTART】
+【cmd】insert "main file.py" -before "def main():" 【CodeSTART】
 ```
 # 这是新插入的注释
 ```
 【/CodeEND】
 【/cmd】
-
 ### grep <关键词> <文件或目录>
 在文件或整个目录中搜索包含关键词的行（类似 Linux grep）。
 支持使用 `|` 分隔多个关键词进行 OR 搜索（任意一个命中即显示），命中行末尾会提示命中的关键词。
-
 示例：
 【cmd】grep "TODO" src【/cmd】
-【cmd】grep "TODO|FIXME|HACK" src【/cmd】
+【cmd】grep "TODO|FIXME|HACK" "src code"【/cmd】
 【cmd】grep "import|from" main.py -s【/cmd】
-
-
 ### head <文件路径> [行数]
 查看文件头部内容，默认前 10 行。
 示例：
 【cmd】head log.txt 20【/cmd】
-
+【cmd】head "my log.txt" 20【/cmd】
 ### tail <文件路径> [行数]
 查看文件尾部内容，默认后 10 行。
 示例：
 【cmd】tail log.txt 50【/cmd】
-
+【cmd】tail "my log.txt" 50【/cmd】
 ---
-
 ## 文件操作
-
-### create
+### create <文件路径> [内容]
 创建一个新文件并写入内容。文件路径写在指令同行，多行内容必须使用 【CodeSTART】 和 【/CodeEND】 标签包裹
 格式：
-【cmd】create <文件路径> 
-【CodeSTART】
+【cmd】create <文件路径> 【CodeSTART】
 ```
 <文件内容>
 ```
 【/CodeEND】
 【/cmd】
-
 示例：
-
-【cmd】create hello.txt 
-【CodeSTART】
+【cmd】create hello.txt 【CodeSTART】
 ```
-Hello World! 
+Hello World!
 这是第二行。
 ```
 【/CodeEND】
 【/cmd】
-
-
-- 文件路径：相对于工作目录，或使用绝对路径。
+- 文件路径：相对于工作目录，或使用绝对路径。**如果路径包含空格，必须用双引号包裹**。
 - 如果文件已存在，会覆盖原文件。
 - 如果内容只有单行且不含特殊字符，也可以简写为：
-
 【cmd】create <文件路径> <单行内容>【/cmd】
-
+- 简写模式下，如果路径含空格，需用引号将路径包裹，剩余部分为内容：
+【cmd】create "hello world.txt" Hello【/cmd】
 ### read <文件路径> [起始行]-[结束行]
 读取文件内容并返回。支持指定行号范围，指定范围时会自动附带行号。
 如果处于剪贴板读取模式一次对话最多获取10个文件
 - 不传行号：返回完整内容，如果当前程序处于纯文本模式超过 5000 字符会截断，如果处于剪贴板读取模式会使用API上传整个文件不受字数限制。
 - `read <路径> 10-20`：读取第 10 到 20 行。
 - `read <路径> 10-` 或 `read <路径> 10`：从第 10 行读到文件末尾。
-
+- **如果路径包含空格，必须用双引号包裹**。
 示例：
 【cmd】read notes.txt【/cmd】
-【cmd】read main.py 10-20【/cmd】
+【cmd】read "11111.md"【/cmd】
+【cmd】read "11111.md" 10-20【/cmd】
 【cmd】read main.py 50-【/cmd】
-
-
-### append
+### append <文件路径> [内容]
 向已有文件末尾追加内容。多行格式与 create 相同。
 格式：
-【cmd】append <文件路径> 
-【CodeSTART】
+【cmd】append <文件路径> 【CodeSTART】
 ```
 <追加内容>
 ```
@@ -194,100 +185,85 @@ Hello World!
 【/cmd】
 简写：
 【cmd】append <文件路径> <单行内容>【/cmd】
-
+- 简写模式下，如果路径含空格，需用引号将路径包裹，剩余部分为内容：
+【cmd】append "my notes.txt" 新增的一行【/cmd】
 ### delete <文件路径>
 删除指定文件。此操作不可逆。
 示例：
 【cmd】delete temp.txt【/cmd】
-
+【cmd】delete "temp file.txt"【/cmd】
 ### copy <源路径> <目标路径>
 复制文件。
 示例：
 【cmd】copy notes.txt backup.txt【/cmd】
-
+【cmd】copy "my notes.txt" "my backup.txt"【/cmd】
 ### move <源路径> <目标路径>
 移动或重命名文件。
 示例：
 【cmd】move old.txt new.txt【/cmd】
-
+【cmd】move "old file.txt" "new file.txt"【/cmd】
 ---
-
 ## 目录操作
-
 ### list <目录路径>
 列出目录下的文件和子目录。不传路径时列出当前工作目录。
 示例：
 【cmd】list【/cmd】
 【cmd】list src【/cmd】
-
+【cmd】list "my src"【/cmd】
 注意:此指令不会递归,不会列出子目录的子目录和文件,如果要递归列出所有内容请使用【cmd】exec dir /s /b【/cmd】
-
 ### mkdir <目录路径>
 创建目录（支持多级创建）。
 示例：
 【cmd】mkdir src/modules【/cmd】
-
+【cmd】mkdir "my modules/src"【/cmd】
 ---
-
 ## 系统命令
-
 ### exec <系统命令>
 执行系统命令，返回输出。
 exec后的文本即是输入进cmd中的内容
 示例：
 【cmd】exec python --version【/cmd】
 【cmd】exec dir【/cmd】
-
-解码格式UTF-8
-
+解码格式会动态获取系统编码
 ### run <脚本路径>
 运行 Python 脚本，返回输出。
 示例：
 【cmd】run script.py【/cmd】
-
+【cmd】run "my script.py"【/cmd】
 ---
-
 ## 网络操作
-
 ### get <URL>
 发送 HTTP GET 请求，返回响应内容。
 示例：
 【cmd】get https://httpbin.org/get【/cmd】
-
 ### download <URL> <保存路径>
 下载文件到本地。
 示例：
 【cmd】download https://example.com/img.png images/img.png【/cmd】
-
+【cmd】download https://example.com/img.png "my images/img.png"【/cmd】
 ---
-
 ## 系统命令快捷参考（exec 指令）
 请尽量使用专用指令,如果专用指令出现问题,或者无对应的专用指令,或者为了效率,可以使用 exec 指令.
 以下操作可以通过以下 exec 指令完成。
-
 ### 目录与文件浏览
 列出当前目录：exec dir /b
 列出指定目录：exec dir /b <路径>
 递归列出所有文件：exec dir /s /b <路径>
 按名称搜索文件：exec dir /s /b <路径>\*<关键词>*
 查看文件大小和属性：exec dir <文件路径>
-
 ### 目录操作
 创建目录（支持多级）：exec mkdir <路径>
 同时创建多个目录：exec mkdir <路径1> <路径2>
-
 ### 文件操作
 复制文件：exec copy <源路径> <目标路径>
 移动/重命名文件：exec move <源路径> <目标路径>
 删除文件：exec del <文件路径>
 删除文件（不提示）：exec del /q <文件路径>
 删除目录及其内容：exec rd /s /q <目录路径>
-
 ### 文件内容查看（简单场景）
 查看整个文件：exec type <文件路径>
 查看文件前N行：exec powershell "Get-Content <文件路径> -Head <N>"
 查看文件后N行：exec powershell "Get-Content <文件路径> -Tail <N>"
-
 ### 环境信息
 查看当前工作目录：exec cd
 查看环境变量：exec set
@@ -295,26 +271,24 @@ exec后的文本即是输入进cmd中的内容
 查看当前日期时间：exec echo %date% %time%
 查看磁盘空间：exec wmic logicaldisk get size,freespace,caption
 查看系统信息：exec systeminfo
-
 ### 网络相关
 测试连通性：exec ping <地址>
 查看本机IP：exec ipconfig
 查看端口占用：exec netstat -ano | findstr <端口号>
 查看指定PID的进程：exec tasklist | findstr <PID>
-
 ### 进程管理
 查看所有进程：exec tasklist
 结束进程：exec taskkill /pid <PID> /f
 按名称结束进程：exec taskkill /im <进程名> /f
-
 ### 其他实用
 计算文件行数：exec find /c /v "" <文件路径>
 按编码查看文件（如UTF-8）：exec powershell "Get-Content <文件路径> -Encoding UTF8"
 
 ## 注意事项
 - **此文件是存在换行的,如果你在看到这个文件内容时没有换行证明有些信息在传输过程中丢失了,立刻停止所有动作并告知用户**
+- 小改动时不要频繁用create指令,很慢而且很消耗上下文窗口,小改动时使用replace或insert指令
 - 写入多行内容时，必须在外层使用 【CodeSTART】 和 【/CodeEND】 包裹，内侧用 ``` 包裹代码使其变为代码块。
-- 替换整个文件内容用create覆写,而不是replace
+- 替换整个文件内容时用create覆写,而不是replace
 - 如果要写入的内容本身包含三个反引号，请用 TICK3 代替避免在浏览器处理文本后打乱排版格式（后端会自动还原）。
 - 代码块内的一切内容都会原封不动写入文件，包括空行、空格、特殊符号。
 - replace 指令中，请用**两个独立的代码块**分别提供旧文本和新文本（按出现顺序区分）。
@@ -324,22 +298,19 @@ exec后的文本即是输入进cmd中的内容
 - 如果你不知道要修改的文件的内容,就不要操作文件,不要猜测,先read要修改的文件
 - 任何情况下,指令内用于包裹代码的```的同一行都不能出现任何标识代码块的编程语言标签
 不要写:
-【cmd】hello.txt 
-【CodeSTART】
+【cmd】hello.txt 【CodeSTART】
 ```java
 something
 ```
 【/CodeEND】
 【/cmd】
-
 写:
-【cmd】hello.txt 
-【CodeSTART】
+【cmd】hello.txt 【CodeSTART】
 ```
 something
 ```
 【/CodeEND】
 【/cmd】
-
 # 已安装的CLI扩展程序 - 对应的起始指令
 1. OpenCLI - 【cmd】exec opencli list【/cmd】
+```
