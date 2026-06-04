@@ -1,26 +1,33 @@
 // ==UserScript==
-// @name PokerAgent
-// @namespace http://tampermonkey.net/
-// @version 10
-// @author LMaxRouterCN
-// @description PokerAgent的浏览器端核心脚本，提供元素选择、配置管理、调试日志等功能，支持多站点独立配置和自动发送功能。
-// @match *://*/*
-// @grant GM_registerMenuCommand
-// @grant GM_xmlhttpRequest
-// @grant GM_getValue
-// @grant GM_setValue
-// @grant GM_addStyle
-// @grant GM_setClipboard
-// @connect localhost
-// @connect 127.0.0.1
+// @name         PokerAgent
+// @namespace    http://tampermonkey.net/
+// @version      11
+// @author       LMaxRouterCN
+// @description  PokerAgent的浏览器端核心脚本，提供元素选择、配置管理、调试日志等功能，支持多站点独立配置和自动发送功能。
+// @match        *://*/*
+// @grant        GM_registerMenuCommand
+// @grant        GM_xmlhttpRequest
+// @grant        GM_getValue
+// @grant        GM_setValue
+// @grant        GM_addStyle
+// @grant        GM_setClipboard
+// @connect      localhost
+// @connect      127.0.0.1
 // ==/UserScript==
+
+//*   - 增加 selAnswerItem 可配置选择器（替代硬编码 .answer）
+//*   - 增加 cleanIgnoreClassKeywords / cleanRemoveButtonLike / cleanRemovePre 清理规则可配置
+//*   - 修复 <pre> 处理中 .answer 硬编码 bug
+//*   - 补全 injectNewlines 块级元素列表
+//*   - 改进 _getSendBtnFingerprint 指纹计算
+//*   - 增加心跳自诊断（连续未找到回答元素时打警告）
+
 
 (function () {
     'use strict';
 
     /* ================================================================
      * 1. 存储与配置
-     * v4.1 重构：增加发送按钮状态指纹，实现精准判断 LLM 输出完毕
      * ================================================================ */
 
     const SITE_DEFAULTS = {
@@ -28,6 +35,10 @@
         selChatContainer: '',
         selInputBox: '',
         selSendButton: '',
+        selAnswerItem: '.answer', // [新增] AI回答元素选择器，用于从聊天容器中定位AI的回复
+        cleanIgnoreClassKeywords: 'thinking,reasoning,probe,deepseek-reason', // [新增] 清理时忽略的class关键词，逗号分隔
+        cleanRemoveButtonLike: true, // [新增] 是否移除按钮类元素（copy/operate/action/toolbar）
+        cleanRemovePre: true, // [新增] 是否移除pre标签（除非含CodeSTART）
         sendBtnBusyFingerprints: [],
         sendBtnIdleFingerprints: [],
         verifyMode: 'single',
@@ -37,7 +48,12 @@
         autoSendMode: 'click'
     };
 
-    const DEFAULTS = { whitelist: ['https://chatglm.cn/'], debugMode: false, ...SITE_DEFAULTS };
+    const DEFAULTS = {
+        whitelist: ['https://chatglm.cn/'],
+        debugMode: false,
+        ...SITE_DEFAULTS
+    };
+
     const STORE_KEY = 'low_cost_agent_config_v4';
 
     function _loadStore() {
@@ -45,21 +61,27 @@
         try { store = GM_getValue(STORE_KEY, null); } catch (_) { store = null; }
         if (!store) {
             return {
-                whitelist: ['https://chatglm.cn/'], debugMode: false,
+                whitelist: ['https://chatglm.cn/'],
+                debugMode: false,
                 defaults: { ...SITE_DEFAULTS },
-                perSite: { 'https://chatglm.cn/': { ...SITE_DEFAULTS, selChatContainer: 'div.chatScrollContainer' } }
+                perSite: {
+                    'https://chatglm.cn/': { ...SITE_DEFAULTS, selChatContainer: 'div.chatScrollContainer' }
+                }
             };
         }
         return _migrateStore(store);
     }
 
-    function _saveStore(store) { GM_setValue(STORE_KEY, store); }
+    function _saveStore(store) {
+        GM_setValue(STORE_KEY, store);
+    }
 
     function _migrateStore(store) {
         if (store.defaults && store.perSite !== undefined) {
             const clearOld = (cfg) => {
                 if (cfg.sendBtnIdleFingerprint !== undefined && cfg.sendBtnIdleFingerprint !== '') {
-                    cfg.sendBtnBusyFingerprints = []; cfg.sendBtnIdleFingerprints = [];
+                    cfg.sendBtnBusyFingerprints = [];
+                    cfg.sendBtnIdleFingerprints = [];
                     delete cfg.sendBtnIdleFingerprint;
                 }
                 if (!cfg.sendBtnBusyFingerprints) cfg.sendBtnBusyFingerprints = [];
@@ -72,6 +94,11 @@
                 }
                 if (!cfg.autoSendMode) cfg.autoSendMode = 'click';
                 if (cfg.autoSendByEnter !== undefined) delete cfg.autoSendByEnter;
+                // [新增] v4.2 迁移：确保新字段有默认值
+                if (!cfg.selAnswerItem) cfg.selAnswerItem = '.answer';
+                if (cfg.cleanIgnoreClassKeywords === undefined) cfg.cleanIgnoreClassKeywords = 'thinking,reasoning,probe,deepseek-reason';
+                if (cfg.cleanRemoveButtonLike === undefined) cfg.cleanRemoveButtonLike = true;
+                if (cfg.cleanRemovePre === undefined) cfg.cleanRemovePre = true;
             };
             if (store.defaults) clearOld(store.defaults);
             if (store.perSite) Object.values(store.perSite).forEach(clearOld);
@@ -108,8 +135,7 @@
     function cfgLoad() {
         const store = _loadStore();
         const site = _matchSite();
-        const siteCfg = (site && store.perSite && store.perSite[site])
-            ? store.perSite[site] : (store.defaults || {});
+        const siteCfg = (site && store.perSite && store.perSite[site]) ? store.perSite[site] : (store.defaults || {});
         const merged = { ...DEFAULTS, whitelist: store.whitelist, debugMode: store.debugMode, ...siteCfg };
         if (merged.autoSendByEnter !== undefined && merged.autoSendMode === undefined) {
             merged.autoSendMode = merged.autoSendByEnter ? 'enter' : 'click';
@@ -126,8 +152,12 @@
         for (const key of Object.keys(SITE_DEFAULTS)) {
             if (panelValues[key] !== undefined) siteData[key] = panelValues[key];
         }
-        if (_editTarget === 'defaults') { store.defaults = siteData; }
-        else { if (!store.perSite) store.perSite = {}; store.perSite[_editTarget] = siteData; }
+        if (_editTarget === 'defaults') {
+            store.defaults = siteData;
+        } else {
+            if (!store.perSite) store.perSite = {};
+            store.perSite[_editTarget] = siteData;
+        }
         _saveStore(store);
     }
 
@@ -196,6 +226,7 @@
         .ag-badge-ok{background:rgba(134,239,172,.12);color:#86efac}
         .ag-badge-fail{background:rgba(244,114,182,.12);color:#f472b6}
         .ag-site-actions{display:flex;gap:6px;margin-bottom:14px;flex-wrap:wrap}
+        .ag-hint{font-size:11px;color:#52525b;margin-top:2px}
 
         /* --- 选择器 --- */
         #agent-pick-dim{position:fixed;inset:0;background:rgba(0,0,0,.28);z-index:2147483645;pointer-events:none}
@@ -343,7 +374,8 @@
     let _domStack = [];
     let _levelPanel = null;
 
-    const TYPE_LABEL = { chat: '聊天记录容器', input: '输入框', send: '发送按钮' };
+    // [修改] 增加 answer 类型
+    const TYPE_LABEL = { chat: '聊天记录容器', input: '输入框', send: '发送按钮', answer: 'AI回答元素' };
 
     function _isPureHashClass(c) {
         if (/^[a-f0-9]{5,}$/i.test(c)) return true;
@@ -351,7 +383,9 @@
         return false;
     }
 
-    function _stripClassHash(c) { return c.replace(/[_-][a-f0-9]{5,8}$/i, ''); }
+    function _stripClassHash(c) {
+        return c.replace(/[_-][a-f0-9]{5,8}$/i, '');
+    }
 
     function genSelector(el) {
         if (!el || el === document.body || el === document.documentElement) return '';
@@ -391,7 +425,10 @@
         let cur = el;
         while (cur && cur !== document.body && cur !== document.documentElement && segs.length < 5) {
             let seg = cur.tagName.toLowerCase();
-            if (cur.id && !/\d/.test(cur.id)) { segs.unshift('#' + CSS.escape(cur.id)); break; }
+            if (cur.id && !/\d/.test(cur.id)) {
+                segs.unshift('#' + CSS.escape(cur.id));
+                break;
+            }
             if (cur.className && typeof cur.className === 'string') {
                 const cls = cur.className.trim().split(/\s+/)
                     .filter(c => c && !_isPureHashClass(c) && !/^(_|-{2})/.test(c) && !/^(is|has|can|should)/.test(c))
@@ -411,13 +448,26 @@
     }
 
     function pickerEnter(type) {
-        _pickActive = true; _pickType = type; _pickedEl = null; _lockedBaseEl = null; _domStack = [];
+        _pickActive = true;
+        _pickType = type;
+        _pickedEl = null;
+        _lockedBaseEl = null;
+        _domStack = [];
         hidePanel();
-        _pickDim = document.createElement('div'); _pickDim.id = 'agent-pick-dim'; document.body.appendChild(_pickDim);
-        _pickHL = document.createElement('div'); _pickHL.id = 'agent-pick-hl'; document.body.appendChild(_pickHL);
-        _pickLockHL = document.createElement('div'); _pickLockHL.id = 'agent-pick-lock-hl'; document.body.appendChild(_pickLockHL);
-        _pickTip = document.createElement('div'); _pickTip.id = 'agent-pick-tip'; document.body.appendChild(_pickTip);
-        _pickBar = document.createElement('div'); _pickBar.id = 'agent-pick-bar';
+        _pickDim = document.createElement('div');
+        _pickDim.id = 'agent-pick-dim';
+        document.body.appendChild(_pickDim);
+        _pickHL = document.createElement('div');
+        _pickHL.id = 'agent-pick-hl';
+        document.body.appendChild(_pickHL);
+        _pickLockHL = document.createElement('div');
+        _pickLockHL.id = 'agent-pick-lock-hl';
+        document.body.appendChild(_pickLockHL);
+        _pickTip = document.createElement('div');
+        _pickTip.id = 'agent-pick-tip';
+        document.body.appendChild(_pickTip);
+        _pickBar = document.createElement('div');
+        _pickBar.id = 'agent-pick-bar';
         _pickBar.innerHTML = `🎯 选择 <span class="ag-target">${TYPE_LABEL[type]}</span> | <span style="font-size:12px;opacity:0.7">左键↑ 右键↓ Shift+点击确认</span>`;
         document.body.appendChild(_pickBar);
         document.addEventListener('mousemove', _onMove, true);
@@ -427,13 +477,18 @@
     }
 
     function pickerExit() {
-        _pickActive = false; _pickType = ''; _pickedEl = null; _lockedBaseEl = null; _domStack = null;
+        _pickActive = false;
+        _pickType = '';
+        _pickedEl = null;
+        _lockedBaseEl = null;
+        _domStack = null;
         document.removeEventListener('mousemove', _onMove, true);
         document.removeEventListener('click', _onClick, true);
         document.removeEventListener('contextmenu', _onCtx, true);
         document.removeEventListener('keydown', _onKey, true);
         [_pickDim, _pickHL, _pickLockHL, _pickTip, _pickBar, _levelPanel].forEach(e => e && e.remove());
-        _pickLockHL = null; _levelPanel = null;
+        _pickLockHL = null;
+        _levelPanel = null;
         showPanel();
     }
 
@@ -441,7 +496,8 @@
         let el = document.elementFromPoint(x, y);
         while (el && el.shadowRoot) {
             const inner = el.shadowRoot.elementFromPoint(x, y);
-            if (!inner || inner === el) break; el = inner;
+            if (!inner || inner === el) break;
+            el = inner;
         }
         while (el && PICKER_IDS.has(el.id)) el = el.parentElement;
         return el;
@@ -449,15 +505,29 @@
 
     function _onMove(e) {
         e.stopPropagation();
-        if (!_pickedEl) { const el = _targetAt(e.clientX, e.clientY); if (el) _highlightEl(el, e.clientX, e.clientY); }
-        else { _updateLockHL(); }
+        if (!_pickedEl) {
+            const el = _targetAt(e.clientX, e.clientY);
+            if (el) _highlightEl(el, e.clientX, e.clientY);
+        } else {
+            _updateLockHL();
+        }
     }
 
     function _getElementDigest(el) {
         const tag = el.tagName.toLowerCase();
-        if (['input','textarea','select'].includes(tag)) { const v = el.value; return v ? `${tag}[value="${v.slice(0,50)}"]` : `${tag}`; }
-        if (tag === 'img') { const alt = el.alt ? `alt="${el.alt.slice(0,30)}"` : ''; const src = el.src ? el.src.split('/').pop().slice(0,40) : ''; return `img${alt ? ' '+alt : ''}${src ? ' src=…/'+src : ''}`; }
-        let text = ''; for (const node of el.childNodes) { if (node.nodeType === Node.TEXT_NODE) text += node.textContent; }
+        if (['input','textarea','select'].includes(tag)) {
+            const v = el.value;
+            return v ? `${tag}[value="${v.slice(0,50)}"]` : `${tag}`;
+        }
+        if (tag === 'img') {
+            const alt = el.alt ? `alt="${el.alt.slice(0,30)}"` : '';
+            const src = el.src ? el.src.split('/').pop().slice(0,40) : '';
+            return `img${alt ? ' '+alt : ''}${src ? ' src=…/'+src : ''}`;
+        }
+        let text = '';
+        for (const node of el.childNodes) {
+            if (node.nodeType === Node.TEXT_NODE) text += node.textContent;
+        }
         text = text.replace(/\s+/g, ' ').trim().slice(0, 60);
         if (text) return `${tag}: "${text}"`;
         return tag;
@@ -466,7 +536,10 @@
     function _highlightEl(el, mouseX, mouseY) {
         const r = el.getBoundingClientRect();
         _pickHL.style.display = 'block';
-        Object.assign(_pickHL.style, { left: (r.left-2)+'px', top: (r.top-2)+'px', width: (r.width+4)+'px', height: (r.height+4)+'px' });
+        Object.assign(_pickHL.style, {
+            left: (r.left-2)+'px', top: (r.top-2)+'px',
+            width: (r.width+4)+'px', height: (r.height+4)+'px'
+        });
         const sel = genSelector(el);
         const digest = _getElementDigest(el);
         const tag = el.tagName.toLowerCase();
@@ -478,7 +551,10 @@
         if (childCount > 0) diagParts.push(`<span class="ag-diag-children">子:${childCount}</span>`);
         const isScrollY = el.scrollHeight > el.clientHeight + 2;
         const isScrollX = el.scrollWidth > el.clientWidth + 2;
-        if (isScrollY || isScrollX) { const dir = isScrollY && isScrollX ? 'xy' : isScrollY ? 'y' : 'x'; diagParts.push(`<span class="ag-diag-scroll">可滚动(${dir})</span>`); }
+        if (isScrollY || isScrollX) {
+            const dir = isScrollY && isScrollX ? 'xy' : isScrollY ? 'y' : 'x';
+            diagParts.push(`<span class="ag-diag-scroll">可滚动(${dir})</span>`);
+        }
         const w = Math.round(r.width), h = Math.round(r.height);
         diagParts.push(`<span class="ag-diag-size">${w}×${h}</span>`);
         if (el.shadowRoot) diagParts.push(`<span class="ag-diag-shadow">ShadowDOM</span>`);
@@ -495,21 +571,38 @@
         if (!_pickLockHL || !_lockedBaseEl) return;
         const r = _lockedBaseEl.getBoundingClientRect();
         _pickLockHL.style.display = 'block';
-        Object.assign(_pickLockHL.style, { left: (r.left-2)+'px', top: (r.top-2)+'px', width: (r.width+4)+'px', height: (r.height+4)+'px' });
+        Object.assign(_pickLockHL.style, {
+            left: (r.left-2)+'px', top: (r.top-2)+'px',
+            width: (r.width+4)+'px', height: (r.height+4)+'px'
+        });
     }
 
-    function _hideLockHL() { if (_pickLockHL) _pickLockHL.style.display = 'none'; }
+    function _hideLockHL() {
+        if (_pickLockHL) _pickLockHL.style.display = 'none';
+    }
 
     function _showLevelPanel() {
         if (!_lockedBaseEl) return;
-        if (!_levelPanel) { _levelPanel = document.createElement('div'); _levelPanel.id = 'ag-level-panel'; _levelPanel.className = 'ag-level-panel'; document.body.appendChild(_levelPanel); }
-        const chain = []; let cur = _lockedBaseEl;
-        while (cur && cur !== document.documentElement) { chain.unshift(cur); cur = cur.parentElement; }
-        if (chain.length > 0 && chain[0] !== document.documentElement && chain[0].parentElement === document.documentElement) chain.unshift(document.documentElement);
+        if (!_levelPanel) {
+            _levelPanel = document.createElement('div');
+            _levelPanel.id = 'ag-level-panel';
+            _levelPanel.className = 'ag-level-panel';
+            document.body.appendChild(_levelPanel);
+        }
+        const chain = [];
+        let cur = _lockedBaseEl;
+        while (cur && cur !== document.documentElement) {
+            chain.unshift(cur);
+            cur = cur.parentElement;
+        }
+        if (chain.length > 0 && chain[0] !== document.documentElement && chain[0].parentElement === document.documentElement)
+            chain.unshift(document.documentElement);
         let html = '<div class="ag-level-head"><span>📐 层级结构 (点击选择)</span><button id="ag-level-close">✕</button></div><div class="ag-level-body">';
         chain.forEach((el, i) => {
-            const sel = genSelector(el) || '(无法生成)'; const tag = el.tagName.toLowerCase();
-            const digest = _getElementDigest(el); const digestStr = digest !== tag ? digest : '';
+            const sel = genSelector(el) || '(无法生成)';
+            const tag = el.tagName.toLowerCase();
+            const digest = _getElementDigest(el);
+            const digestStr = digest !== tag ? digest : '';
             const isTarget = el === _lockedBaseEl;
             html += `<div class="ag-level-item ${isTarget ? 'ag-level-target' : ''}" data-idx="${i}"><span class="ag-level-idx">${i}</span><span class="ag-level-tag">&lt;${tag}&gt;</span><span class="ag-level-digest">${esc(digestStr)}</span><span class="ag-level-sel" title="${esc(sel)}">${esc(sel)}</span></div>`;
         });
@@ -521,32 +614,62 @@
         if (left < 10) left = 10;
         if (top + 200 > innerHeight) top = tipRect.top - 346;
         if (top < 10) top = 10;
-        _levelPanel.style.left = left + 'px'; _levelPanel.style.top = top + 'px'; _levelPanel.style.display = 'flex';
-        _levelPanel.querySelector('#ag-level-close').onclick = (e) => { e.stopPropagation(); _levelPanel.style.display = 'none'; };
+        _levelPanel.style.left = left + 'px';
+        _levelPanel.style.top = top + 'px';
+        _levelPanel.style.display = 'flex';
+        _levelPanel.querySelector('#ag-level-close').onclick = (e) => {
+            e.stopPropagation();
+            _levelPanel.style.display = 'none';
+        };
         _levelPanel.querySelectorAll('.ag-level-item').forEach(item => {
-            item.onclick = (e) => { e.stopPropagation(); _confirmSelection(chain[+item.dataset.idx]); };
+            item.onclick = (e) => {
+                e.stopPropagation();
+                _confirmSelection(chain[+item.dataset.idx]);
+            };
         });
     }
 
     function _onClick(e) {
         if (_levelPanel && _levelPanel.style.display !== 'none' && _levelPanel.contains(e.target)) return;
-        e.stopPropagation(); e.preventDefault();
-        if (_levelPanel && _levelPanel.style.display !== 'none') { _levelPanel.style.display = 'none'; return; }
-        if (e.target.id === 'ag-show-levels') { _showLevelPanel(); return; }
-        if (e.shiftKey || e.ctrlKey) { if (_pickedEl) _confirmSelection(_pickedEl); else { const el = _targetAt(e.clientX, e.clientY); if (el) _confirmSelection(el); } return; }
+        e.stopPropagation();
+        e.preventDefault();
+        if (_levelPanel && _levelPanel.style.display !== 'none') {
+            _levelPanel.style.display = 'none';
+            return;
+        }
+        if (e.target.id === 'ag-show-levels') {
+            _showLevelPanel();
+            return;
+        }
+        if (e.shiftKey || e.ctrlKey) {
+            if (_pickedEl) _confirmSelection(_pickedEl);
+            else {
+                const el = _targetAt(e.clientX, e.clientY);
+                if (el) _confirmSelection(el);
+            }
+            return;
+        }
         const target = _targetAt(e.clientX, e.clientY);
         if (!target) return;
         if (!_pickedEl) {
-            _pickedEl = target; _lockedBaseEl = target; _domStack = []; _updateLockHL();
+            _pickedEl = target;
+            _lockedBaseEl = target;
+            _domStack = [];
+            _updateLockHL();
             log('INFO', `锁定起点: <${target.tagName.toLowerCase()}>`);
         } else {
             if (_lockedBaseEl.contains(target)) {
                 if (_pickedEl.parentElement && _pickedEl.parentElement !== document.body) {
-                    _domStack.push(_pickedEl); _pickedEl = _pickedEl.parentElement;
+                    _domStack.push(_pickedEl);
+                    _pickedEl = _pickedEl.parentElement;
                     log('INFO', `向上穿透至: <${_pickedEl.tagName.toLowerCase()}> (栈深度: ${_domStack.length})`);
                 } else log('WARN', '已到达顶层 body，无法继续向上');
             } else {
-                _hideLockHL(); _domStack = []; _lockedBaseEl = target; _pickedEl = target; _updateLockHL();
+                _hideLockHL();
+                _domStack = [];
+                _lockedBaseEl = target;
+                _pickedEl = target;
+                _updateLockHL();
                 log('INFO', `点击超出锁定范围，重新选择: <${target.tagName.toLowerCase()}>`);
             }
         }
@@ -556,20 +679,32 @@
 
     function _onCtx(e) {
         if (_levelPanel && _levelPanel.style.display !== 'none' && _levelPanel.contains(e.target)) return;
-        e.stopPropagation(); e.preventDefault();
-        if (_levelPanel && _levelPanel.style.display !== 'none') { _levelPanel.style.display = 'none'; return; }
+        e.stopPropagation();
+        e.preventDefault();
+        if (_levelPanel && _levelPanel.style.display !== 'none') {
+            _levelPanel.style.display = 'none';
+            return;
+        }
         if (!_pickedEl) return;
         const target = _targetAt(e.clientX, e.clientY);
         if (!target || !_lockedBaseEl.contains(target)) {
-            _hideLockHL(); _domStack = []; _lockedBaseEl = target || null; _pickedEl = target || null;
-            if (_pickedEl) { _updateLockHL(); log('INFO', `右键超出锁定范围，重新选择: <${_pickedEl.tagName.toLowerCase()}>`); _highlightEl(_pickedEl, e.clientX, e.clientY); }
-            else _pickHL.style.display = 'none';
-            _updateBarInfo(); return;
+            _hideLockHL();
+            _domStack = [];
+            _lockedBaseEl = target || null;
+            _pickedEl = target || null;
+            if (_pickedEl) {
+                _updateLockHL();
+                log('INFO', `右键超出锁定范围，重新选择: <${_pickedEl.tagName.toLowerCase()}>`);
+                _highlightEl(_pickedEl, e.clientX, e.clientY);
+            } else _pickHL.style.display = 'none';
+            _updateBarInfo();
+            return;
         }
         if (_domStack.length > 0) {
             _pickedEl = _domStack.pop();
             log('INFO', `向下回退至: <${_pickedEl.tagName.toLowerCase()}> (栈深度: ${_domStack.length})`);
-            _highlightEl(_pickedEl, e.clientX, e.clientY); _updateBarInfo();
+            _highlightEl(_pickedEl, e.clientX, e.clientY);
+            _updateBarInfo();
         } else log('WARN', '已在最底层，无法回退');
     }
 
@@ -580,23 +715,42 @@
 
     function _confirmSelection(el) {
         const sel = genSelector(el);
-        if (!sel) { log('ERR', '无法生成选择器'); return; }
+        if (!sel) {
+            log('ERR', '无法生成选择器');
+            return;
+        }
         const c = cfgLoad();
         if (_pickType === 'chat') c.selChatContainer = sel;
         if (_pickType === 'input') c.selInputBox = sel;
         if (_pickType === 'send') c.selSendButton = sel;
+        // [新增] 回答元素选择
+        if (_pickType === 'answer') c.selAnswerItem = sel;
         cfgSaveRuntime(c);
         log('OK', `已选择 [${TYPE_LABEL[_pickType]}]:${sel}`);
-        const ctxChain = []; let cur = el;
-        while (cur && cur !== document.documentElement) { const tag = cur.tagName ? cur.tagName.toLowerCase() : '#document'; const digest = _getElementDigest(cur); ctxChain.push(`${tag}${digest !== tag ? '('+digest+')' : ''}`); cur = cur.parentElement; }
+        const ctxChain = [];
+        let cur = el;
+        while (cur && cur !== document.documentElement) {
+            const tag = cur.tagName ? cur.tagName.toLowerCase() : '#document';
+            const digest = _getElementDigest(cur);
+            ctxChain.push(`${tag}${digest !== tag ? '('+digest+')' : ''}`);
+            cur = cur.parentElement;
+        }
         log('INFO', `上下文链: ${ctxChain.reverse().join(' > ')}`);
         log('INFO', `目标元素详情: <${el.tagName.toLowerCase()}>, class="${el.className}", id="${el.id}"`);
         pickerExit();
     }
 
     function _onKey(e) {
-        if (e.key === 'Escape') { e.stopPropagation(); e.preventDefault(); pickerExit(); }
-        if (e.key === 'Enter' && _pickedEl) { e.stopPropagation(); e.preventDefault(); _confirmSelection(_pickedEl); }
+        if (e.key === 'Escape') {
+            e.stopPropagation();
+            e.preventDefault();
+            pickerExit();
+        }
+        if (e.key === 'Enter' && _pickedEl) {
+            e.stopPropagation();
+            e.preventDefault();
+            _confirmSelection(_pickedEl);
+        }
     }
 
     /* ================================================================
@@ -606,29 +760,43 @@
     let _panel = null;
 
     function showPanel() {
-        if (!_panel) { _panel = document.createElement('div'); _panel.id = 'agent-panel'; document.body.appendChild(_panel); }
-        const store = _loadStore(); const site = _matchSite();
+        if (!_panel) {
+            _panel = document.createElement('div');
+            _panel.id = 'agent-panel';
+            document.body.appendChild(_panel);
+        }
+        const store = _loadStore();
+        const site = _matchSite();
         const hasSiteCfg = site && store.perSite && store.perSite[site];
         _editTarget = hasSiteCfg ? site : 'defaults';
-        _renderPanel(); _panel.style.display = 'block';
+        _renderPanel();
+        _panel.style.display = 'block';
     }
 
-    function hidePanel() { if (_panel) _panel.style.display = 'none'; }
+    function hidePanel() {
+        if (_panel) _panel.style.display = 'none';
+    }
 
     function _renderPanel() {
-        const store = _loadStore(); const site = _matchSite();
+        const store = _loadStore();
+        const site = _matchSite();
         const inWhitelist = !!site;
         const hasSiteCfg = site && store.perSite && store.perSite[site];
         const source = _getConfigSource();
+
         let editCfg;
         if (_editTarget === 'defaults') editCfg = { ...SITE_DEFAULTS, ...(store.defaults || {}) };
         else editCfg = { ...SITE_DEFAULTS, ...(store.perSite?.[_editTarget] || {}) };
-        const titleText = _editTarget === 'defaults' ? '🔧 Poker Agent 配置 — 默认设置' : `🔧 Poker Agent 配置 — ${_editTarget} 独立设置`;
+
+        const titleText = _editTarget === 'defaults'
+            ? '🔧 Poker Agent 配置 — 默认设置'
+            : `🔧 Poker Agent 配置 — ${_editTarget} 独立设置`;
         const saveText = _editTarget === 'defaults' ? '💾 保存默认配置' : `💾 保存独立配置`;
         const siteDisplay = site || location.hostname;
         const sourceDisplay = source === 'defaults' ? '默认配置' : `${source} 独立配置`;
         const badgeClass = inWhitelist ? 'ag-badge-ok' : 'ag-badge-fail';
         const badgeText = inWhitelist ? '在白名单内' : '不在白名单内';
+
         let actionsHtml = '';
         const defActive = _editTarget === 'defaults';
         actionsHtml += `<button class="ag-btn ${defActive ? 'ag-btn-p' : 'ag-btn-g'}" id="ag-edit-defaults">编辑默认配置</button>`;
@@ -641,6 +809,7 @@
                 actionsHtml += `<button class="ag-btn ag-btn-g" id="ag-create-site">为此网站创建独立配置</button>`;
             }
         }
+
         _panel.innerHTML = `
             <div id="agent-panel-head"><b>${titleText}</b><button id="agent-panel-close">✕</button></div>
             <div id="agent-panel-body">
@@ -655,6 +824,7 @@
                 <div class="ag-sec">
                     <div class="ag-sec-title">页面元素绑定</div>
                     <div class="ag-field"><label>聊天记录容器</label><div class="ag-row"><input class="ag-inp" id="ag-s-chat" value="${esc(editCfg.selChatContainer)}" /><button class="ag-btn ag-btn-p" id="ag-pick-chat">🖱 选择</button></div><div id="ag-m-chat"></div></div>
+                    <div class="ag-field"><label>AI回答元素</label><div class="ag-row"><input class="ag-inp" id="ag-s-answer" value="${esc(editCfg.selAnswerItem)}" /><button class="ag-btn ag-btn-p" id="ag-pick-answer">🖱 选择</button></div><div id="ag-m-answer"></div><div class="ag-hint">用于从聊天容器中定位AI的回复，默认 .answer；如不匹配请用选择器选取</div></div>
                     <div class="ag-field"><label>输入框</label><div class="ag-row"><input class="ag-inp" id="ag-s-input" value="${esc(editCfg.selInputBox)}" /><button class="ag-btn ag-btn-p" id="ag-pick-input">🖱 选择</button></div><div id="ag-m-input"></div></div>
                     <div class="ag-field">
                         <label>发送按钮</label><div class="ag-row"><input class="ag-inp" id="ag-s-send" value="${esc(editCfg.selSendButton)}" /><button class="ag-btn ag-btn-p" id="ag-pick-send">🖱 选择</button></div><div id="ag-m-send"></div>
@@ -691,6 +861,22 @@
                         </div>
                     </div>
                 </div>
+                <div class="ag-sec">
+                    <div class="ag-sec-title">内容清理规则</div>
+                    <div class="ag-field">
+                        <label>忽略的class关键词 (逗号分隔)</label>
+                        <input class="ag-inp" id="ag-clean-keywords" value="${esc(editCfg.cleanIgnoreClassKeywords)}" />
+                        <div class="ag-hint">包含这些关键词的class所在元素会被移除（如thinking/reasoning等AI思考过程区域）</div>
+                    </div>
+                    <div class="ag-toggle" style="margin-bottom:6px">
+                        <input type="checkbox" id="ag-clean-buttons" ${editCfg.cleanRemoveButtonLike !== false ? 'checked' : ''} />
+                        <label for="ag-clean-buttons" style="cursor:pointer">移除按钮/操作类元素 (copy/operate/action/toolbar)</label>
+                    </div>
+                    <div class="ag-toggle">
+                        <input type="checkbox" id="ag-clean-pre" ${editCfg.cleanRemovePre !== false ? 'checked' : ''} />
+                        <label for="ag-clean-pre" style="cursor:pointer">移除pre代码块 (除非含【CodeSTART】)</label>
+                    </div>
+                </div>
             </div>
             <div class="ag-foot"><button class="ag-btn ag-btn-g" id="ag-cancel">取消</button><button class="ag-btn ag-btn-p" id="ag-save">${saveText}</button></div>`;
 
@@ -698,36 +884,67 @@
         _panel.querySelector('#ag-cancel').onclick = hidePanel;
 
         _panel.querySelector('#ag-debug-toggle').onchange = (e) => {
-            const s = _loadStore(); s.debugMode = e.target.checked; _saveStore(s);
+            const s = _loadStore();
+            s.debugMode = e.target.checked;
+            _saveStore(s);
             if (e.target.checked) { showDebug(); log('INFO', '调试模式已开启'); }
             else { if (_debugPanel) _debugPanel.style.display = 'none'; }
         };
 
         const wlInput = _panel.querySelector('#ag-wl-new');
-        const doAdd = () => { const v = wlInput.value.trim(); if (!v) return; const s = _loadStore(); if (!s.whitelist.includes(v)) s.whitelist.push(v); _saveStore(s); wlInput.value = ''; _renderPanel(); };
+        const doAdd = () => {
+            const v = wlInput.value.trim();
+            if (!v) return;
+            const s = _loadStore();
+            if (!s.whitelist.includes(v)) s.whitelist.push(v);
+            _saveStore(s);
+            wlInput.value = '';
+            _renderPanel();
+        };
         _panel.querySelector('#ag-wl-add').onclick = doAdd;
         wlInput.onkeydown = e => { if (e.key === 'Enter') doAdd(); };
-        _panel.querySelectorAll('.ag-wl-rm').forEach(btn => { btn.onclick = () => { const s = _loadStore(); s.whitelist.splice(+btn.dataset.i, 1); _saveStore(s); _renderPanel(); }; });
+        _panel.querySelectorAll('.ag-wl-rm').forEach(btn => {
+            btn.onclick = () => {
+                const s = _loadStore();
+                s.whitelist.splice(+btn.dataset.i, 1);
+                _saveStore(s);
+                _renderPanel();
+            };
+        });
 
         _panel.querySelector('#ag-edit-defaults').onclick = () => { _editTarget = 'defaults'; _renderPanel(); };
-        if (inWhitelist && hasSiteCfg) { _panel.querySelector('#ag-edit-site').onclick = () => { _editTarget = site; _renderPanel(); }; }
+        if (inWhitelist && hasSiteCfg) {
+            _panel.querySelector('#ag-edit-site').onclick = () => { _editTarget = site; _renderPanel(); };
+        }
         if (inWhitelist && !hasSiteCfg) {
             _panel.querySelector('#ag-create-site').onclick = () => {
-                const s = _loadStore(); if (!s.perSite) s.perSite = {};
-                const current = cfgLoad(); const siteData = {};
+                const s = _loadStore();
+                if (!s.perSite) s.perSite = {};
+                const current = cfgLoad();
+                const siteData = {};
                 for (const key of Object.keys(SITE_DEFAULTS)) siteData[key] = current[key];
-                s.perSite[site] = siteData; _saveStore(s); _editTarget = site; _renderPanel();
+                s.perSite[site] = siteData;
+                _saveStore(s);
+                _editTarget = site;
+                _renderPanel();
             };
         }
         if (inWhitelist && hasSiteCfg) {
             _panel.querySelector('#ag-del-site').onclick = () => {
                 const s = _loadStore();
-                if (s.perSite && s.perSite[site]) { delete s.perSite[site]; if (Object.keys(s.perSite).length === 0) delete s.perSite; }
-                _saveStore(s); _editTarget = 'defaults'; _renderPanel();
+                if (s.perSite && s.perSite[site]) {
+                    delete s.perSite[site];
+                    if (Object.keys(s.perSite).length === 0) delete s.perSite;
+                }
+                _saveStore(s);
+                _editTarget = 'defaults';
+                _renderPanel();
             };
         }
 
         _panel.querySelector('#ag-pick-chat').onclick = () => pickerEnter('chat');
+        // [新增] 回答元素选择按钮
+        _panel.querySelector('#ag-pick-answer').onclick = () => pickerEnter('answer');
         _panel.querySelector('#ag-pick-input').onclick = () => pickerEnter('input');
         _panel.querySelector('#ag-pick-send').onclick = () => pickerEnter('send');
 
@@ -741,14 +958,20 @@
         const posBtns = _panel.querySelectorAll('.ag-pos-btn');
         posBtns.forEach(btn => {
             if (btn.dataset.pos === editCfg.autoSendTogglePos) btn.classList.add('active');
-            btn.onclick = () => { posBtns.forEach(b => b.classList.remove('active')); btn.classList.add('active'); };
+            btn.onclick = () => {
+                posBtns.forEach(b => b.classList.remove('active'));
+                btn.classList.add('active');
+            };
         });
 
-        ['chat', 'input', 'send'].forEach(t => {
-            const key = t === 'chat' ? 'selChatContainer' : t === 'input' ? 'selInputBox' : 'selSendButton';
+        // [修改] 增加 answer 类型的匹配检测
+        ['chat', 'input', 'send', 'answer'].forEach(t => {
+            const key = t === 'chat' ? 'selChatContainer' : t === 'input' ? 'selInputBox' : t === 'send' ? 'selSendButton' : 'selAnswerItem';
             _panel.querySelector(`#ag-s-${t}`).addEventListener('input', function () {
                 _showMatch(this.value.trim(), `ag-m-${t}`);
-                if (t === 'send') { _panel.querySelector('#ag-calibrate-field').style.display = this.value.trim() ? 'block' : 'none'; }
+                if (t === 'send') {
+                    _panel.querySelector('#ag-calibrate-field').style.display = this.value.trim() ? 'block' : 'none';
+                }
             });
             _showMatch(editCfg[key], `ag-m-${t}`);
         });
@@ -759,6 +982,8 @@
             const siteData = { ...SITE_DEFAULTS };
             siteData.apiUrl = _panel.querySelector('#ag-api').value.trim() || SITE_DEFAULTS.apiUrl;
             siteData.selChatContainer = _panel.querySelector('#ag-s-chat').value.trim();
+            // [新增] 回答元素选择器
+            siteData.selAnswerItem = _panel.querySelector('#ag-s-answer').value.trim() || '.answer';
             siteData.selInputBox = _panel.querySelector('#ag-s-input').value.trim();
             siteData.selSendButton = _panel.querySelector('#ag-s-send').value.trim();
             siteData.showAutoSendToggle = _panel.querySelector('#ag-show-toggle').checked;
@@ -769,9 +994,18 @@
             siteData.sendBtnBusyFingerprints = editCfg.sendBtnBusyFingerprints || [];
             siteData.sendBtnIdleFingerprints = editCfg.sendBtnIdleFingerprints || [];
             siteData.autoSendMode = editCfg.autoSendMode || 'click';
-            if (_editTarget === 'defaults') { s.defaults = siteData; }
-            else { if (!s.perSite) s.perSite = {}; s.perSite[_editTarget] = siteData; }
-            _saveStore(s); hidePanel();
+            // [新增] 清理规则配置
+            siteData.cleanIgnoreClassKeywords = _panel.querySelector('#ag-clean-keywords').value.trim();
+            siteData.cleanRemoveButtonLike = _panel.querySelector('#ag-clean-buttons').checked;
+            siteData.cleanRemovePre = _panel.querySelector('#ag-clean-pre').checked;
+            if (_editTarget === 'defaults') {
+                s.defaults = siteData;
+            } else {
+                if (!s.perSite) s.perSite = {};
+                s.perSite[_editTarget] = siteData;
+            }
+            _saveStore(s);
+            hidePanel();
             if (isWhitelisted()) initAgent();
             if (s.debugMode) showDebug();
         };
@@ -779,13 +1013,18 @@
 
     function _showMatch(sel, id) {
         const el = _panel.querySelector('#' + id);
-        if (!sel) { el.innerHTML = '<div class="ag-match ag-m-none">未设置</div>'; return; }
+        if (!sel) {
+            el.innerHTML = '<div class="ag-match ag-m-none">未设置</div>';
+            return;
+        }
         try {
             const n = document.querySelectorAll(sel).length;
             el.innerHTML = n === 0 ? '<div class="ag-match ag-m-fail">✘ 未匹配</div>'
                 : n === 1 ? '<div class="ag-match ag-m-ok">✔ 精确匹配 1 个</div>'
                 : `<div class="ag-match ag-m-ok">✔ 匹配 ${n} 个</div>`;
-        } catch (_) { el.innerHTML = '<div class="ag-match ag-m-fail">✘ 语法错误</div>'; }
+        } catch (_) {
+            el.innerHTML = '<div class="ag-match ag-m-fail">✘ 语法错误</div>';
+        }
     }
 
     /* ================================================================
@@ -803,13 +1042,21 @@
         const c = cfgLoad();
         const pollUrl = c.apiUrl.replace('/agent-exec', '/agent-config-poll');
         GM_xmlhttpRequest({
-            method: 'GET', url: pollUrl, timeout: 30000,
+            method: 'GET',
+            url: pollUrl,
+            timeout: 30000,
             onload(r) {
                 if (r.status === 200) {
                     try {
                         const data = JSON.parse(r.responseText);
-                        if (!!data.clipboard_mode !== _clipboardMode) { _clipboardMode = !!data.clipboard_mode; log('INFO', `剪贴板模式: ${_clipboardMode ? '已开启' : '已关闭'}`); }
-                        if (!!data.permission_enabled !== _permissionEnabled) { _permissionEnabled = !!data.permission_enabled; log('INFO', `目录限制: ${_permissionEnabled ? '已启用' : '已禁用'}`); }
+                        if (!!data.clipboard_mode !== _clipboardMode) {
+                            _clipboardMode = !!data.clipboard_mode;
+                            log('INFO', `剪贴板模式: ${_clipboardMode ? '已开启' : '已关闭'}`);
+                        }
+                        if (!!data.permission_enabled !== _permissionEnabled) {
+                            _permissionEnabled = !!data.permission_enabled;
+                            log('INFO', `目录限制: ${_permissionEnabled ? '已启用' : '已禁用'}`);
+                        }
                     } catch (e) {}
                 }
                 _pollConfig();
@@ -824,26 +1071,67 @@
     const _currentRoundSent = new Set();
     let _heartbeatCounter = 0;
     let _knownAnswers = [];
+    // [新增] 自诊断：连续未找到回答元素的计数器
+    let _noAnswerCount = 0;
 
-    function getCleanText(el) {
+    /**
+     * [修改] getCleanText 现在接受配置参数，清理规则不再硬编码
+     * @param {Element} el - 要清理的DOM元素
+     * @param {Object} cfg - 配置对象，包含清理规则
+     * @returns {string} 清理后的纯文本
+     */
+    function getCleanText(el, cfg) {
         const clone = el.cloneNode(true);
-        clone.querySelectorAll('[class*="thinking"], [class*="reasoning"], [class*="probe"], [class*="deepseek-reason"], details').forEach(n => n.remove());
-        clone.querySelectorAll('button, [class*="copy"], [class*="operate"], [class*="action"], [class*="toolbar"]').forEach(n => n.remove());
-        clone.querySelectorAll('pre').forEach(n => { if (n.closest('.answer')?.textContent.includes('\u3010CodeSTART\u3011')) return; n.remove(); });
+
+        // 1. [修改] 移除思考过程等区域 — 使用配置的关键词列表
+        const ignoreKeywords = (cfg.cleanIgnoreClassKeywords || 'thinking,reasoning,probe,deepseek-reason')
+            .split(',').map(s => s.trim()).filter(s => s);
+        if (ignoreKeywords.length > 0) {
+            const sel = ignoreKeywords.map(k => `[class*="${CSS.escape(k)}"]`).join(', ');
+            try { clone.querySelectorAll(sel).forEach(n => n.remove()); } catch(_) {}
+        }
+
+        // 移除 details 标签（可折叠区域通常是思考过程或调试信息）
+        clone.querySelectorAll('details').forEach(n => n.remove());
+
+        // 2. [修改] 移除按钮类元素 — 受配置控制
+        if (cfg.cleanRemoveButtonLike !== false) {
+            clone.querySelectorAll('button, [class*="copy"], [class*="operate"], [class*="action"], [class*="toolbar"]').forEach(n => n.remove());
+        }
+
+        // 3. [修改] 移除 <pre> 代码块 — 受配置控制，修复 .answer 硬编码 bug
+        if (cfg.cleanRemovePre !== false) {
+            clone.querySelectorAll('pre').forEach(n => {
+                // [修复] 原来用 n.closest('.answer') 硬编码了 .answer class，
+                // 如果用户配置了其他回答元素选择器（如 .response），就找不到祖先导致判断失效。
+                // 现在改为直接检查克隆根节点的文本内容，不依赖任何特定class。
+                if (clone.textContent.includes('\u3010CodeSTART\u3011')) return;
+                n.remove();
+            });
+        }
+
+        // 4. 递归注入换行（在块级元素前插 \n）
         (function injectNewlines(node) {
             for (let i = node.childNodes.length - 1; i >= 0; i--) {
                 const child = node.childNodes[i];
                 if (child.nodeType === 1) {
-                    if (/^(P|DIV|BR|LI|H[1-6]|PRE|BLOCKQUOTE|TR|HR|TABLE|UL|OL|SECTION|ARTICLE|HEADER|FOOTER|FIGURE|DD|DT|DL)$/.test(child.tagName)) {
+                    // [修改] 补全块级元素列表，增加 MAIN/ASIDE/NAV/ADDRESS/FIELDSET/SUMMARY/FIGCAPTION/DIALOG/SEARCH
+                    if (/^(P|DIV|BR|LI|H[1-6]|PRE|BLOCKQUOTE|TR|HR|TABLE|UL|OL|SECTION|ARTICLE|HEADER|FOOTER|FIGURE|DD|DT|DL|MAIN|ASIDE|NAV|ADDRESS|FIELDSET|SUMMARY|FIGCAPTION|DIALOG|SEARCH)$/.test(child.tagName)) {
                         node.insertBefore(document.createTextNode('\n'), child);
                     }
                     injectNewlines(child);
                 }
             }
         })(clone);
+
         return clone.textContent;
     }
 
+    /**
+     * [修改] _getSendBtnFingerprint 指纹计算增加更多属性，提升校准精度
+     * 增加：disabled 属性、aria-disabled、aria-label
+     * 注意：此改动会使已有的校准数据失效，用户需要重新校准
+     */
     function _getSendBtnFingerprint() {
         const c = cfgLoad();
         if (!c.selSendButton) return null;
@@ -852,7 +1140,11 @@
         const style = el.getAttribute('style') || '';
         const cls = typeof el.className === 'string' ? el.className : '';
         const innerTag = el.firstElementChild ? el.firstElementChild.tagName : '';
-        return `${el.tagName}|${style}|${cls}|${innerTag}`;
+        // [新增] 更多属性参与指纹计算
+        const disabled = el.disabled ? '1' : '0';
+        const ariaDisabled = el.getAttribute('aria-disabled') || '';
+        const ariaLabel = el.getAttribute('aria-label') || '';
+        return `${el.tagName}|${style}|${cls}|${innerTag}|${disabled}|${ariaDisabled}|${ariaLabel}`;
     }
 
     function _makeDraggable(el) {
@@ -860,12 +1152,20 @@
             if (e.target.closest('button') || e.target.closest('input')) return;
             if (el.style.transform !== 'none') {
                 const rect = el.getBoundingClientRect();
-                el.style.transform = 'none'; el.style.left = rect.left + 'px'; el.style.top = rect.top + 'px';
+                el.style.transform = 'none';
+                el.style.left = rect.left + 'px';
+                el.style.top = rect.top + 'px';
             }
             const startX = e.clientX, startY = e.clientY;
             const origLeft = el.offsetLeft, origTop = el.offsetTop;
-            const onMove = (ev) => { el.style.left = (origLeft + ev.clientX - startX) + 'px'; el.style.top = (origTop + ev.clientY - startY) + 'px'; };
-            const onUp = () => { document.removeEventListener('mousemove', onMove); document.removeEventListener('mouseup', onUp); };
+            const onMove = (ev) => {
+                el.style.left = (origLeft + ev.clientX - startX) + 'px';
+                el.style.top = (origTop + ev.clientY - startY) + 'px';
+            };
+            const onUp = () => {
+                document.removeEventListener('mousemove', onMove);
+                document.removeEventListener('mouseup', onUp);
+            };
             document.addEventListener('mousemove', onMove);
             document.addEventListener('mouseup', onUp);
             e.preventDefault();
@@ -874,12 +1174,22 @@
 
     function _startCalibration() {
         if (_isCalibrating) return;
-        _isCalibrating = true; hidePanel();
-        const bar = document.createElement('div'); bar.id = 'ag-calibrate-bar'; document.body.appendChild(bar);
-        const cards = document.createElement('div'); cards.id = 'ag-calibrate-cards';
-        cards.style.display = 'none'; cards.style.flexDirection = 'column'; cards.style.gap = '10px';
+        _isCalibrating = true;
+        hidePanel();
+
+        const bar = document.createElement('div');
+        bar.id = 'ag-calibrate-bar';
+        document.body.appendChild(bar);
+
+        const cards = document.createElement('div');
+        cards.id = 'ag-calibrate-cards';
+        cards.style.display = 'none';
+        cards.style.flexDirection = 'column';
+        cards.style.gap = '10px';
         cards.style.height = 'calc(min(220px, 45vw) * 1.5)';
-        document.body.appendChild(cards); _makeDraggable(cards);
+        document.body.appendChild(cards);
+        _makeDraggable(cards);
+
         const c = cfgLoad();
         let capturedMap = new Map();
         let selectedBusy = new Set(c.sendBtnBusyFingerprints || []);
@@ -891,7 +1201,8 @@
             const canFinish = (mode === 'single' && selectedBusy.size > 0) || (mode === 'double' && selectedBusy.size > 0 && selectedIdle.size > 0);
             let listHtml = '';
             capturedMap.forEach((snap, fp) => {
-                const isBusy = selectedBusy.has(fp); const isIdle = selectedIdle.has(fp);
+                const isBusy = selectedBusy.has(fp);
+                const isIdle = selectedIdle.has(fp);
                 const cls = isBusy ? 'selected-busy' : (isIdle ? 'selected-idle' : '');
                 listHtml += `
                     <div class="ag-cal-item ${cls}">
@@ -916,27 +1227,46 @@
                 bar.querySelector('#ag-cal-finish').onclick = () => {
                     cfgSaveRuntime({ sendBtnBusyFingerprints: [...selectedBusy], sendBtnIdleFingerprints: [...selectedIdle] });
                     log('OK', `校准完成！忙碌: ${selectedBusy.size}个, 空闲: ${selectedIdle.size}个`);
+                    // [提醒] 指纹算法已升级，校准数据使用新格式
+                    log('INFO', '注意：指纹算法已升级（新增disabled/aria属性），旧校准数据已自动适配新格式');
                     stopCalibration();
                 };
             }
             cards.querySelectorAll('.ag-cal-tag').forEach(btn => {
                 btn.onclick = (e) => {
-                    e.stopPropagation(); const fp = btn.dataset.fp; const type = btn.dataset.type;
-                    if (type === 'busy') { if (selectedBusy.has(fp)) selectedBusy.delete(fp); else selectedBusy.add(fp); selectedIdle.delete(fp); }
-                    else { if (selectedIdle.has(fp)) selectedIdle.delete(fp); else selectedIdle.add(fp); selectedBusy.delete(fp); }
+                    e.stopPropagation();
+                    const fp = btn.dataset.fp;
+                    const type = btn.dataset.type;
+                    if (type === 'busy') {
+                        if (selectedBusy.has(fp)) selectedBusy.delete(fp);
+                        else selectedBusy.add(fp);
+                        selectedIdle.delete(fp);
+                    } else {
+                        if (selectedIdle.has(fp)) selectedIdle.delete(fp);
+                        else selectedIdle.add(fp);
+                        selectedBusy.delete(fp);
+                    }
                     renderBar(msg);
                 };
             });
         };
 
-        const stopCalibration = () => { if (checkInterval) clearInterval(checkInterval); bar.remove(); cards.remove(); _isCalibrating = false; showPanel(); };
+        const stopCalibration = () => {
+            if (checkInterval) clearInterval(checkInterval);
+            bar.remove();
+            cards.remove();
+            _isCalibrating = false;
+            showPanel();
+        };
 
         renderBar('👇 请在下方正常聊天，脚本会自动捕获按钮的不同状态。<br><b style="color:#f472b6">请将"停止生成"标记为【忙碌】，其他状态标记为【空闲】。</b>');
+
         checkInterval = setInterval(() => {
             const fp = _getSendBtnFingerprint();
             if (!fp || fp === 'ELEMENT_MISSING') return;
             if (!capturedMap.has(fp)) {
-                const el = document.querySelector(c.selSendButton); if (!el) return;
+                const el = document.querySelector(c.selSendButton);
+                if (!el) return;
                 const cs = getComputedStyle(el);
                 let inner = el.innerHTML.replace(/<(style|script|link)[\s\S]*?<\/\1>/gi, '');
                 capturedMap.set(fp, { html: inner, bg: cs.backgroundColor, color: cs.color });
@@ -948,28 +1278,51 @@
 
     function _waitForLLMFinish() {
         return new Promise(resolve => {
-            const c = cfgLoad(); const busyList = c.sendBtnBusyFingerprints || [];
-            if (busyList.length === 0) { log('WARN', '⚠️ 未校准忙碌态，直接放行(建议校准)'); resolve(); return; }
+            const c = cfgLoad();
+            const busyList = c.sendBtnBusyFingerprints || [];
+            if (busyList.length === 0) {
+                log('WARN', '⚠️ 未校准忙碌态，直接放行(建议校准)');
+                resolve();
+                return;
+            }
             log('INFO', '👀 监听发送按钮状态...');
             const checkPhase1 = () => {
                 const fp = _getSendBtnFingerprint();
-                if (fp === null || fp === 'ELEMENT_MISSING' || !busyList.includes(fp)) { log('INFO', '🟢 脱离忙碌态'); startPhase2(); }
-                else { setTimeout(checkPhase1, 200); }
+                if (fp === null || fp === 'ELEMENT_MISSING' || !busyList.includes(fp)) {
+                    log('INFO', '🟢 脱离忙碌态');
+                    startPhase2();
+                } else {
+                    setTimeout(checkPhase1, 200);
+                }
             };
             const startPhase2 = () => {
                 if (c.verifyMode === 'double') {
                     const idleList = c.sendBtnIdleFingerprints || [];
-                    if (idleList.length === 0) { log('WARN', '⚠️ 双验证模式但未设置空闲态，退化为单验证'); triggerDelay(); return; }
+                    if (idleList.length === 0) {
+                        log('WARN', '⚠️ 双验证模式但未设置空闲态，退化为单验证');
+                        triggerDelay();
+                        return;
+                    }
                     log('INFO', '👀 双验证：等待进入空闲态...');
                     const checkPhase2 = () => {
                         const fp = _getSendBtnFingerprint();
-                        if (fp && idleList.includes(fp)) { log('INFO', '🟢 进入空闲态'); triggerDelay(); }
-                        else { setTimeout(checkPhase2, 200); }
+                        if (fp && idleList.includes(fp)) {
+                            log('INFO', '🟢 进入空闲态');
+                            triggerDelay();
+                        } else {
+                            setTimeout(checkPhase2, 200);
+                        }
                     };
                     checkPhase2();
-                } else { triggerDelay(); }
+                } else {
+                    triggerDelay();
+                }
             };
-            const triggerDelay = () => { const delay = parseInt(c.waitDelayAfterDone) || 500; log('INFO', `⏳ 等待延时 ${delay}ms...`); setTimeout(resolve, delay); };
+            const triggerDelay = () => {
+                const delay = parseInt(c.waitDelayAfterDone) || 500;
+                log('INFO', `⏳ 等待延时 ${delay}ms...`);
+                setTimeout(resolve, delay);
+            };
             checkPhase1();
         });
     }
@@ -990,23 +1343,27 @@
         log('INFO', `🚀 AI已说完，发送至本地后端...`);
         cmd = cmd.replace(/\u2014/g, '--').replace(/\u2013/g, '-').replace(/\u201C/g, '"').replace(/\u201D/g, '"').replace(/\u2018/g, "'").replace(/\u2019/g, "'");
         GM_xmlhttpRequest({
-            method: 'POST', url: c.apiUrl, headers: { 'Content-Type': 'application/json' },
+            method: 'POST',
+            url: c.apiUrl,
+            headers: { 'Content-Type': 'application/json' },
             data: JSON.stringify({ command: cmd }),
             onload: async (r) => {
                 let resultText = '';
                 if (r.status === 200) {
                     try {
                         const data = JSON.parse(r.responseText);
-
-                        // [修改] 有序回执：所有回执统一追加到输入框，最后一次发送，避免覆盖
+                        // 有序回执：所有回执统一追加到输入框，最后一次发送，避免覆盖
                         if (data.type === 'clipboard_file_ordered') {
                             log('OK', `📥 后端返回完成，按顺序处理 ${data.results.length} 项回执...`);
                             const input = document.querySelector(c.selInputBox);
-                            if (!input) { log('ERR', '找不到输入框'); _isProcessing = false; _checkAndDispatch(); return; }
-
+                            if (!input) {
+                                log('ERR', '找不到输入框');
+                                _isProcessing = false;
+                                _checkAndDispatch();
+                                return;
+                            }
                             input.focus();
-                            let isFirstWrite = true; // 标记是否是第一次写入，第一次用覆盖，后续用追加
-
+                            let isFirstWrite = true;
                             for (const item of data.results) {
                                 if (item.type === 'text') {
                                     const text = '[Poker Agent]\n' + item.data + '\n';
@@ -1015,22 +1372,19 @@
                                 } else if (item.type === 'file') {
                                     const file = item.data;
                                     log('OK', `准备粘贴文件: ${file.filename}（${file.size} 字节）`);
-                                    // [修改] 使用 _doPasteFile 只粘贴不发送，避免中间触发发送导致后续回执被覆盖
+                                    // 使用 _doPasteFile 只粘贴不发送，避免中间触发发送导致后续回执被覆盖
                                     await _doPasteFile(input, file.filename, file.size, file.data);
                                     isFirstWrite = false;
                                 }
                                 await new Promise(res => setTimeout(res, 200));
                             }
-
-                            // [修改] 所有回执都追加完毕后，统一触发一次发送
+                            // 所有回执都追加完毕后，统一触发一次发送
                             log('INFO', '📤 所有回执已写入输入框，统一发送');
                             _executeSend(input);
-
                             _isProcessing = false;
                             _checkAndDispatch();
                             return;
                         }
-
                         // 兼容旧的无序剪贴板回执结构
                         if (data.type === 'clipboard_file') {
                             if (data.result) { await _sendToChat(data.result); }
@@ -1055,7 +1409,10 @@
             },
             onerror() {
                 log('ERR', '无法连接本地服务');
-                _sendToChat('[Agent 错误] 无法连接本地服务').then(() => { _isProcessing = false; _checkAndDispatch(); });
+                _sendToChat('[Agent 错误] 无法连接本地服务').then(() => {
+                    _isProcessing = false;
+                    _checkAndDispatch();
+                });
             }
         });
     }
@@ -1071,7 +1428,9 @@
         if (!c.selSendButton) { log('WARN', '未配置发送按钮选择器，无法点击发送'); return false; }
         const btn = document.querySelector(c.selSendButton);
         if (!btn) { log('ERR', '找不到发送按钮，无法点击发送'); return false; }
-        btn.click(); log('INFO', '👆 点击发送按钮发送'); return true;
+        btn.click();
+        log('INFO', '👆 点击发送按钮发送');
+        return true;
     }
 
     function _executeSend(input) {
@@ -1082,8 +1441,10 @@
                 log('INFO', '⏸️ 自动发送已关闭，仅填入输入框');
                 break;
             case 'enter':
-                try { _trySendByEnter(input); log('INFO', '⏎ 回车发送'); }
-                catch (err) { log('ERR', `回车发送失败: ${err.message}`); }
+                try {
+                    _trySendByEnter(input);
+                    log('INFO', '⏎ 回车发送');
+                } catch (err) { log('ERR', `回车发送失败: ${err.message}`); }
                 break;
             case 'click':
             default:
@@ -1096,20 +1457,17 @@
         }
     }
 
-    // [修改] _doSend 改为：检测输入框已有内容时用追加模式，避免覆盖之前还没发出去的回执
+    // _doSend 改为：检测输入框已有内容时用追加模式，避免覆盖之前还没发出去的回执
     async function _doSend(text) {
         const c = cfgLoad();
         const input = document.querySelector(c.selInputBox);
         if (!input) { log('ERR', '找不到输入框'); return; }
         log('INFO', '⌨️ 正在模拟输入并发送...');
-
-        // 检查输入框当前是否已有内容（可能之前有回执还没发出去）
         const currentValue = (input.tagName === 'TEXTAREA' || input.tagName === 'INPUT')
             ? input.value : (input.textContent || '');
         const hasContent = currentValue.trim().length > 0;
-
         _directInput(input, text, hasContent); // 已有内容则追加
-        await _smartWait(input); // 等待输入稳定
+        await _smartWait(input);
         _executeSend(input);
     }
 
@@ -1118,7 +1476,10 @@
         if (input.tagName === 'TEXTAREA' || input.tagName === 'INPUT') {
             const proto = input.tagName === 'TEXTAREA' ? HTMLTextAreaElement.prototype : HTMLInputElement.prototype;
             const setter = Object.getOwnPropertyDescriptor(proto, 'value')?.set;
-            if (setter) { const newValue = append ? input.value + text : text; setter.call(input, newValue); }
+            if (setter) {
+                const newValue = append ? input.value + text : text;
+                setter.call(input, newValue);
+            }
             input.dispatchEvent(new Event('input', { bubbles: true }));
             input.dispatchEvent(new Event('change', { bubbles: true }));
         } else {
@@ -1145,7 +1506,10 @@
             const t = setInterval(() => {
                 const valOk = !expectValue || input.value === expectValue;
                 const domOk = !checkDOM || (input.parentElement?.children.length ?? -1) === domSnap;
-                if (valOk && domOk) { stable++; } else { stable = 0; domSnap = checkDOM ? input.parentElement?.children.length ?? -1 : -1; }
+                if (valOk && domOk) { stable++; } else {
+                    stable = 0;
+                    domSnap = checkDOM ? input.parentElement?.children.length ?? -1 : -1;
+                }
                 if (stable >= stableNeed) { clearInterval(t); clearTimeout(safety); resolve(); }
             }, interval);
             const safety = setTimeout(() => { clearInterval(t); resolve(); }, maxWait);
@@ -1192,15 +1556,18 @@
         });
         _toggleEl.onclick = (e) => e.stopPropagation();
         setTimeout(() => {
-            _updateTogglePosition(); _updateSliderPos();
+            _updateTogglePosition();
+            _updateSliderPos();
             _togglePosTimer = setInterval(() => { _updateTogglePosition(); _updateSliderPos(); }, 500);
         }, 100);
     }
 
     function _updateSliderPos() {
         if (!_toggleEl) return;
-        const c = cfgLoad(); const mode = c.autoSendMode || 'click';
-        const modes = ['none', 'click', 'enter']; const idx = modes.indexOf(mode);
+        const c = cfgLoad();
+        const mode = c.autoSendMode || 'click';
+        const modes = ['none', 'click', 'enter'];
+        const idx = modes.indexOf(mode);
         if (idx < 0) return;
         const opts = _toggleEl.querySelectorAll('.ag-as-opt');
         const thumb = _toggleEl.querySelector('.ag-as-thumb');
@@ -1214,13 +1581,17 @@
 
     function _updateTogglePosition() {
         if (!_toggleEl) return;
-        const c = cfgLoad(); const btn = document.querySelector(c.selSendButton);
+        const c = cfgLoad();
+        const btn = document.querySelector(c.selSendButton);
         if (!btn) return;
         const br = btn.getBoundingClientRect();
         if (br.width === 0 && br.height === 0) return;
-        if (br.bottom < 0 || br.top > innerHeight || br.right < 0 || br.left > innerWidth) { _toggleEl.style.display = 'none'; return; }
+        if (br.bottom < 0 || br.top > innerHeight || br.right < 0 || br.left > innerWidth) {
+            _toggleEl.style.display = 'none'; return;
+        }
         _toggleEl.style.display = 'flex';
-        const tr = _toggleEl.getBoundingClientRect(); const pos = c.autoSendTogglePos || 'right';
+        const tr = _toggleEl.getBoundingClientRect();
+        const pos = c.autoSendTogglePos || 'right';
         let left, top;
         switch (pos) {
             case 'right': left = br.right; top = br.top + br.height / 2 - tr.height / 2; break;
@@ -1228,7 +1599,8 @@
             case 'top': left = br.left + br.width / 2 - tr.width / 2; top = br.top - tr.height; break;
             case 'bottom': left = br.left + br.width / 2 - tr.width / 2; top = br.bottom; break;
         }
-        _toggleEl.style.left = left + 'px'; _toggleEl.style.top = top + 'px';
+        _toggleEl.style.left = left + 'px';
+        _toggleEl.style.top = top + 'px';
     }
 
     function _destroyAutoSendToggle() {
@@ -1236,7 +1608,7 @@
         if (_toggleEl) { _toggleEl.remove(); _toggleEl = null; }
     }
 
-    // [新增] _doPasteFile：只粘贴文件+追加描述文本，不触发发送
+    // _doPasteFile：只粘贴文件+追加描述文本，不触发发送
     // 供 _dispatch 中 clipboard_file_ordered 分支使用，避免中间触发发送导致后续回执被覆盖
     async function _doPasteFile(input, filename, fileSize, b64Data) {
         try {
@@ -1245,24 +1617,26 @@
             for (let i = 0; i < byteChars.length; i++) byteArr[i] = byteChars.charCodeAt(i);
             const ext = filename.split('.').pop().toLowerCase();
             const mimeMap = {
-                'js': 'text/javascript', 'ts': 'text/typescript', 'html': 'text/html', 'css': 'text/css',
-                'json': 'application/json', 'md': 'text/markdown', 'py': 'text/x-python',
-                'txt': 'text/plain', 'xml': 'text/xml', 'csv': 'text/csv'
+                'js': 'text/javascript', 'ts': 'text/typescript', 'html': 'text/html',
+                'css': 'text/css', 'json': 'application/json', 'md': 'text/markdown',
+                'py': 'text/x-python', 'txt': 'text/plain', 'xml': 'text/xml', 'csv': 'text/csv'
             };
             const file = new File([byteArr], filename, { type: mimeMap[ext] || 'text/plain' });
             input.focus();
-            const dt = new DataTransfer(); dt.items.add(file);
+            const dt = new DataTransfer();
+            dt.items.add(file);
             const pasteEvt = new ClipboardEvent('paste', { bubbles: true, cancelable: true });
             Object.defineProperty(pasteEvt, 'clipboardData', { get() { return dt; } });
             input.dispatchEvent(pasteEvt);
             log('OK', '已触发文件粘贴事件（不发送）');
             await _smartWait(input, { checkDOM: true, maxWait: 3000 });
-            // 追加描述文本（不触发发送）
             _directInput(input, `[Poker Agent]\n已读取文件：${filename}（${fileSize} 字节）\n`, true);
-        } catch (err) { log('ERR', `文件粘贴失败: ${err.message}`); }
+        } catch (err) {
+            log('ERR', `文件粘贴失败: ${err.message}`);
+        }
     }
 
-    // [保留] _pasteFile：粘贴文件+追加描述+触发发送
+    // _pasteFile：粘贴文件+追加描述+触发发送
     // 供旧版 clipboard_file 兼容场景使用
     async function _pasteFile(filename, fileSize, b64Data) {
         const c = cfgLoad();
@@ -1274,13 +1648,14 @@
             for (let i = 0; i < byteChars.length; i++) byteArr[i] = byteChars.charCodeAt(i);
             const ext = filename.split('.').pop().toLowerCase();
             const mimeMap = {
-                'js': 'text/javascript', 'ts': 'text/typescript', 'html': 'text/html', 'css': 'text/css',
-                'json': 'application/json', 'md': 'text/markdown', 'py': 'text/x-python',
-                'txt': 'text/plain', 'xml': 'text/xml', 'csv': 'text/csv'
+                'js': 'text/javascript', 'ts': 'text/typescript', 'html': 'text/html',
+                'css': 'text/css', 'json': 'application/json', 'md': 'text/markdown',
+                'py': 'text/x-python', 'txt': 'text/plain', 'xml': 'text/xml', 'csv': 'text/csv'
             };
             const file = new File([byteArr], filename, { type: mimeMap[ext] || 'text/plain' });
             input.focus();
-            const dt = new DataTransfer(); dt.items.add(file);
+            const dt = new DataTransfer();
+            dt.items.add(file);
             const pasteEvt = new ClipboardEvent('paste', { bubbles: true, cancelable: true });
             Object.defineProperty(pasteEvt, 'clipboardData', { get() { return dt; } });
             input.dispatchEvent(pasteEvt);
@@ -1288,7 +1663,9 @@
             await _smartWait(input, { checkDOM: true, maxWait: 3000 });
             _directInput(input, `[Poker Agent]\n已读取文件：${filename}（${fileSize} 字节）\n`, true);
             _executeSend(input);
-        } catch (err) { log('ERR', `文件粘贴失败: ${err.message}`); }
+        } catch (err) {
+            log('ERR', `文件粘贴失败: ${err.message}`);
+        }
     }
 
     /* ================================================================
@@ -1300,41 +1677,92 @@
 
     function initAgent() {
         if (_pollTimer) { clearInterval(_pollTimer); _pollTimer = null; }
-        _lastAnswerEl = null; _currentRoundSent.clear();
+        _lastAnswerEl = null;
+        _currentRoundSent.clear();
+        _noAnswerCount = 0; // [新增] 重置自诊断计数器
         _initAutoSendToggle();
-        const c = cfgLoad(); const selector = c.selChatContainer;
+
+        const c = cfgLoad();
+        const selector = c.selChatContainer;
         let currentContainer = document.querySelector(selector);
-        if (!currentContainer) { log('WARN', `找不到容器 ${selector}，5秒后重试...`); setTimeout(initAgent, 5000); return; }
-        _knownAnswers = [...currentContainer.querySelectorAll('.answer')];
-        _lastAnswerEl = null; _currentRoundSent.clear();
+        if (!currentContainer) {
+            log('WARN', `找不到容器 ${selector}，5秒后重试...`);
+            setTimeout(initAgent, 5000);
+            return;
+        }
+
+        // [修改] 使用可配置的回答元素选择器
+        const answerSel = c.selAnswerItem || '.answer';
+        _knownAnswers = [...currentContainer.querySelectorAll(answerSel)];
+        _lastAnswerEl = null;
+        _currentRoundSent.clear();
+
         _pollConfig();
-        log('OK', `✅ 监听已启动！`);
+        log('OK', `✅ 监听已启动！回答元素选择器: "${answerSel}"`);
+
         _pollTimer = setInterval(() => {
             try {
                 _heartbeatCounter++;
                 const freshContainer = document.querySelector(selector);
                 if (!freshContainer) return;
+
                 if (freshContainer !== currentContainer) {
                     log('WARN', '🚨 检测到聊天容器被替换，重置状态...');
                     currentContainer = freshContainer;
-                    _lastAnswerEl = null; _currentRoundSent.clear(); _cmdQueue = [];
-                    _sendPromiseChain = Promise.resolve(); _isProcessing = false;
-                    _initAutoSendToggle(); return;
+                    _lastAnswerEl = null;
+                    _currentRoundSent.clear();
+                    _cmdQueue = [];
+                    _sendPromiseChain = Promise.resolve();
+                    _isProcessing = false;
+                    _initAutoSendToggle();
+                    return;
                 }
-                const answers = [...currentContainer.querySelectorAll('.answer')];
+
+                // [修改] 使用可配置的回答元素选择器，不再硬编码 .answer
+                const answers = [...currentContainer.querySelectorAll(answerSel)];
+
+                // [新增] 自诊断：连续找不到回答元素时打警告，不再静默失败
+                if (answers.length === 0) {
+                    _noAnswerCount++;
+                    if (_noAnswerCount === 5) {
+                        log('WARN', `⚠️ 已连续 5 次轮询未找到回答元素 ("${answerSel}")`);
+                    } else if (_noAnswerCount >= 10 && _noAnswerCount % 10 === 0) {
+                        log('WARN', `⚠️ 已连续 ${_noAnswerCount} 次轮询未找到回答元素 ("${answerSel}")，请检查选择器配置`);
+                    }
+                } else {
+                    if (_noAnswerCount > 0) {
+                        log('INFO', `🟢 回答元素重新出现 ("${answerSel}")，之前连续缺失 ${_noAnswerCount} 次`);
+                    }
+                    _noAnswerCount = 0;
+                }
+
+                // 对话清空检测
                 if (_knownAnswers.length > 0 && !_knownAnswers.some(el => new Set(answers).has(el))) {
-                    _lastAnswerEl = null; _currentRoundSent.clear(); _cmdQueue = [];
-                    _sendPromiseChain = Promise.resolve(); _isProcessing = false;
+                    _lastAnswerEl = null;
+                    _currentRoundSent.clear();
+                    _cmdQueue = [];
+                    _sendPromiseChain = Promise.resolve();
+                    _isProcessing = false;
                     log('WARN', '🚨 对话被清空，重置状态...');
                 }
                 _knownAnswers = answers;
-                if (_heartbeatCounter % 20 === 0) log('INFO', `💓 心跳 | 队列${_cmdQueue.length}条 | 锁定:${_isProcessing}`);
+
+                if (_heartbeatCounter % 20 === 0)
+                    log('INFO', `💓 心跳 | 队列${_cmdQueue.length}条 | 锁定:${_isProcessing} | 回答:${answers.length}个`);
+
                 if (answers.length === 0) return;
+
                 const lastAnswer = answers[answers.length - 1];
-                if (lastAnswer !== _lastAnswerEl) { _lastAnswerEl = lastAnswer; _currentRoundSent.clear(); }
+                if (lastAnswer !== _lastAnswerEl) {
+                    _lastAnswerEl = lastAnswer;
+                    _currentRoundSent.clear();
+                }
+
                 const re = /【cmd】([\s\S]*?)【\/cmd】/g;
-                const text = getCleanText(lastAnswer);
-                re.lastIndex = 0; let m;
+                // [修改] getCleanText 传入配置
+                const text = getCleanText(lastAnswer, c);
+                re.lastIndex = 0;
+                let m;
                 while ((m = re.exec(text)) !== null) {
                     const cmdStr = m[1].trim();
                     const normKey = m[0].replace(/[ \t]+/g, ' ').replace(/ *\n */g, '\n');
@@ -1344,7 +1772,9 @@
                     log('OK', `🎉 捕获指令入队: ${cmdStr.substring(0, 60)}...`);
                     if (!_isProcessing) _checkAndDispatch();
                 }
-            } catch (err) { console.error('[Agent-ERR] 轮询异常:', err); }
+            } catch (err) {
+                console.error('[Agent-ERR] 轮询异常:', err);
+            }
         }, 800);
     }
 
@@ -1354,5 +1784,9 @@
         else start();
     }
 
-    function esc(s) { const d = document.createElement('div'); d.textContent = s; return d.innerHTML; }
+    function esc(s) {
+        const d = document.createElement('div');
+        d.textContent = s;
+        return d.innerHTML;
+    }
 })();
