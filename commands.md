@@ -49,7 +49,8 @@
 单行简写时查找内容不允许有空格。
 多行查找，内容需要换行并用标签包裹。
 示例：
-【cmd】find test.txt -i -w 【CodeSTART】
+【cmd】find test.txt -i -w
+【CodeSTART】
 ```
 hello world
 hello world1
@@ -69,7 +70,8 @@ hello world1
 - `-a`（删除所有匹配）
 示例：
 【cmd】deleteline test.txt -i -w hello【/cmd】
-【cmd】deleteline test.txt -a 【CodeSTART】
+【cmd】deleteline test.txt -a
+【CodeSTART】
 ```
 hello world
 ```
@@ -84,7 +86,8 @@ hello world
 - -l <行号范围> ：按行号替换，格式为 `-l 5`（单行）或 `-l 5-20`（范围），只需提供一个代码块（新文本）
 **内容匹配模式**（默认）：用两个独立的代码块分别提供旧文本和新文本，第一个代码块是旧文本，第二个是新文本。
 示例：
-【cmd】replace config.json -a -s 【CodeSTART】
+【cmd】replace config.json -a -s
+【CodeSTART】
 ```
 "debug": false
 ```
@@ -97,7 +100,8 @@ hello world
 【/cmd】
 **行号模式**（-l）：直接指定要替换的行范围，只提供新文本。
 示例：
-【cmd】replace "config file.json" -l 10-15 【CodeSTART】
+【cmd】replace "config file.json" -l 10-15
+【CodeSTART】
 ```
 // 新的代码
 ```
@@ -107,14 +111,16 @@ hello world
 ### insert <文件路径> -after/-before <行号或文本>
 在指定位置插入内容。可以指定行号，也可以指定一段目标文本。
 示例（在第10行后插入）：
-【cmd】insert main.py -after 10 【CodeSTART】
+【cmd】insert main.py -after 10
+【CodeSTART】
 ```
 print("插入的内容")
 ```
 【/CodeEND】
 【/cmd】
 示例（在目标文本前插入）：
-【cmd】insert "main file.py" -before "def main():" 【CodeSTART】
+【cmd】insert "main file.py" -before "def main():"
+【CodeSTART】
 ```
 # 这是新插入的注释
 ```
@@ -142,14 +148,16 @@ print("插入的内容")
 ### create <文件路径> [内容]
 创建一个新文件并写入内容。文件路径写在指令同行，多行内容必须使用 【CodeSTART】 和 【/CodeEND】 标签包裹
 格式：
-【cmd】create <文件路径> 【CodeSTART】
+【cmd】create <文件路径>
+【CodeSTART】
 ```
 <文件内容>
 ```
 【/CodeEND】
 【/cmd】
 示例：
-【cmd】create hello.txt 【CodeSTART】
+【cmd】create hello.txt
+【CodeSTART】
 ```
 Hello World!
 这是第二行。
@@ -177,7 +185,8 @@ Hello World!
 ### append <文件路径> [内容]
 向已有文件末尾追加内容。多行格式与 create 相同。
 格式：
-【cmd】append <文件路径> 【CodeSTART】
+【cmd】append <文件路径>
+【CodeSTART】
 ```
 <追加内容>
 ```
@@ -297,20 +306,52 @@ exec后的文本即是输入进cmd中的内容
 - 【CodeSTART】 和 【/CodeEND】的作用就是标记代码块的起始和结束,所以在指令中每个代码块都必须用【CodeSTART】 和 【/CodeEND】包裹,【CodeSTART】 和 【/CodeEND】必须和代码块同时存在,如果没有代码块就不要用【CodeSTART】 和 【/CodeEND】
 - 如果你不知道要修改的文件的内容,就不要操作文件,不要猜测,先read要修改的文件
 - 任何情况下,指令内用于包裹代码的```的同一行都不能出现任何标识代码块的编程语言标签
-不要写:
-【cmd】hello.txt 【CodeSTART】
-```java
-something
-```
-【/CodeEND】
-【/cmd】
-写:
-【cmd】hello.txt 【CodeSTART】
-```
-something
-```
-【/CodeEND】
-【/cmd】
+    >写:
+    >【cmd】create hello.txt
+    >【CodeSTART】
+    >```
+    >something
+    >```
+    >【/CodeEND】
+    >【/cmd】
+    >不要写:
+    >【cmd】create hello.txt
+    >【CodeSTART】
+    >```java
+    >something
+    >```
+    >【/CodeEND】
+    >【/cmd】
+- 关于```,TICK3,三联反引号的详细说明
+    >**正确示例:**
+    >
+    >好的,我会帮你写一段说明文本,介绍使用三联反引号创建代码块的方式.
+    >【cmd】create code_blocks.md
+    >【CodeSTART】
+    >```
+    >Yes, you can use TICK3 to create code blocks, like this:
+    >TICK3
+    >something
+    >TICK3
+    >```
+    >【/CodeEND】
+    >【/cmd】
+    >
+    >**完全错误示例:**
+    >好的,我会帮你写一段说明文本,介绍使用```创建代码块的方式.
+    >【cmd】create code_blocks.md
+    >【CodeSTART】
+    >TICK3
+    >Yes, you can use ``` to create code blocks, like this:
+    >三联反引号
+    >something
+    >三联反引号
+    >TICK3
+    >【/CodeEND】
+    >【/cmd】
+
+
+
 # 已安装的CLI扩展程序 - 对应的起始指令
 1. OpenCLI - 【cmd】exec opencli list【/cmd】
 
