@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         PokerAgent
 // @namespace    http://tampermonkey.net/
-// @version      11
+// @version      12.1
 // @author       LMaxRouterCN
 // @description  PokerAgent的浏览器端核心脚本，提供元素选择、配置管理、调试日志等功能，支持多站点独立配置和自动发送功能。
 // @match        *://*/*
@@ -375,7 +375,14 @@
     let _levelPanel = null;
 
     // [修改] 增加 answer 类型
-    const TYPE_LABEL = { chat: '聊天记录容器', input: '输入框', send: '发送按钮', answer: 'AI回答元素' };
+    // [修改] 增加 clean-class 类型
+    const TYPE_LABEL = { 
+        chat: '聊天记录容器', 
+        input: '输入框', 
+        send: '发送按钮', 
+        answer: 'AI回答元素', 
+        'clean-class': '清理元素Class' // <--- 新增
+    };
 
     function _isPureHashClass(c) {
         if (/^[a-f0-9]{5,}$/i.test(c)) return true;
@@ -474,6 +481,10 @@
         document.addEventListener('click', _onClick, true);
         document.addEventListener('contextmenu', _onCtx, true);
         document.addEventListener('keydown', _onKey, true);
+        
+        // 👇 新增：监听滚动和窗口缩放，确保高亮框跟随元素移动
+        document.addEventListener('scroll', _syncHighlightPositions, true); // capture=true 确保能捕获到局部滚动容器的滚动
+        window.addEventListener('resize', _syncHighlightPositions);
     }
 
     function pickerExit() {
@@ -486,6 +497,10 @@
         document.removeEventListener('click', _onClick, true);
         document.removeEventListener('contextmenu', _onCtx, true);
         document.removeEventListener('keydown', _onKey, true);
+        
+        // 👇 新增：移除滚动和窗口缩放监听
+        document.removeEventListener('scroll', _syncHighlightPositions, true);
+        window.removeEventListener('resize', _syncHighlightPositions);
         [_pickDim, _pickHL, _pickLockHL, _pickTip, _pickBar, _levelPanel].forEach(e => e && e.remove());
         _pickLockHL = null;
         _levelPanel = null;
@@ -575,6 +590,29 @@
             left: (r.left-2)+'px', top: (r.top-2)+'px',
             width: (r.width+4)+'px', height: (r.height+4)+'px'
         });
+    }
+
+    function _syncHighlightPositions() {
+        // 更新鼠标悬停的高亮框
+        if (_pickHL && _pickedEl) {
+            const r = _pickedEl.getBoundingClientRect();
+            Object.assign(_pickHL.style, {
+                left: (r.left - 2) + 'px',
+                top: (r.top - 2) + 'px',
+                width: (r.width + 4) + 'px',
+                height: (r.height + 4) + 'px'
+            });
+        }
+        // 更新锁定的高亮框
+        if (_pickLockHL && _lockedBaseEl) {
+            const r = _lockedBaseEl.getBoundingClientRect();
+            Object.assign(_pickLockHL.style, {
+                left: (r.left - 2) + 'px',
+                top: (r.top - 2) + 'px',
+                width: (r.width + 4) + 'px',
+                height: (r.height + 4) + 'px'
+            });
+        }
     }
 
     function _hideLockHL() {
@@ -714,8 +752,44 @@
     }
 
     function _confirmSelection(el) {
+        // === [新增] 处理抓取 Class 关键词的逻辑 ===
+        if (_pickType === 'clean-class') {
+            let classes = [];
+            if (el.className && typeof el.className === 'string') {
+                // 提取有效的 class，自动过滤掉纯哈希值和框架生成的无用前缀（如 css-1a2b3c）
+                classes = el.className.trim().split(/\s+/).filter(c => 
+                    c && !_isPureHashClass(c) && !/^(_|-{2})/.test(c)
+                );
+            }
+            
+            if (classes.length === 0) {
+                log('WARN', '该元素没有有效的class，请重新选择');
+                pickerExit();
+                return;
+            }
+            
+            const c = cfgLoad();
+            let currentKws = (c.cleanIgnoreClassKeywords || '').split(',').map(s => s.trim()).filter(s => s);
+            
+            let added = [];
+            classes.forEach(cls => {
+                if (!currentKws.includes(cls)) {
+                    currentKws.push(cls);
+                    added.push(cls);
+                }
+            });
+            
+            // 直接保存到运行时配置
+            cfgSaveRuntime({ cleanIgnoreClassKeywords: currentKws.join(',') });
+            log('OK', `已添加Class关键词: ${added.join(', ')}`);
+            pickerExit(); // pickerExit 内部会自动调用 showPanel() 刷新面板
+            return;
+        }
+        // ==========================================
+    
         const sel = genSelector(el);
         if (!sel) {
+    // ... 下方原有代码保持不变 ...
             log('ERR', '无法生成选择器');
             return;
         }
@@ -861,13 +935,17 @@
                         </div>
                     </div>
                 </div>
-                <div class="ag-sec">
-                    <div class="ag-sec-title">内容清理规则</div>
-                    <div class="ag-field">
-                        <label>忽略的class关键词 (逗号分隔)</label>
-                        <input class="ag-inp" id="ag-clean-keywords" value="${esc(editCfg.cleanIgnoreClassKeywords)}" />
-                        <div class="ag-hint">包含这些关键词的class所在元素会被移除（如thinking/reasoning等AI思考过程区域）</div>
-                    </div>
+                 <div class="ag-sec" >
+                     <div class="ag-sec-title" >内容清理规则 </div >
+                     <div class="ag-field" >
+                         <label >忽略的class关键词 (逗号分隔) </label >
+                         <!-- [修改] 增加 ag-row 包裹输入框和选择按钮 -->
+                         <div class="ag-row" >
+                             <input class="ag-inp" id="ag-clean-keywords" value="${esc(editCfg.cleanIgnoreClassKeywords)}" />
+                             <button class="ag-btn ag-btn-p" id="ag-pick-clean-keyword" >🖱 选择 </button >
+                         </div >
+                         <div class="ag-hint" >包含这些关键词的class所在元素会被移除，支持用选择器直接抓取行号等干扰元素的class </div >
+                     </div >
                     <div class="ag-toggle" style="margin-bottom:6px">
                         <input type="checkbox" id="ag-clean-buttons" ${editCfg.cleanRemoveButtonLike !== false ? 'checked' : ''} />
                         <label for="ag-clean-buttons" style="cursor:pointer">移除按钮/操作类元素 (copy/operate/action/toolbar)</label>
@@ -947,6 +1025,9 @@
         _panel.querySelector('#ag-pick-answer').onclick = () => pickerEnter('answer');
         _panel.querySelector('#ag-pick-input').onclick = () => pickerEnter('input');
         _panel.querySelector('#ag-pick-send').onclick = () => pickerEnter('send');
+        
+        // === [新增] 绑定清理规则 Class 抓取按钮 ===
+        _panel.querySelector('#ag-pick-clean-keyword').onclick = () => pickerEnter('clean-class');
 
         if (editCfg.selSendButton) {
             _panel.querySelector('#ag-start-calibrate').onclick = () => {
