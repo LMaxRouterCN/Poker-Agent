@@ -15,6 +15,7 @@ import threading
 import base64 
 import difflib # 用于 -s 模式的模糊匹配策略 
 import locale # 获取系统默认编码 
+import platform # [新增] 用于判断操作系统
 app = Flask(__name__) 
 CORS(app) 
 # 工作目录：脚本所在目录 
@@ -25,8 +26,50 @@ HELP_FILE = os.path.join(WORK_DIR, 'commands.md')
 LOG_FILE = os.path.join(WORK_DIR, 'agent_log.txt') 
 clipboard_mode = False 
 exec_enabled = True 
-_config_changed = threading.Event() 
-encoding = locale.getpreferredencoding() 
+_config_changed = threading.Event()
+# [修改] Windows 的 cmd 默认输出是 GBK，Linux/Mac 是 UTF-8
+encoding = 'gbk' if platform.system() == 'Windows' else 'utf-8'
+
+_SYS_ENCODING = locale.getpreferredencoding(False) or 'gbk'
+
+def smart_read(filepath):
+    """智能读取：优先 UTF-8 (含BOM)，失败回退系统默认编码(如 GBK)，保底 latin-1"""
+    # 1. 尝试 UTF-8 (utf-8-sig 会自动处理并剥离 BOM 头)
+    try:
+        with open(filepath, 'r', encoding='utf-8-sig') as f:
+            return f.read(), 'utf-8-sig'
+    except UnicodeDecodeError:
+        pass
+    
+    # 2. 尝试系统默认编码 (Windows 下通常是 GBK)
+    try:
+        with open(filepath, 'r', encoding=_SYS_ENCODING) as f:
+            return f.read(), _SYS_ENCODING
+    except (UnicodeDecodeError, LookupError):
+        pass
+        
+    # 3. 终极保底：latin-1 (不会抛错，保证程序不崩)
+    with open(filepath, 'r', encoding='latin-1') as f:
+        return f.read(), 'latin-1'
+
+def smart_write(filepath, content, encoding):
+    """智能写入：保持原有编码格式"""
+    # 如果是 utf-8-sig，写入时保留 BOM
+    with open(filepath, 'w', encoding=encoding) as f:
+        f.write(content)
+
+# 👇 新增智能解码函数
+def smart_decode(b_str):
+    """智能解码：优先UTF-8（兼容dotnet/node等现代工具），失败则回退GBK（兼容传统cmd命令）"""
+    if not b_str:
+        return ''
+    try:
+        # 优先尝试 UTF-8
+        return b_str.decode('utf-8')
+    except UnicodeDecodeError:
+        # 如果不是合法的 UTF-8，说明是传统的 GBK 输出，回退到系统默认编码
+        return b_str.decode(encoding, errors='replace')
+
 def _push_config(): 
     _config_changed.set() 
 def _truncate(s, max_display=20000, keep_len=100): 
@@ -162,8 +205,7 @@ def execute_line(line):
         if err: 
             return err 
         try: 
-            with open(filepath, 'r', encoding='utf-8') as f: 
-                content = f.read() 
+            content, _ = smart_read(filepath)
             lines = content.splitlines() 
             chars = len(content) 
             words = len(re.findall(r'[\u4e00-\u9fff]|[a-zA-Z0-9]+', content)) 
@@ -199,8 +241,8 @@ def execute_line(line):
         if err: 
             return err 
         try: 
-            with open(filepath, 'r', encoding='utf-8') as f: 
-                lines = f.readlines() 
+            content, _ = smart_read(filepath)
+            lines = content.splitlines(True) # 保持换行符
             results = [] 
             is_multi = '\n' in search_text 
             if is_multi: 
@@ -283,8 +325,7 @@ def execute_line(line):
         if err: 
             return err 
         try: 
-            with open(filepath, 'r', encoding='utf-8') as f: 
-                content = f.read() 
+            content, file_enc = smart_read(filepath)
             count = 0 
             if line_range: 
                 file_lines = content.split('\n') 
@@ -403,8 +444,7 @@ def execute_line(line):
                     count = 1 if new_content != content else 0 
             if count == 0: 
                 return '未找到要替换的文本。请查看commands.md中的44-67行获取replace指令说明，确认参数和选项的使用。' 
-            with open(filepath, 'w', encoding='utf-8') as f: 
-                f.write(new_content) 
+            smart_write(filepath, new_content, file_enc)
             log_action('REPLACE', f'{filepath} ({count} 处)') 
             return f'已替换 {filepath} 中的 {count} 处文本。' 
         except Exception as e: 
@@ -428,40 +468,38 @@ def execute_line(line):
         err = _check_permission('insert', filepath) 
         if err: 
             return err 
-        try: 
-            with open(filepath, 'r', encoding='utf-8') as f: 
-                lines = f.readlines() 
-            insert_idx = -1 
-            if pos_val.isdigit(): 
-                line_no = int(pos_val) 
-                if line_no < 1 or line_no > len(lines) + 1: 
-                    return f'错误：行号 {line_no} 超出文件范围 (1-{len(lines)+1})' 
-                if pos_type == 'after': 
-                    insert_idx = line_no 
-                else: 
-                    insert_idx = line_no - 1 
-            else: 
-                found_idx = -1 
-                for idx, line in enumerate(lines): 
-                    if pos_val in line: 
-                        found_idx = idx 
-                        break 
-                if found_idx == -1: 
-                    return f'未找到定位文本：{pos_val}' 
-                if pos_type == 'after': 
-                    insert_idx = found_idx + 1 
-                else: 
-                    insert_idx = found_idx 
-            insert_text = insert_text.replace('TICK3', '```') 
-            if not insert_text.endswith('\n'): 
-                insert_text += '\n' 
-            lines.insert(insert_idx, insert_text) 
-            with open(filepath, 'w', encoding='utf-8') as f: 
-                f.writelines(lines) 
-            log_action('INSERT', f'{filepath} 行 {insert_idx+1}') 
-            return f'已在 {filepath} 的第 {insert_idx+1} 行处插入内容。' 
-        except Exception as e: 
-            return f'插入失败：{e}' 
+        try:
+            content, file_enc = smart_read(filepath)
+            lines = content.splitlines(True)  # 👈 补上这行，将字符串转为行列表
+            insert_idx = -1
+            if pos_val.isdigit():
+                line_no = int(pos_val)
+                if line_no < 1 or line_no > len(lines) + 1:
+                    return f'错误：行号 {line_no} 超出文件范围 (1-{len(lines)+1})'
+                if pos_type == 'after': insert_idx = line_no
+                else: insert_idx = line_no - 1
+            else:
+                found_idx = -1
+                for idx, line in enumerate(lines):
+                    if pos_val in line:
+                        found_idx = idx
+                        break
+                if found_idx == -1:
+                    return f'未找到定位文本：{pos_val}'
+                if pos_type == 'after': insert_idx = found_idx + 1
+                else: insert_idx = found_idx
+                
+            insert_text = insert_text.replace('TICK3', '`')
+            if not insert_text.endswith('\n'):
+                insert_text += '\n'
+                
+            lines.insert(insert_idx, insert_text)
+            new_content = ''.join(lines)  # 👈 补上这行，重新拼成字符串
+            smart_write(filepath, new_content, file_enc)
+            log_action('INSERT', f'{filepath} 行 {insert_idx+1}')
+            return f'已在 {filepath} 的第 {insert_idx+1} 行处插入内容。'
+        except Exception as e:
+            return f'插入失败：{e}'
     elif cmd == 'deleteline': 
         if not arg.strip(): 
             return '错误：缺少参数。用法：deleteline <路径> -l <行号或范围> 或 deleteline <路径> [选项] <要删除的文本>' 
@@ -488,18 +526,18 @@ def execute_line(line):
                     end = start 
                 except ValueError: 
                     return '错误：行号格式不正确，应为数字' 
-            try: 
-                with open(filepath, 'r', encoding='utf-8') as f: 
-                    lines = f.readlines() 
-                if start < 1 or end > len(lines): 
-                    return f'错误：行号范围 {start}-{end} 超出文件范围 (1-{len(lines)})' 
-                del lines[start-1:end] 
-                with open(filepath, 'w', encoding='utf-8') as f: 
-                    f.writelines(lines) 
-                log_action('DELETELINE', f'{filepath} 行 {start}-{end}') 
-                return f'已删除 {filepath} 的第 {start} 到 {end} 行' 
-            except Exception as e: 
-                return f'删除行失败：{e}' 
+            try:
+                content, file_enc = smart_read(filepath)
+                lines = content.splitlines(True)  # 👈 补上这行
+                if start < 1 or end > len(lines):
+                    return f'错误：行号范围 {start}-{end} 超出文件范围 (1-{len(lines)})'
+                del lines[start-1:end]
+                new_content = ''.join(lines)      # 👈 补上这行
+                smart_write(filepath, new_content, file_enc)
+                log_action('DELETELINE', f'{filepath} 行 {start}-{end}')
+                return f'已删除 {filepath} 的第 {start} 到 {end} 行'
+            except Exception as e:
+                return f'删除行失败：{e}'
         else: 
             flags = [part for part in parts if part.startswith('-')] 
             ignore_case = '-i' in flags 
@@ -520,8 +558,7 @@ def execute_line(line):
             if not delete_text: 
                 return '错误：缺少要删除的文本' 
             try: 
-                with open(filepath, 'r', encoding='utf-8') as f: 
-                    content = f.read() 
+                content, file_enc = smart_read(filepath)
                 if ignore_case: 
                     flags_re = re.IGNORECASE 
                 else: 
@@ -541,8 +578,7 @@ def execute_line(line):
                         break 
                     new_content = new_content[:match.start()] + new_content[match.end():] 
                     count += 1 
-                with open(filepath, 'w', encoding='utf-8') as f: 
-                    f.write(new_content) 
+                smart_write(filepath, new_content, file_enc)
                 log_action('DELETELINE', f'{filepath} ({count} 处)') 
                 return f'已删除 {filepath} 中的 {count} 处文本' 
             except Exception as e: 
@@ -573,8 +609,8 @@ def execute_line(line):
             return err 
         try: 
             if os.path.isfile(target): 
-                with open(target, 'r', encoding='utf-8') as f: 
-                    lines = f.readlines() 
+                content, _ = smart_read(target)
+                lines = content.splitlines(True)
                 results = [] 
                 for idx, line in enumerate(lines, 1): 
                     check = line.lstrip() if strip_indent else line 
@@ -593,8 +629,8 @@ def execute_line(line):
                     for fname in files: 
                         fpath = os.path.join(root, fname) 
                         try: 
-                            with open(fpath, 'r', encoding='utf-8', errors='ignore') as f: 
-                                for idx, line in enumerate(f, 1): 
+                            content, _ = smart_read(fpath)
+                            for idx, line in enumerate(content.splitlines(True), 1):
                                     check = line.lstrip() if strip_indent else line 
                                     matched = any(kw in check for kw in cmp_kws) 
                                     if matched: 
@@ -618,13 +654,14 @@ def execute_line(line):
         err = _check_permission('head', filepath) 
         if err: 
             return err 
-        try: 
-            with open(filepath, 'r', encoding='utf-8') as f: 
-                lines = [f.readline().rstrip() for _ in range(n)] 
-            log_action('HEAD', filepath) 
-            return '\n'.join(lines) if any(lines) else '（文件为空）' 
-        except Exception as e: 
-            return f'读取失败：{e}' 
+        try:
+            content, _ = smart_read(filepath)
+            lines = content.splitlines(True)
+            head_lines = [l.rstrip() for l in lines[:n]]  # 👈 限制只取前 n 行
+            log_action('HEAD', filepath)
+            return '\n'.join(head_lines) if head_lines else '（文件为空）'
+        except Exception as e:
+            return f'读取失败：{e}'
     elif cmd == 'tail': 
         parts = parse_args_with_quotes(arg) 
         if not parts: 
@@ -635,8 +672,8 @@ def execute_line(line):
         if err: 
             return err 
         try: 
-            with open(filepath, 'r', encoding='utf-8') as f: 
-                lines = f.readlines() 
+            content, _ = smart_read(filepath)
+            lines = content.splitlines(True)
             tail_lines = [l.rstrip() for l in lines[-n:]] 
             log_action('TAIL', filepath) 
             return '\n'.join(tail_lines) if tail_lines else '（文件为空）' 
@@ -711,31 +748,32 @@ def execute_line(line):
                 return f'__CLIPBOARD_FILE__{filename}\x00{file_size}\x00{b64}' 
             except Exception as e: 
                 return f'读取失败：{e}' 
-        try: 
-            with open(filepath, 'r', encoding='utf-8') as f: 
-                lines = f.readlines() 
-            if start_line > 0: 
-                s_idx = max(0, start_line - 1) 
-                e_idx = min(end_line, len(lines)) if end_line > 0 else len(lines) 
-                selected = lines[s_idx:e_idx] 
-                if not selected: 
-                    return f'指定范围内无内容（文件共 {len(lines)} 行）' 
-                output = [] 
-                for i, line in enumerate(selected, start=s_idx + 1): 
-                    output.append(f"{i:>5}\t{line.rstrip()}") 
-                result = '\n'.join(output) 
-                log_action('READ', f'{filepath} 行 {start_line}-{end_line if end_line>0 else "末尾"}') 
-                return result 
-            else: 
-                content = ''.join(lines) 
-                log_action('READ', filepath) 
-                if len(content) > 5000: 
-                    return f'{content[:5000]}\n\n...（文件过长，仅显示前 5000 字符，共 {len(content)} 字符）' 
-                return content if content else '（文件为空）' 
-        except FileNotFoundError: 
-            return f'错误：文件不存在：{filepath}' 
-        except Exception as e: 
-            return f'读取失败：{e}' 
+        try:
+            content, _ = smart_read(filepath)  # 👈 替换原来的 open
+            lines = content.splitlines(True)   # 👈 转为列表以兼容后续代码
+            
+            if start_line > 0:
+                s_idx = max(0, start_line - 1)
+                e_idx = min(end_line, len(lines)) if end_line > 0 else len(lines)
+                selected = lines[s_idx:e_idx]
+                if not selected:
+                    return f'指定范围内无内容（文件共 {len(lines)} 行）'
+                output = []
+                for i, line in enumerate(selected, start=s_idx + 1):
+                    output.append(f"{i:>5}\t{line.rstrip()}")
+                result = '\n'.join(output)
+                log_action('READ', f'{filepath} 行 {start_line}-{end_line if end_line>0 else "末尾"}')
+                return result
+            else:
+                content_str = ''.join(lines)
+                log_action('READ', filepath)
+                if len(content_str) > 5000:
+                    return f'{content_str[:5000]}\n\n...（文件过长，仅显示前 5000 字符，共 {len(content_str)} 字符）'
+                return content_str if content_str else '（文件为空）'
+        except FileNotFoundError:
+            return f'错误：文件不存在：{filepath}'
+        except Exception as e:
+            return f'读取失败：{e}'
     elif cmd == 'append': 
         if not arg: 
             return '错误：缺少文件路径。用法：append <路径>' 
@@ -763,14 +801,19 @@ def execute_line(line):
         err = _check_permission('append', filepath) 
         if err: 
             return err 
-        try: 
-            os.makedirs(os.path.dirname(filepath) or '.', exist_ok=True) 
-            with open(filepath, 'a', encoding='utf-8') as f: 
-                f.write('\n' + content) 
-            log_action('APPEND', filepath) 
-            return f'已追加到文件：{filepath}' 
-        except Exception as e: 
-            return f'追加失败：{e}' 
+        try:
+            os.makedirs(os.path.dirname(filepath) or '.', exist_ok=True)
+            # 👇 智能获取原文件编码，如果是新文件则默认 utf-8
+            file_enc = 'utf-8'
+            if os.path.exists(filepath):
+                _, file_enc = smart_read(filepath)
+                
+            with open(filepath, 'a', encoding=file_enc) as f: 
+                f.write('\n' + content)
+            log_action('APPEND', filepath)
+            return f'已追加到文件：{filepath}'
+        except Exception as e:
+            return f'追加失败：{e}'
     elif cmd == 'delete': 
         if not arg.strip(): 
             return '错误：缺少文件路径。用法：delete <路径>' 
@@ -887,8 +930,8 @@ def execute_line(line):
             result = subprocess.run( 
                 f'cmd /c {arg.strip()}', shell=True, capture_output=True, timeout=60, cwd=W 
             ) 
-            out = (result.stdout or b'').decode(encoding, errors='replace') 
-            err = (result.stderr or b'').decode(encoding, errors='replace') 
+            out = smart_decode(result.stdout)
+            err = smart_decode(result.stderr)
             output = (out + err).strip() 
             if not output: 
                 output = '（命令已执行，无输出）' 
@@ -916,8 +959,8 @@ def execute_line(line):
             result = subprocess.run( 
                 ['python', script], capture_output=True, timeout=60, cwd=W 
             ) 
-            out = (result.stdout or b'').decode('utf-8', errors='replace') 
-            err = (result.stderr or b'').decode('utf-8', errors='replace') 
+            out = smart_decode(result.stdout)
+            err = smart_decode(result.stderr)
             output = (out + err).strip() 
             if not output: 
                 output = '（脚本已执行，无输出）' 
@@ -929,22 +972,39 @@ def execute_line(line):
         except Exception as e: 
             return f'运行失败：{e}' 
     # ========== 网络操作 ========== 
-    elif cmd == 'get': 
-        if not arg.strip(): 
-            return '错误：缺少 URL。用法：get <URL>' 
-        url = arg.strip() 
-        try: 
-            req = urllib.request.Request(url, headers={'User-Agent': 'Agent/1.0'}) 
-            with urllib.request.urlopen(req, timeout=15) as resp: 
-                body = resp.read().decode('utf-8', errors='replace') 
-            if len(body) > 8000: 
-                body = body[:8000] + '\n\n...（内容过长，仅显示前 8000 字符）' 
-            log_action('GET', url) 
-            return body 
-        except urllib.error.HTTPError as e: 
-            return f'HTTP 错误：{e.code} {e.reason}' 
-        except Exception as e: 
-            return f'请求失败：{e}' 
+    elif cmd == 'get':
+        if not arg.strip():
+            return '错误：缺少 URL。用法：get <URL>'
+        url = arg.strip()
+        try:
+            req = urllib.request.Request(url, headers={'User-Agent': 'Agent/1.0 (PokerAgent)'})
+            with urllib.request.urlopen(req, timeout=15) as resp:
+                raw_bytes = resp.read()
+                
+                # 1. 尝试从 HTTP Header 提取 charset
+                content_type = resp.headers.get('Content-Type', '')
+                charset = 'utf-8'
+                m = re.search(r'charset=([a-zA-Z0-9\-]+)', content_type, re.I)
+                if m:
+                    charset = m.group(1)
+                
+                # 2. 智能解码
+                try:
+                    body = raw_bytes.decode(charset)
+                except (UnicodeDecodeError, LookupError):
+                    try:
+                        body = raw_bytes.decode('utf-8')
+                    except UnicodeDecodeError:
+                        body = raw_bytes.decode('gbk', errors='replace')
+                        
+                if len(body) > 8000:
+                    body = body[:8000] + '\n\n...（内容过长，仅显示前 8000 字符）'
+                log_action('GET', url)
+                return body
+        except urllib.error.HTTPError as e:
+            return f'HTTP 错误：{e.code} {e.reason}'
+        except Exception as e:
+            return f'请求失败：{e}'
     elif cmd == 'download': 
         if not arg: 
             return '错误：缺少参数。用法：download <URL> <保存路径>' 
