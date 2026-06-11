@@ -443,7 +443,7 @@ def execute_line(line):
                     new_content = content.replace(old_text, new_text, 1) 
                     count = 1 if new_content != content else 0 
             if count == 0: 
-                return '未找到要替换的文本。请查看commands.md中的44-67行获取replace指令说明，确认参数和选项的使用。' 
+                return '未找到要替换的文本。' 
             smart_write(filepath, new_content, file_enc)
             log_action('REPLACE', f'{filepath} ({count} 处)') 
             return f'已替换 {filepath} 中的 {count} 处文本。' 
