@@ -1,4 +1,4 @@
-""" PokerAgent - 本地接应服务 (SSE流式版) v18
+"""PokerAgent - 本地接应服务 (SSE流式版) v19
 启动方式：python agent_server.py
 默认监听：http://127.0.0.1:9966
 """
@@ -13,7 +13,7 @@ import inspect
 import threading
 import base64
 import difflib  # 用于 -s 模式的模糊匹配策略
-import locale    # 获取系统默认编码
+import locale  # 获取系统默认编码
 import platform  # [新增] 用于判断操作系统
 import uuid
 import queue
@@ -39,6 +39,26 @@ _SYS_ENCODING = locale.getpreferredencoding(False) or 'gbk'
 task_queue = queue.Queue()
 sse_clients = []  # 存放所有连接的 SSE 客户端队列
 _sse_lock = threading.Lock()  # 保护 sse_clients 的锁
+# ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+# 任务状态注册表（解决 SSE 晚订阅竞态：新客户端连接时回放历史状态）
+# ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+_task_registry = {}  # task_id -> {'status':..., 'logs':[...], 'result':...}
+_task_registry_lock = threading.Lock()
+def emit_task_event(evt):
+    """更新任务注册表并推送给所有已连接的 SSE 客户端"""
+    task_id = evt.get('id')
+    if task_id:
+        with _task_registry_lock:
+            if task_id not in _task_registry:
+                _task_registry[task_id] = {'status': 'waiting', 'logs': [], 'result': ''}
+            entry = _task_registry[task_id]
+            if evt.get('type') == 'status':
+                entry['status'] = evt.get('status', entry['status'])
+                if 'result' in evt:
+                    entry['result'] = evt['result']
+            elif evt.get('type') == 'log':
+                entry['logs'].append(evt.get('data', ''))
+    push_event(evt)
 def push_event(data_dict):
     """向所有连接的 SSE 客户端推送事件"""
     msg = f"data: {json.dumps(data_dict, ensure_ascii=False)}\n\n"
@@ -59,7 +79,7 @@ def worker_loop():
             task_id = task['id']
             cmd_str = task['cmd']
             print(f'[{datetime.datetime.now().strftime("%H:%M:%S")}] ⚙️ Worker 取出任务 {task_id[:8]}: {cmd_str[:60]}')
-            push_event({'id': task_id, 'type': 'status', 'status': 'running'})
+            emit_task_event({'id': task_id, 'type': 'status', 'status': 'running'})
             try:
                 result = execute_line_streaming(cmd_str, task_id)
             except Exception as e:
@@ -68,7 +88,7 @@ def worker_loop():
                 traceback.print_exc()
                 result = f'执行异常：{e}'
             print(f'[{datetime.datetime.now().strftime("%H:%M:%S")}] ✅ 任务 {task_id[:8]} 完成: {str(result)[:60]}')
-            push_event({'id': task_id, 'type': 'status', 'status': 'done', 'result': result})
+            emit_task_event({'id': task_id, 'type': 'status', 'status': 'done', 'result': result})
         except Exception as e:
             print(f'[Worker] 致命错误: {e}')
 def smart_read(filepath):
@@ -878,7 +898,7 @@ def execute_line_streaming(line, task_id):
             for name in sorted(entries):
                 full = os.path.join(dirpath, name)
                 if os.path.isdir(full):
-                    lines.append(f'  [DIR]  {name}')
+                    lines.append(f'  [DIR] {name}')
                 else:
                     size = os.path.getsize(full)
                     if size < 1024:
@@ -920,7 +940,8 @@ def execute_line_streaming(line, task_id):
             process = subprocess.Popen(
                 f'cmd /c {arg.strip()}', shell=True,
                 stdout=subprocess.PIPE, stderr=subprocess.STDOUT,
-                text=True, encoding=encoding, errors='replace', cwd=W
+                text=True, encoding=encoding, errors='replace',
+                cwd=W
             )
             output_lines = []
             start_time = time.time()
@@ -931,7 +952,7 @@ def execute_line_streaming(line, task_id):
                 if line_out:
                     line_out = line_out.rstrip()
                     output_lines.append(line_out)
-                    push_event({'id': task_id, 'type': 'log', 'data': line_out})
+                    emit_task_event({'id': task_id, 'type': 'log', 'data': line_out})
                 if time.time() - start_time > 60:
                     process.kill()
                     process.wait()
@@ -962,7 +983,8 @@ def execute_line_streaming(line, task_id):
             process = subprocess.Popen(
                 ['python', script],
                 stdout=subprocess.PIPE, stderr=subprocess.STDOUT,
-                text=True, encoding=encoding, errors='replace', cwd=W
+                text=True, encoding=encoding, errors='replace',
+                cwd=W
             )
             output_lines = []
             start_time = time.time()
@@ -973,7 +995,7 @@ def execute_line_streaming(line, task_id):
                 if line_out:
                     line_out = line_out.rstrip()
                     output_lines.append(line_out)
-                    push_event({'id': task_id, 'type': 'log', 'data': line_out})
+                    emit_task_event({'id': task_id, 'type': 'log', 'data': line_out})
                 if time.time() - start_time > 60:
                     process.kill()
                     process.wait()
@@ -1046,8 +1068,21 @@ worker_thread.start()
 def agent_stream():
     """SSE 接口：前端建立长连接监听任务进度"""
     q = queue.Queue()
-    with _sse_lock:
-        sse_clients.append(q)
+    # 持锁注册客户端 + 回放历史状态，确保回放期间不会有新事件插入造成丢失或重复
+    with _task_registry_lock:
+        with _sse_lock:
+            sse_clients.append(q)
+        # 回放所有任务的当前状态（晚订阅补偿）
+        for tid, entry in _task_registry.items():
+            evt = {'id': tid, 'type': 'status', 'status': entry['status']}
+            if entry['status'] == 'done' and entry['result']:
+                evt['result'] = entry['result']
+            q.put(f"data: {json.dumps(evt, ensure_ascii=False)}\n\n")
+            # 只对未完成任务回放日志（done 的任务结果已含全部信息）
+            if entry['status'] != 'done':
+                for log_line in entry['logs']:
+                    log_evt = {'id': tid, 'type': 'log', 'data': log_line}
+                    q.put(f"data: {json.dumps(log_evt, ensure_ascii=False)}\n\n")
     def generate():
         try:
             while True:
@@ -1077,6 +1112,11 @@ def agent_exec():
         return '无法解析请求体', 400
     if not command_text:
         return '空的指令', 400
+    # 清理上一轮已完成的任务（回执已通过 SSE 送达，避免注册表无限膨胀）
+    with _task_registry_lock:
+        stale = [tid for tid, e in _task_registry.items() if e['status'] == 'done']
+        for tid in stale:
+            del _task_registry[tid]
     command_text = command_text.replace('\r\n', '\n').replace('\r', '\n')
     log_action('RECEIVED', command_text[:20000])
     lines = command_text.split('\n')
@@ -1105,8 +1145,8 @@ def agent_exec():
                             idx2 = bln.lower().find('【/codeend】')
                             if idx2 != -1:
                                 block.append(bln[:idx2])
-                            peek += 1
-                            break
+                                peek += 1
+                                break
                         peek += 1
                         break
                     block.append(bln)
@@ -1127,10 +1167,10 @@ def agent_exec():
                                 idx = bln.lower().find('【/codeend】')
                                 if idx != -1:
                                     block.append(bln[:idx])
+                                    peek += 1
+                                    break
                             peek += 1
                             break
-                        peek += 1
-                        break
                         block.append(bln)
                         peek += 1
                     blocks.append('\n'.join(block))
@@ -1195,8 +1235,8 @@ def agent_exec():
                             idx = ln.lower().find('【/codeend】')
                             if idx != -1:
                                 content_lines.append(ln[:idx])
-                            peek += 1
-                            break
+                                peek += 1
+                                break
                         if ln.strip().startswith('```'):
                             peek += 1
                             break
@@ -1241,7 +1281,7 @@ def agent_exec():
             task_queue.put({'id': task_id, 'cmd': final_cmd})
             task_ids.append(task_id)
             log_action('ENQUEUE', f'ID: {task_id} | CMD: {final_cmd[:50]}...')
-        i += 1
+            i += 1
     return jsonify({'type': 'task_batch', 'task_ids': task_ids})
 @app.route('/agent-config-poll', methods=['GET'])
 def agent_config_poll():
