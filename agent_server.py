@@ -1,4 +1,5 @@
-"""PokerAgent - 本地接应服务 (SSE流式版) v19
+"""PokerAgent - 本地接应服务 (SSE流式版)
+v19
 启动方式：python agent_server.py
 默认监听：http://127.0.0.1:9966
 """
