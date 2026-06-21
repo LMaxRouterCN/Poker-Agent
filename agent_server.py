@@ -1,6 +1,6 @@
-"""PokerAgent - 本地接应服务 (SSE流式版)
-v19
-启动方式：python agent_server.py
+"""PokerAgent - 本地接应服务 (SSE流式版) v20
+启动方式：
+    python agent_server.py
 默认监听：http://127.0.0.1:9966
 """
 from flask import Flask, request, jsonify, Response
@@ -14,8 +14,8 @@ import inspect
 import threading
 import base64
 import difflib  # 用于 -s 模式的模糊匹配策略
-import locale  # 获取系统默认编码
-import platform  # [新增] 用于判断操作系统
+import locale   # 获取系统默认编码
+import platform # [新增] 用于判断操作系统
 import uuid
 import queue
 import json
@@ -449,15 +449,15 @@ def execute_line_streaming(line, task_id):
                             ol = old_diag[j]
                             fl = _norm(file_lines[best_pos + j], True)
                             if ol == fl:
-                                diag.append(f'  \u2713 {repr(fl[:120])}')
+                                diag.append(f'    \u2713 {repr(fl[:120])}')
                             else:
-                                diag.append(f'  \u2717 旧文本: {repr(ol[:120])}')
-                                diag.append(f'  \u2717 文件: {repr(fl[:120])}')
+                                diag.append(f'    \u2717 旧文本: {repr(ol[:120])}')
+                                diag.append(f'    \u2717 文件:   {repr(fl[:120])}')
                         total_fuzz = sum(
                             difflib.SequenceMatcher(None, ol, fl).ratio()
                             for ol, fl in zip(old_diag, [_norm(file_lines[best_pos + j], True) for j in range(len(old_lines))])
                         )
-                        diag.append(f'  模糊相似度: {total_fuzz / len(old_lines):.2%}')
+                        diag.append(f'    模糊相似度: {total_fuzz / len(old_lines):.2%}')
                     else:
                         diag.append('未找到任何部分匹配。')
                     return ('未找到要替换的文本（忽略缩进模式，已依次尝试精确匹配、空白归一化匹配、模糊匹配三种策略）。\n'
@@ -587,7 +587,7 @@ def execute_line_streaming(line, task_id):
             else:
                 non_flag_parts = [part for part in parts if not part.startswith('-')]
                 delete_text = ' '.join(non_flag_parts[1:]) if len(non_flag_parts) > 1 else ''
-            opts_str = ' '.join(parts[:1] + [part for part in parts if part.startswith('-')])
+                opts_str = ' '.join(parts[:1] + [part for part in parts if part.startswith('-')])
             tokens = parse_args_with_quotes(opts_str)
             filepath = safe_path(W, tokens[0])
             flags = tokens[1:] if len(tokens) > 1 else []
@@ -768,7 +768,8 @@ def execute_line_streaming(line, task_id):
                 with open(filepath, 'rb') as f:
                     b64 = base64.b64encode(f.read()).decode('ascii')
                 file_size = os.path.getsize(filepath)
-                return f'__CLIPBOARD_FILE__{filename}\x00{file_size}\x00{b64}'
+                # [修改] 将 \x00 替换为 ||| 避免不可见字符破坏前端 JSON 解析
+                return f'__CLIPBOARD_FILE__{filename}|||{file_size}|||{b64}'
             except Exception as e:
                 return f'读取失败：{e}'
         try:
@@ -899,7 +900,7 @@ def execute_line_streaming(line, task_id):
             for name in sorted(entries):
                 full = os.path.join(dirpath, name)
                 if os.path.isdir(full):
-                    lines.append(f'  [DIR] {name}')
+                    lines.append(f'  [DIR]  {name}')
                 else:
                     size = os.path.getsize(full)
                     if size < 1024:
@@ -939,9 +940,13 @@ def execute_line_streaming(line, task_id):
         log_action('EXEC', arg.strip())
         try:
             process = subprocess.Popen(
-                f'cmd /c {arg.strip()}', shell=True,
-                stdout=subprocess.PIPE, stderr=subprocess.STDOUT,
-                text=True, encoding=encoding, errors='replace',
+                f'cmd /c {arg.strip()}',
+                shell=True,
+                stdout=subprocess.PIPE,
+                stderr=subprocess.STDOUT,
+                text=True,
+                encoding=encoding,
+                errors='replace',
                 cwd=W
             )
             output_lines = []
@@ -983,8 +988,11 @@ def execute_line_streaming(line, task_id):
         try:
             process = subprocess.Popen(
                 ['python', script],
-                stdout=subprocess.PIPE, stderr=subprocess.STDOUT,
-                text=True, encoding=encoding, errors='replace',
+                stdout=subprocess.PIPE,
+                stderr=subprocess.STDOUT,
+                text=True,
+                encoding=encoding,
+                errors='replace',
                 cwd=W
             )
             output_lines = []
@@ -1238,7 +1246,10 @@ def agent_exec():
                                 content_lines.append(ln[:idx])
                                 peek += 1
                                 break
-                        if ln.strip().startswith('```'):
+                            if ln.strip().startswith('```'):
+                                peek += 1
+                                break
+                            content_lines.append(ln)
                             peek += 1
                             break
                         content_lines.append(ln)
@@ -1282,7 +1293,7 @@ def agent_exec():
             task_queue.put({'id': task_id, 'cmd': final_cmd})
             task_ids.append(task_id)
             log_action('ENQUEUE', f'ID: {task_id} | CMD: {final_cmd[:50]}...')
-            i += 1
+        i += 1
     return jsonify({'type': 'task_batch', 'task_ids': task_ids})
 @app.route('/agent-config-poll', methods=['GET'])
 def agent_config_poll():
