@@ -1,5 +1,5 @@
 
-"""PokerAgent - 本地接应服务 (SSE流式版) v24
+"""PokerAgent - 本地接应服务 (SSE流式版) v25
 启动方式： python agent_server.py
 默认监听：http://127.0.0.1:9966
 """
@@ -13,11 +13,11 @@ import re
 import inspect
 import threading
 import base64
-import difflib  # 用于 -s 模式的模糊匹配策略
-import fnmatch  # [新增] 用于 find 指令按文件名通配符递归搜索
-import shutil  # [新增] 用于移动文件/目录到回收站
-import time  # [新增] 用于回收站时间戳记录
-import locale  # 获取系统默认编码
+import difflib   # 用于 -s 模式的模糊匹配策略
+import fnmatch   # [新增] 用于 find 指令按文件名通配符递归搜索
+import shutil    # [新增] 用于移动文件/目录到回收站
+import time      # [新增] 用于回收站时间戳记录
+import locale    # 获取系统默认编码
 import platform  # [新增] 用于判断操作系统
 import uuid
 import queue
@@ -42,12 +42,12 @@ _SYS_ENCODING = locale.getpreferredencoding(False) or 'gbk'
 # 任务队列与 SSE 流式架构
 # ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 task_queue = queue.Queue()
-sse_clients = []  # 存放所有连接的 SSE 客户端队列
+sse_clients = []      # 存放所有连接的 SSE 客户端队列
 _sse_lock = threading.Lock()  # 保护 sse_clients 的锁
 # ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 # 任务状态注册表（解决 SSE 晚订阅竞态：新客户端连接时回放历史状态）
 # ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
-_task_registry = {}  # task_id -> {'status':..., 'logs':[...], 'result':...}
+_task_registry = {}   # task_id -> {'status':..., 'logs':[...], 'result':...}
 _task_registry_lock = threading.Lock()
 def emit_task_event(evt):
     """更新任务注册表并推送给所有已连接的 SSE 客户端"""
@@ -259,7 +259,7 @@ def _check_permission(cmd, *paths):
             return f'操作被拒绝：路径超出工作目录 — {p}'
     return None
 def _default_permission_callback(cmd, filepath):
-    print(f'\n⚠  路径超出工作目录!')
+    print(f'\n⚠ 路径超出工作目录!')
     print(f'  指令: {cmd}')
     print(f'  目标: {filepath}')
     print(f'  工作目录: {WORK_DIR}')
@@ -360,10 +360,10 @@ def execute_line_streaming(line, task_id):
             return cmd_detail
     elif cmd == 'count':
         if not arg.strip():
-            return '错误：缺少文件路径。用法：count <路径>'
+            return '错误：缺少文件路径。发送 @@help count 获取指令详细用法'
         p_args = parse_args_with_quotes(arg.strip())
         if not p_args:
-            return '错误：缺少文件路径。用法：count <路径>'
+            return '错误：缺少文件路径。发送 @@help count 获取指令详细用法'
         filepath = safe_path(W, p_args[0])
         err = _check_permission('count', filepath)
         if err:
@@ -388,7 +388,7 @@ def execute_line_streaming(line, task_id):
         else:
             all_tokens = parse_args_with_quotes(arg)
             if len(all_tokens) < 2:
-                return '错误：缺少查找内容。用法：find <路径> [选项] 换行查找内容，或 find <目录路径> <文件名>'
+                return '错误：缺少查找内容。发送 @@help find 获取指令详细用法'
             j = 1
             while j < len(all_tokens) and all_tokens[j] in ('-i', '-w'):
                 j += 1
@@ -396,7 +396,7 @@ def execute_line_streaming(line, task_id):
             search_text = ' '.join(all_tokens[j:])
         tokens = parse_args_with_quotes(opts_str)
         if not tokens:
-            return '错误：缺少文件路径。'
+            return '错误：缺少文件路径。发送 @@help find 获取指令详细用法'
         filepath = safe_path(W, tokens[0])
         flags = tokens[1:] if len(tokens) > 1 else []
         ignore_case = '-i' in flags
@@ -405,7 +405,7 @@ def execute_line_streaming(line, task_id):
         if os.path.isdir(filepath):
             filename_pattern = search_text.strip()
             if not filename_pattern:
-                return '错误：缺少要搜索的文件名。用法：find <目录路径> <文件名或通配符>'
+                return '错误：缺少要搜索的文件名。发送 @@help find 获取指令详细用法'
             err = _check_permission('find', filepath)
             if err:
                 return err
@@ -424,7 +424,7 @@ def execute_line_streaming(line, task_id):
                     return f'在目录 {filepath} 中未找到匹配 "{filename_pattern}" 的文件。'
                 output = [f'在目录 {filepath} 中找到 {len(results)} 个匹配 "{filename_pattern}" 的文件：\n']
                 for fpath in results:
-                    output.append(f' {fpath}')
+                    output.append(f'  {fpath}')
                 log_action('FIND', f'{filepath} -> {len(results)} 个文件')
                 return '\n'.join(output)
             except Exception as e:
@@ -484,11 +484,11 @@ def execute_line_streaming(line, task_id):
     elif cmd == 'replace':
         parts = arg.split('\x00')
         if not parts:
-            return '错误：缺少参数。用法：replace <路径> [选项]'
+            return '错误：缺少参数。发送 @@help replace 获取指令详细用法'
         opts_str = parts[0].strip()
         tokens = parse_args_with_quotes(opts_str)
         if not tokens:
-            return '错误：缺少文件路径。'
+            return '错误：缺少文件路径。发送 @@help replace 获取指令详细用法'
         filepath = safe_path(W, tokens[0])
         flags = tokens[1:] if len(tokens) > 1 else []
         line_range = None
@@ -502,13 +502,13 @@ def execute_line_streaming(line, task_id):
                     break
         if line_range:
             if len(parts) < 2:
-                return '错误：行号模式需要提供新文本。用法：replace <路径> -l <行号范围>'
+                return '错误：行号模式需要提供新文本。发送 @@help replace 获取指令详细用法'
             # [修改] 不strip首尾，保留原始缩进和空行
             new_text = parts[1].replace('TICK3', '```')
             old_text = ''
         else:
             if len(parts) < 3:
-                return '错误：缺少参数。用法：replace <路径> [选项]'
+                return '错误：缺少参数。发送 @@help replace 获取指令详细用法'
             # [修改] 不strip首尾，保留原始缩进和空行
             old_text = parts[1].replace('TICK3', '```')
             new_text = parts[2].replace('TICK3', '```')
@@ -598,15 +598,15 @@ def execute_line_streaming(line, task_id):
                             ol = old_diag[j]
                             fl = _norm(file_lines[best_pos + j], True)
                             if ol == fl:
-                                diag.append(f'  \u2713 {repr(fl[:120])}')
+                                diag.append(f'    \u2713 {repr(fl[:120])}')
                             else:
-                                diag.append(f'  \u2717 旧文本: {repr(ol[:120])}')
-                                diag.append(f'  \u2717 文件:   {repr(fl[:120])}')
+                                diag.append(f'    \u2717 旧文本: {repr(ol[:120])}')
+                                diag.append(f'    \u2717 文件: {repr(fl[:120])}')
                         total_fuzz = sum(
                             difflib.SequenceMatcher(None, ol, fl).ratio()
                             for ol, fl in zip(old_diag, [_norm(file_lines[best_pos + j], True) for j in range(len(old_lines))])
                         )
-                        diag.append(f'  模糊相似度: {total_fuzz / len(old_lines):.2%}')
+                        diag.append(f'    模糊相似度: {total_fuzz / len(old_lines):.2%}')
                     else:
                         diag.append('未找到任何部分匹配。')
                     return ('未找到要替换的文本（忽略缩进模式，已依次尝试精确匹配、空白归一化匹配、模糊匹配三种策略）。\n'
@@ -643,18 +643,18 @@ def execute_line_streaming(line, task_id):
             return f'替换失败：{e}'
     elif cmd == 'insert':
         if '\x00' not in arg:
-            return '错误：缺少参数。用法：insert <路径> -after <行号或文本> 换行插入内容'
+            return '错误：缺少参数。发送 @@help insert 获取指令详细用法'
         sep = arg.split('\x00', 1)
         opts_str = sep[0].strip()
         insert_text = sep[1]
         tokens = parse_args_with_quotes(opts_str)
         if not tokens:
-            return '错误：缺少文件路径。'
+            return '错误：缺少文件路径。发送 @@help insert 获取指令详细用法'
         filepath = safe_path(W, tokens[0])
         opts = ' '.join(tokens[1:]) if len(tokens) > 1 else ''
         m = re.match(r'-(after|before)\s+["\']?(.+?)["\']?\s*$', opts)
         if not m:
-            return '错误：选项格式不正确。示例：-after 10 或 -before "目标文本"'
+            return '错误：选项格式不正确。发送 @@help insert 获取指令详细用法'
         pos_type = m.group(1)
         pos_val = m.group(2)
         err = _check_permission('insert', filepath)
@@ -690,7 +690,7 @@ def execute_line_streaming(line, task_id):
             return f'插入失败：{e}'
     elif cmd == 'deleteline':
         if not arg.strip():
-            return '错误：缺少参数。用法：deleteline <路径> -l <行号或范围> 或 deleteline <路径> [选项] <要删除的文本>'
+            return '错误：缺少参数。发送 @@help deleteline 获取指令详细用法'
         parts = parse_args_with_quotes(arg)
         filepath = safe_path(W, parts[0])
         err = _check_permission('deleteline', filepath)
@@ -699,7 +699,7 @@ def execute_line_streaming(line, task_id):
         if '-l' in parts:
             l_index = parts.index('-l')
             if l_index + 1 >= len(parts):
-                return '错误：-l 选项后需要指定行号或范围'
+                return '错误：-l 选项后需要指定行号或范围。发送 @@help deleteline 获取指令详细用法'
             line_spec = parts[l_index + 1]
             if '-' in line_spec:
                 start, end = line_spec.split('-', 1)
@@ -737,14 +737,14 @@ def execute_line_streaming(line, task_id):
                 non_flag_parts = [part for part in parts if not part.startswith('-')]
                 delete_text = ' '.join(non_flag_parts[1:]) if len(non_flag_parts) > 1 else ''
                 opts_str = ' '.join(parts[:1] + [part for part in parts if part.startswith('-')])
-            tokens = parse_args_with_quotes(opts_str)
-            filepath = safe_path(W, tokens[0])
-            flags = tokens[1:] if len(tokens) > 1 else []
-            ignore_case = '-i' in flags
-            whole_word = '-w' in flags
-            delete_all = '-a' in flags
+                tokens = parse_args_with_quotes(opts_str)
+                filepath = safe_path(W, tokens[0])
+                flags = tokens[1:] if len(tokens) > 1 else []
+                ignore_case = '-i' in flags
+                whole_word = '-w' in flags
+                delete_all = '-a' in flags
             if not delete_text:
-                return '错误：缺少要删除的文本'
+                return '错误：缺少要删除的文本。发送 @@help deleteline 获取指令详细用法'
             try:
                 content, file_enc = smart_read(filepath)
                 flags_re = re.IGNORECASE if ignore_case else 0
@@ -768,16 +768,16 @@ def execute_line_streaming(line, task_id):
     elif cmd == 'grep':
         tokens = parse_args_with_quotes(arg)
         if not tokens:
-            return '错误：缺少参数。用法：grep [-s] <关键词1|关键词2> <路径或文件>'
+            return '错误：缺少参数。发送 @@help grep 获取指令详细用法'
         opts = [t for t in tokens if t.startswith('-')]
         non_opts = [t for t in tokens if not t.startswith('-')]
         strip_indent = '-s' in opts
         if len(non_opts) < 2:
-            return '错误：缺少参数。用法：grep [-s] <关键词1|关键词2> <路径或文件>'
+            return '错误：缺少参数。发送 @@help grep 获取指令详细用法'
         keyword = non_opts[0]
         target_str = non_opts[-1]
         if not target_str:
-            return '错误：缺少文件路径。'
+            return '错误：缺少文件路径。发送 @@help grep 获取指令详细用法'
         kw_list = [k.strip() for k in keyword.split('|') if k.strip()]
         if not kw_list:
             return '错误：关键词为空。'
@@ -827,7 +827,7 @@ def execute_line_streaming(line, task_id):
     elif cmd == 'head':
         parts = parse_args_with_quotes(arg)
         if not parts:
-            return '错误：缺少文件路径。用法：head <路径> [行数]'
+            return '错误：缺少文件路径。发送 @@help head 获取指令详细用法'
         filepath = safe_path(W, parts[0])
         n = int(parts[1]) if len(parts) > 1 and parts[1].isdigit() else 10
         err = _check_permission('head', filepath)
@@ -844,7 +844,7 @@ def execute_line_streaming(line, task_id):
     elif cmd == 'tail':
         parts = parse_args_with_quotes(arg)
         if not parts:
-            return '错误：缺少文件路径。用法：tail <路径> [行数]'
+            return '错误：缺少文件路径。发送 @@help tail 获取指令详细用法'
         filepath = safe_path(W, parts[0])
         n = int(parts[1]) if len(parts) > 1 and parts[1].isdigit() else 10
         err = _check_permission('tail', filepath)
@@ -860,7 +860,7 @@ def execute_line_streaming(line, task_id):
             return f'读取失败：{e}'
     elif cmd == 'create':
         if not arg:
-            return '错误：缺少文件路径。用法：create <路径>'
+            return '错误：缺少文件路径。发送 @@help create 获取指令详细用法'
         if '\x00' in arg:
             sep = arg.split('\x00', 1)
             p_args = parse_args_with_quotes(sep[0].strip())
@@ -870,7 +870,7 @@ def execute_line_streaming(line, task_id):
         else:
             p_args = parse_args_with_quotes(arg.strip())
             if not p_args:
-                return '错误：缺少文件路径。'
+                return '错误：缺少文件路径。发送 @@help create 获取指令详细用法'
             filepath_str = p_args[0]
             rest = ' '.join(p_args[1:]) if len(p_args) > 1 else ''
             filepath = safe_path(W, filepath_str)
@@ -889,10 +889,10 @@ def execute_line_streaming(line, task_id):
             return f'创建失败：{e}'
     elif cmd == 'read':
         if not arg.strip():
-            return '错误：缺少文件路径。用法：read <路径> [起始行]-[结束行]'
+            return '错误：缺少文件路径。发送 @@help read 获取指令详细用法'
         parts = parse_args_with_quotes(arg.strip())
         if not parts:
-            return '错误：缺少文件路径。用法：read <路径> [起始行]-[结束行]'
+            return '错误：缺少文件路径。发送 @@help read 获取指令详细用法'
         filepath = safe_path(W, parts[0])
         start_line = 0
         end_line = 0
@@ -907,7 +907,7 @@ def execute_line_streaming(line, task_id):
                     start_line = int(range_str)
                     end_line = -1
             except ValueError:
-                return '错误：行号格式不正确。用法：read <路径> [起始行]-[结束行]'
+                return '错误：行号格式不正确。发送 @@help read 获取指令详细用法'
         err = _check_permission('read', filepath)
         if err:
             return err
@@ -948,7 +948,7 @@ def execute_line_streaming(line, task_id):
             return f'读取失败：{e}'
     elif cmd == 'append':
         if not arg:
-            return '错误：缺少文件路径。用法：append <路径>'
+            return '错误：缺少文件路径。发送 @@help append 获取指令详细用法'
         if '\x00' in arg:
             sep = arg.split('\x00', 1)
             p_args = parse_args_with_quotes(sep[0].strip())
@@ -958,7 +958,7 @@ def execute_line_streaming(line, task_id):
         else:
             p_args = parse_args_with_quotes(arg.strip())
             if not p_args:
-                return '错误：缺少文件路径。'
+                return '错误：缺少文件路径。发送 @@help append 获取指令详细用法'
             filepath_str = p_args[0]
             rest = ' '.join(p_args[1:]) if len(p_args) > 1 else ''
             filepath = safe_path(W, filepath_str)
@@ -981,7 +981,7 @@ def execute_line_streaming(line, task_id):
         arg = arg.strip()
         m = re.match(r'^delete\s+["\']?(.+?)["\']?\s*$', line, re.IGNORECASE)
         if not m:
-            return '错误：delete 指令格式不正确。正确用法：delete "<文件或目录路径>"，不允许带额外参数。'
+            return '错误：delete 指令格式不正确。发送 @@help delete 获取指令详细用法'
         target_path_str = m.group(1).strip()
         filepath = safe_path(W, target_path_str)
         # 拒绝删除工作目录本身
@@ -1037,7 +1037,7 @@ def execute_line_streaming(line, task_id):
             else:
                 m_name = re.match(r'^["\']?(.+?)["\']?\s*$', arg)
                 if not m_name:
-                    return '错误：restore 指令格式不正确。用法：restore "<原路径>" 或 restore 最近'
+                    return '错误：restore 指令格式不正确。发送 @@help restore 获取指令详细用法'
                 # 兼容 gitignore 风格的目录斜杠，去掉末尾斜杠
                 target_name = m_name.group(1).strip().rstrip('\\/').strip('"\'')
                 # 还原为绝对路径用于计算层级
@@ -1068,7 +1068,7 @@ def execute_line_streaming(line, task_id):
             return f'恢复失败：{e}'
     elif cmd == 'copy':
         if not arg:
-            return '错误：缺少参数。用法：copy <源路径> <目标路径>'
+            return '错误：缺少参数。发送 @@help copy 获取指令详细用法'
         sep = parse_args_with_quotes(arg)
         if len(sep) < 2:
             return '错误：需要源路径和目标路径两个参数。'
@@ -1086,7 +1086,7 @@ def execute_line_streaming(line, task_id):
             return f'复制失败：{e}'
     elif cmd == 'move':
         if not arg:
-            return '错误：缺少参数。用法：move <源路径> <目标路径>'
+            return '错误：缺少参数。发送 @@help move 获取指令详细用法'
         sep = parse_args_with_quotes(arg)
         if len(sep) < 2:
             return '错误：需要源路径和目标路径两个参数。'
@@ -1133,10 +1133,10 @@ def execute_line_streaming(line, task_id):
             return f'列出目录失败：{e}'
     elif cmd == 'mkdir':
         if not arg.strip():
-            return '错误：缺少目录路径。用法：mkdir <路径>'
+            return '错误：缺少目录路径。发送 @@help mkdir 获取指令详细用法'
         parts = parse_args_with_quotes(arg.strip())
         if not parts:
-            return '错误：缺少目录路径。用法：mkdir <路径>'
+            return '错误：缺少目录路径。发送 @@help mkdir 获取指令详细用法'
         dirpath = safe_path(W, parts[0])
         err = _check_permission('mkdir', dirpath)
         if err:
@@ -1152,7 +1152,7 @@ def execute_line_streaming(line, task_id):
         if not exec_enabled:
             return '错误：exec 指令已被管理员禁用。'
         if not arg.strip():
-            return '错误：缺少命令。用法：exec <系统命令>'
+            return '错误：缺少命令。发送 @@help exec 获取指令详细用法'
         # [新增] 危险命令拦截与弹窗确认
         dangerous_patterns = re.compile(r'\b(del|rd|rm|rmdir|format|erase|diskpart|mkfs)\b', re.IGNORECASE)
         if dangerous_patterns.search(arg):
@@ -1197,10 +1197,10 @@ def execute_line_streaming(line, task_id):
             return f'执行失败：{e}'
     elif cmd == 'run':
         if not arg.strip():
-            return '错误：缺少脚本路径。用法：run <脚本路径>'
+            return '错误：缺少脚本路径。发送 @@help run 获取指令详细用法'
         parts = parse_args_with_quotes(arg.strip())
         if not parts:
-            return '错误：缺少脚本路径。用法：run <脚本路径>'
+            return '错误：缺少脚本路径。发送 @@help run 获取指令详细用法'
         script = safe_path(W, parts[0])
         err = _check_permission('run', script)
         if err:
@@ -1239,7 +1239,7 @@ def execute_line_streaming(line, task_id):
             return f'运行失败：{e}'
     elif cmd == 'get':
         if not arg.strip():
-            return '错误：缺少 URL。用法：get <URL>'
+            return '错误：缺少 URL。发送 @@help get 获取指令详细用法'
         url = arg.strip()
         try:
             req = urllib.request.Request(url, headers={'User-Agent': 'Agent/1.0 (PokerAgent)'})
@@ -1267,7 +1267,7 @@ def execute_line_streaming(line, task_id):
             return f'请求失败：{e}'
     elif cmd == 'download':
         if not arg:
-            return '错误：缺少参数。用法：download <URL> <保存路径>'
+            return '错误：缺少参数。发送 @@help download 获取指令详细用法'
         sep = parse_args_with_quotes(arg)
         if len(sep) < 2:
             return '错误：需要 URL 和保存路径两个参数。'
