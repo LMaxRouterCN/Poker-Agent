@@ -334,17 +334,24 @@ def execute_line_streaming(line, task_id):
             return section_content
         # 情况3：[指令名] - 返回指定指令的详细说明
         else:
-            # 标准化：支持小写指令名
+            # 获取指令名
             cmd_name = arg.strip().lower()
-            # 构建要查找的标题（如 '### count'）
-            target_header = f'### {cmd_name}'
+            # 构建要查找的标题前缀（如 '### replace'）
+            # 标题格式通常为：### 指令名 参数说明
+            target_prefix = f'### {cmd_name}'
             lines = help_content.splitlines(keepends=True)
             header_idx = -1
-            # 查找指令标题行（大小写不敏感）
-            for i, ln in enumerate(lines):
-                if ln.strip().lower() == target_header.lower():
-                    header_idx = i
-                    break
+            # 查找指令标题行（行开头匹配前缀）
+            for i, line in enumerate(lines):
+                clean_line = line.strip().lower()
+                # 检查是否以目标前缀开头
+                if clean_line.startswith(target_prefix):
+                    # 为了防止误匹配（例如 'replace' 匹配到 'replaceall'），
+                    # 检查前缀后的字符必须是空格或行结束
+                    next_char_idx = len(target_prefix)
+                    if next_char_idx == len(clean_line) or clean_line[next_char_idx] == ' ':
+                        header_idx = i
+                        break
             if header_idx == -1:
                 return f'未找到指令 "{cmd_name}" 的帮助信息。请检查指令名称是否正确。'
             # 从标题向下查找，直到遇到下一个以 '###' 开头的行或文件结束
