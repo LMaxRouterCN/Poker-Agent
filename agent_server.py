@@ -1,4 +1,5 @@
-"""PokerAgent - 本地接应服务 (SSE流式版) v23
+
+"""PokerAgent - 本地接应服务 (SSE流式版) v24
 启动方式： python agent_server.py
 默认监听：http://127.0.0.1:9966
 """
@@ -12,10 +13,11 @@ import re
 import inspect
 import threading
 import base64
-import difflib   # 用于 -s 模式的模糊匹配策略
-import shutil    # [新增] 用于移动文件/目录到回收站
-import time      # [新增] 用于回收站时间戳记录
-import locale    # 获取系统默认编码
+import difflib  # 用于 -s 模式的模糊匹配策略
+import fnmatch  # [新增] 用于 find 指令按文件名通配符递归搜索
+import shutil  # [新增] 用于移动文件/目录到回收站
+import time  # [新增] 用于回收站时间戳记录
+import locale  # 获取系统默认编码
 import platform  # [新增] 用于判断操作系统
 import uuid
 import queue
@@ -40,12 +42,12 @@ _SYS_ENCODING = locale.getpreferredencoding(False) or 'gbk'
 # 任务队列与 SSE 流式架构
 # ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 task_queue = queue.Queue()
-sse_clients = []          # 存放所有连接的 SSE 客户端队列
+sse_clients = []  # 存放所有连接的 SSE 客户端队列
 _sse_lock = threading.Lock()  # 保护 sse_clients 的锁
 # ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 # 任务状态注册表（解决 SSE 晚订阅竞态：新客户端连接时回放历史状态）
 # ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
-_task_registry = {}       # task_id -> {'status':..., 'logs':[...], 'result':...}
+_task_registry = {}  # task_id -> {'status':..., 'logs':[...], 'result':...}
 _task_registry_lock = threading.Lock()
 def emit_task_event(evt):
     """更新任务注册表并推送给所有已连接的 SSE 客户端"""
@@ -257,7 +259,7 @@ def _check_permission(cmd, *paths):
             return f'操作被拒绝：路径超出工作目录 — {p}'
     return None
 def _default_permission_callback(cmd, filepath):
-    print(f'\n⚠ 路径超出工作目录!')
+    print(f'\n⚠  路径超出工作目录!')
     print(f'  指令: {cmd}')
     print(f'  目标: {filepath}')
     print(f'  工作目录: {WORK_DIR}')
@@ -386,7 +388,7 @@ def execute_line_streaming(line, task_id):
         else:
             all_tokens = parse_args_with_quotes(arg)
             if len(all_tokens) < 2:
-                return '错误：缺少查找内容。用法：find <路径> [选项] 换行查找内容'
+                return '错误：缺少查找内容。用法：find <路径> [选项] 换行查找内容，或 find <目录路径> <文件名>'
             j = 1
             while j < len(all_tokens) and all_tokens[j] in ('-i', '-w'):
                 j += 1
@@ -399,6 +401,34 @@ def execute_line_streaming(line, task_id):
         flags = tokens[1:] if len(tokens) > 1 else []
         ignore_case = '-i' in flags
         whole_word = '-w' in flags
+        # [新增] 如果目标路径是目录，切换为按文件名递归搜索模式
+        if os.path.isdir(filepath):
+            filename_pattern = search_text.strip()
+            if not filename_pattern:
+                return '错误：缺少要搜索的文件名。用法：find <目录路径> <文件名或通配符>'
+            err = _check_permission('find', filepath)
+            if err:
+                return err
+            try:
+                results = []
+                for root, dirs, files in os.walk(filepath):
+                    for fname in files:
+                        # 支持 -i 忽略大小写，支持通配符 * 和 ?
+                        if ignore_case:
+                            matched = fnmatch.fnmatchcase(fname.lower(), filename_pattern.lower())
+                        else:
+                            matched = fnmatch.fnmatch(fname, filename_pattern)
+                        if matched:
+                            results.append(os.path.join(root, fname))
+                if not results:
+                    return f'在目录 {filepath} 中未找到匹配 "{filename_pattern}" 的文件。'
+                output = [f'在目录 {filepath} 中找到 {len(results)} 个匹配 "{filename_pattern}" 的文件：\n']
+                for fpath in results:
+                    output.append(f' {fpath}')
+                log_action('FIND', f'{filepath} -> {len(results)} 个文件')
+                return '\n'.join(output)
+            except Exception as e:
+                return f'搜索文件失败：{e}'
         err = _check_permission('find', filepath)
         if err:
             return err
@@ -706,7 +736,7 @@ def execute_line_streaming(line, task_id):
             else:
                 non_flag_parts = [part for part in parts if not part.startswith('-')]
                 delete_text = ' '.join(non_flag_parts[1:]) if len(non_flag_parts) > 1 else ''
-            opts_str = ' '.join(parts[:1] + [part for part in parts if part.startswith('-')])
+                opts_str = ' '.join(parts[:1] + [part for part in parts if part.startswith('-')])
             tokens = parse_args_with_quotes(opts_str)
             filepath = safe_path(W, tokens[0])
             flags = tokens[1:] if len(tokens) > 1 else []
