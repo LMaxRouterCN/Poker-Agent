@@ -1,4 +1,4 @@
-"""PokerAgent - 本地接应服务 (SSE流式版) v22
+"""PokerAgent - 本地接应服务 (SSE流式版) v23
 启动方式： python agent_server.py
 默认监听：http://127.0.0.1:9966
 """
@@ -12,10 +12,10 @@ import re
 import inspect
 import threading
 import base64
-import difflib  # 用于 -s 模式的模糊匹配策略
+import difflib   # 用于 -s 模式的模糊匹配策略
 import shutil    # [新增] 用于移动文件/目录到回收站
 import time      # [新增] 用于回收站时间戳记录
-import locale  # 获取系统默认编码
+import locale    # 获取系统默认编码
 import platform  # [新增] 用于判断操作系统
 import uuid
 import queue
@@ -40,12 +40,12 @@ _SYS_ENCODING = locale.getpreferredencoding(False) or 'gbk'
 # 任务队列与 SSE 流式架构
 # ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 task_queue = queue.Queue()
-sse_clients = []  # 存放所有连接的 SSE 客户端队列
+sse_clients = []          # 存放所有连接的 SSE 客户端队列
 _sse_lock = threading.Lock()  # 保护 sse_clients 的锁
 # ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 # 任务状态注册表（解决 SSE 晚订阅竞态：新客户端连接时回放历史状态）
 # ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
-_task_registry = {}  # task_id -> {'status':..., 'logs':[...], 'result':...}
+_task_registry = {}       # task_id -> {'status':..., 'logs':[...], 'result':...}
 _task_registry_lock = threading.Lock()
 def emit_task_event(evt):
     """更新任务注册表并推送给所有已连接的 SSE 客户端"""
@@ -288,10 +288,74 @@ def execute_line_streaming(line, task_id):
         arg = arg[:cs_idx]
     W = WORK_DIR
     if cmd == '@@help':
-        if os.path.exists(HELP_FILE):
-            with open(HELP_FILE, 'r', encoding='utf-8') as f:
-                return f.read()
-        return 'commands.md 文件未找到，请寻找管理员确认它与此脚本在同一目录下。'
+        # [修改] 智能帮助查询系统：支持 all / fast / [指令名] 三种模式
+        if not os.path.exists(HELP_FILE):
+            return 'commands.md 文件未找到，请寻找管理员确认它与此脚本在同一目录下。'
+        with open(HELP_FILE, 'r', encoding='utf-8') as f:
+            help_content = f.read()
+        # 解析参数（如果有）
+        arg_lower = arg.strip().lower() if arg.strip() else ''
+        # 情况1：无参数或 'all' - 返回完整内容（保持原功能）
+        if not arg_lower or arg_lower == 'all':
+            return help_content
+        # 情况2：'fast' - 返回"指令快速预览列表和说明"章节（两个 --- 之间的内容）
+        elif arg_lower == 'fast':
+            section_title = '## 指令快速预览列表和说明'
+            lines = help_content.splitlines(keepends=True)
+            title_idx = -1
+            # 找到标题行
+            for i, ln in enumerate(lines):
+                if ln.strip() == section_title:
+                    title_idx = i
+                    break
+            if title_idx == -1:
+                return f'在帮助文档中未找到章节：{section_title}'
+            # 从标题向下查找第一个 '---'
+            first_dash_idx = -1
+            for i in range(title_idx + 1, len(lines)):
+                if lines[i].strip() == '---':
+                    first_dash_idx = i
+                    break
+            # 从标题向上查找前一个 '---'（或文件开头）
+            second_dash_idx = -1
+            for i in range(title_idx - 1, -1, -1):
+                if lines[i].strip() == '---':
+                    second_dash_idx = i
+                    break
+            # 确定截取范围
+            start_idx = second_dash_idx + 1 if second_dash_idx != -1 else 0
+            end_idx = first_dash_idx if first_dash_idx != -1 else len(lines)
+            # 截取内容
+            section_content = ''.join(lines[start_idx:end_idx]).strip()
+            if not section_content:
+                return f'章节"{section_title}"内容为空。'
+            return section_content
+        # 情况3：[指令名] - 返回指定指令的详细说明
+        else:
+            # 标准化：支持小写指令名
+            cmd_name = arg.strip().lower()
+            # 构建要查找的标题（如 '### count'）
+            target_header = f'### {cmd_name}'
+            lines = help_content.splitlines(keepends=True)
+            header_idx = -1
+            # 查找指令标题行（大小写不敏感）
+            for i, ln in enumerate(lines):
+                if ln.strip().lower() == target_header.lower():
+                    header_idx = i
+                    break
+            if header_idx == -1:
+                return f'未找到指令 "{cmd_name}" 的帮助信息。请检查指令名称是否正确。'
+            # 从标题向下查找，直到遇到下一个以 '###' 开头的行或文件结束
+            end_idx = len(lines)
+            for i in range(header_idx + 1, len(lines)):
+                if lines[i].strip().startswith('###'):
+                    end_idx = i
+                    break
+            # 截取指令详细内容
+            cmd_detail = ''.join(lines[header_idx:end_idx]).strip()
+            if not cmd_detail:
+                return f'指令 "{cmd_name}" 的帮助信息为空。'
+            return cmd_detail
     elif cmd == 'count':
         if not arg.strip():
             return '错误：缺少文件路径。用法：count <路径>'
@@ -488,37 +552,35 @@ def execute_line_streaming(line, task_id):
                         else:
                             candidates.sort(key=lambda x: x[0])
                             matches.extend(c[0] for c in candidates)
-                    if not matches:
-                        old_diag = [_norm(l, True) for l in old_lines]
-                        best_pos = -1
-                        best_cnt = 0
-                        for i in range(len(file_lines) - len(old_lines) + 1):
-                            cnt = sum(1 for j in range(len(old_lines))
-                                      if _norm(file_lines[i + j], True) == old_diag[j])
-                            if cnt > best_cnt:
-                                best_cnt = cnt
-                                best_pos = i
-                        diag = []
-                        if best_pos >= 0 and best_cnt > 0:
-                            diag.append(f'最接近的匹配：第 {best_pos + 1} 行起，{best_cnt}/{len(old_lines)} 行精确匹配（空白归一化后）')
-                            for j in range(len(old_lines)):
-                                ol = old_diag[j]
-                                fl = _norm(file_lines[best_pos + j], True)
-                                if ol == fl:
-                                    diag.append(f'  \u2713 {repr(fl[:120])}')
-                                else:
-                                    diag.append(f'  \u2717 旧文本: {repr(ol[:120])}')
-                                    diag.append(f'  \u2717 文件: {repr(fl[:120])}')
-                            total_fuzz = sum(
-                                difflib.SequenceMatcher(None, ol, fl).ratio()
-                                for ol, fl in zip(old_diag,
-                                                  [_norm(file_lines[best_pos + j], True) for j in range(len(old_lines))])
-                            )
-                            diag.append(f'  模糊相似度: {total_fuzz / len(old_lines):.2%}')
-                        else:
-                            diag.append('未找到任何部分匹配。')
-                        return ('未找到要替换的文本（忽略缩进模式，已依次尝试精确匹配、空白归一化匹配、模糊匹配三种策略）。\n'
-                                + '\n'.join(diag))
+                if not matches:
+                    old_diag = [_norm(l, True) for l in old_lines]
+                    best_pos = -1
+                    best_cnt = 0
+                    for i in range(len(file_lines) - len(old_lines) + 1):
+                        cnt = sum(1 for j in range(len(old_lines)) if _norm(file_lines[i + j], True) == old_diag[j])
+                        if cnt > best_cnt:
+                            best_cnt = cnt
+                            best_pos = i
+                    diag = []
+                    if best_pos >= 0 and best_cnt > 0:
+                        diag.append(f'最接近的匹配：第 {best_pos + 1} 行起，{best_cnt}/{len(old_lines)} 行精确匹配（空白归一化后）')
+                        for j in range(len(old_lines)):
+                            ol = old_diag[j]
+                            fl = _norm(file_lines[best_pos + j], True)
+                            if ol == fl:
+                                diag.append(f'  \u2713 {repr(fl[:120])}')
+                            else:
+                                diag.append(f'  \u2717 旧文本: {repr(ol[:120])}')
+                                diag.append(f'  \u2717 文件:   {repr(fl[:120])}')
+                        total_fuzz = sum(
+                            difflib.SequenceMatcher(None, ol, fl).ratio()
+                            for ol, fl in zip(old_diag, [_norm(file_lines[best_pos + j], True) for j in range(len(old_lines))])
+                        )
+                        diag.append(f'  模糊相似度: {total_fuzz / len(old_lines):.2%}')
+                    else:
+                        diag.append('未找到任何部分匹配。')
+                    return ('未找到要替换的文本（忽略缩进模式，已依次尝试精确匹配、空白归一化匹配、模糊匹配三种策略）。\n'
+                            + '\n'.join(diag))
                 for idx in reversed(matches):
                     indent = re.match(r'^(\s*)', file_lines[idx]).group(1)
                     new_lines = new_text.split('\n')
@@ -644,7 +706,7 @@ def execute_line_streaming(line, task_id):
             else:
                 non_flag_parts = [part for part in parts if not part.startswith('-')]
                 delete_text = ' '.join(non_flag_parts[1:]) if len(non_flag_parts) > 1 else ''
-                opts_str = ' '.join(parts[:1] + [part for part in parts if part.startswith('-')])
+            opts_str = ' '.join(parts[:1] + [part for part in parts if part.startswith('-')])
             tokens = parse_args_with_quotes(opts_str)
             filepath = safe_path(W, tokens[0])
             flags = tokens[1:] if len(tokens) > 1 else []
@@ -1024,7 +1086,7 @@ def execute_line_streaming(line, task_id):
             for name in sorted(entries):
                 full = os.path.join(dirpath, name)
                 if os.path.isdir(full):
-                    lines.append(f'  [DIR] {name}')
+                    lines.append(f'  [DIR]  {name}')
                 else:
                     size = os.path.getsize(full)
                     if size < 1024:
@@ -1078,8 +1140,7 @@ def execute_line_streaming(line, task_id):
             process = subprocess.Popen(
                 f'cmd /c {arg.strip()}', shell=True,
                 stdout=subprocess.PIPE, stderr=subprocess.STDOUT,
-                text=True, encoding=encoding, errors='replace',
-                cwd=W
+                text=True, encoding=encoding, errors='replace', cwd=W
             )
             output_lines = []
             start_time = time.time()
@@ -1121,8 +1182,7 @@ def execute_line_streaming(line, task_id):
             process = subprocess.Popen(
                 ['python', script],
                 stdout=subprocess.PIPE, stderr=subprocess.STDOUT,
-                text=True, encoding=encoding, errors='replace',
-                cwd=W
+                text=True, encoding=encoding, errors='replace', cwd=W
             )
             output_lines = []
             start_time = time.time()
@@ -1155,22 +1215,22 @@ def execute_line_streaming(line, task_id):
             req = urllib.request.Request(url, headers={'User-Agent': 'Agent/1.0 (PokerAgent)'})
             with urllib.request.urlopen(req, timeout=15) as resp:
                 raw_bytes = resp.read()
-            content_type = resp.headers.get('Content-Type', '')
-            charset = 'utf-8'
-            m = re.search(r'charset=([a-zA-Z0-9\-]+)', content_type, re.I)
-            if m:
-                charset = m.group(1)
-            try:
-                body = raw_bytes.decode(charset)
-            except (UnicodeDecodeError, LookupError):
+                content_type = resp.headers.get('Content-Type', '')
+                charset = 'utf-8'
+                m = re.search(r'charset=([a-zA-Z0-9\-]+)', content_type, re.I)
+                if m:
+                    charset = m.group(1)
                 try:
-                    body = raw_bytes.decode('utf-8')
-                except UnicodeDecodeError:
-                    body = raw_bytes.decode('gbk', errors='replace')
-            if len(body) > 8000:
-                body = body[:8000] + '\n\n...（内容过长，仅显示前 8000 字符）'
-            log_action('GET', url)
-            return body
+                    body = raw_bytes.decode(charset)
+                except (UnicodeDecodeError, LookupError):
+                    try:
+                        body = raw_bytes.decode('utf-8')
+                    except UnicodeDecodeError:
+                        body = raw_bytes.decode('gbk', errors='replace')
+                if len(body) > 8000:
+                    body = body[:8000] + '\n\n...（内容过长，仅显示前 8000 字符）'
+                log_action('GET', url)
+                return body
         except urllib.error.HTTPError as e:
             return f'HTTP 错误：{e.code} {e.reason}'
         except Exception as e:
@@ -1255,14 +1315,11 @@ def agent_exec():
         stale = [tid for tid, e in _task_registry.items() if e['status'] == 'done']
         for tid in stale:
             del _task_registry[tid]
-
-            
     command_text = command_text.replace('\r\n', '\n').replace('\r', '\n')
     log_action('RECEIVED', command_text[:20000])
     lines = command_text.split('\n')
     i = 0
     task_ids = []
-    
     # [新增] 提取代码块的独立函数，兼容 【CodeSTART】 和 ```
     def extract_blocks(start_idx):
         blocks = []
@@ -1308,11 +1365,9 @@ def agent_exec():
         if not line or line.startswith('#'):
             i += 1
             continue
-            
         parts = line.split(None, 1)
         cmd = parts[0].lower()
         arg = parts[1] if len(parts) > 1 else ''
-        
         # 处理多行指令
         if cmd in ('create', 'append', 'replace', 'insert', 'find', 'deleteline'):
             # deleteline 如果带 -l 是单行
@@ -1323,10 +1378,8 @@ def agent_exec():
                 log_action('ENQUEUE', f'ID: {task_id} | CMD: {line[:50]}...')
                 i += 1
                 continue
-                
             # 提取后续的代码块
             blocks, next_i = extract_blocks(i + 1)
-            
             if len(blocks) > 0:
                 if cmd == 'replace':
                     if len(blocks) >= 2:
@@ -1375,10 +1428,7 @@ def agent_exec():
             task_ids.append(task_id)
             log_action('ENQUEUE', f'ID: {task_id} | CMD: {line[:50]}...')
             i += 1
-            
     return jsonify({'type': 'task_batch', 'task_ids': task_ids})
-
-
 @app.route('/agent-config-poll', methods=['GET'])
 def agent_config_poll():
     _config_changed.wait(timeout=25)
