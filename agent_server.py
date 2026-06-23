@@ -1,6 +1,5 @@
-"""PokerAgent - 本地接应服务 (SSE流式版) v20
-启动方式：
-    python agent_server.py
+"""PokerAgent - 本地接应服务 (SSE流式版) v22
+启动方式： python agent_server.py
 默认监听：http://127.0.0.1:9966
 """
 from flask import Flask, request, jsonify, Response
@@ -14,18 +13,21 @@ import inspect
 import threading
 import base64
 import difflib  # 用于 -s 模式的模糊匹配策略
-import locale   # 获取系统默认编码
-import platform # [新增] 用于判断操作系统
+import shutil    # [新增] 用于移动文件/目录到回收站
+import time      # [新增] 用于回收站时间戳记录
+import locale  # 获取系统默认编码
+import platform  # [新增] 用于判断操作系统
 import uuid
 import queue
 import json
-import time
 app = Flask(__name__)
 CORS(app)
 # 工作目录：脚本所在目录
 WORK_DIR = os.path.dirname(os.path.abspath(__file__))
 # 帮助文档路径
 HELP_FILE = os.path.join(WORK_DIR, 'commands.md')
+# [新增] 专属回收站目录
+TRASH_DIR = os.path.join(WORK_DIR, '.agent_trash')
 # 操作日志
 LOG_FILE = os.path.join(WORK_DIR, 'agent_log.txt')
 clipboard_mode = False
@@ -59,7 +61,7 @@ def emit_task_event(evt):
                     entry['result'] = evt['result']
             elif evt.get('type') == 'log':
                 entry['logs'].append(evt.get('data', ''))
-    push_event(evt)
+        push_event(evt)
 def push_event(data_dict):
     """向所有连接的 SSE 客户端推送事件"""
     msg = f"data: {json.dumps(data_dict, ensure_ascii=False)}\n\n"
@@ -107,7 +109,20 @@ def smart_read(filepath):
     with open(filepath, 'r', encoding='latin-1') as f:
         return f.read(), 'latin-1'
 def smart_write(filepath, content, encoding):
-    """智能写入：保持原有编码格式"""
+    """智能写入：根据原编码格式写入，但避免给无BOM文件强加BOM"""
+    # [修改] 如果原编码是utf-8-sig，检查原文件是否真有BOM
+    # smart_read 对有BOM和无BOM的utf-8文件都返回'utf-8-sig'，
+    # 因此需要检查原文件是否真有BOM，避免给无BOM文件强加BOM
+    if encoding == 'utf-8-sig':
+        had_bom = False
+        if os.path.exists(filepath):
+            try:
+                with open(filepath, 'rb') as f:
+                    had_bom = f.read(3) == b'\xef\xbb\xbf'
+            except:
+                pass
+        if not had_bom:
+            encoding = 'utf-8'
     with open(filepath, 'w', encoding=encoding) as f:
         f.write(content)
 def smart_decode(b_str):
@@ -198,7 +213,45 @@ class PermissionManager:
         with self._lock:
             self._always_allow.clear()
 permission_mgr = PermissionManager()
+# [新增] 判断路径是否在回收站内
+def _is_trash_path(filepath):
+    if not filepath:
+        return False
+    trash_norm = os.path.normpath(TRASH_DIR).lower()
+    fp_norm = os.path.normpath(filepath).lower()
+    return fp_norm == trash_norm or fp_norm.startswith(trash_norm + os.sep)
+# [新增] 将原路径映射为回收站内的存储路径
+def _get_trash_path(filepath):
+    norm_work = os.path.normpath(WORK_DIR)
+    norm_fp = os.path.normpath(filepath)
+    # 如果在工作目录内，保持相对层级
+    if norm_fp.lower().startswith(norm_work.lower() + os.sep):
+        rel_path = os.path.relpath(norm_fp, norm_work)
+        return os.path.join(TRASH_DIR, rel_path)
+    # 如果在工作目录外，统一塞进 __external__ 并去掉盘符冒号
+    else:
+        drive, path_no_drive = os.path.splitdrive(norm_fp)
+        drive_clean = drive.replace(':', '') if drive else 'no_drive'
+        return os.path.join(TRASH_DIR, '__external__', drive_clean, path_no_drive.strip(os.sep))
+# [新增] 从回收站路径反推原始绝对路径
+def _get_original_path(trash_path):
+    norm_trash = os.path.normpath(TRASH_DIR)
+    norm_tp = os.path.normpath(trash_path)
+    rel_path = os.path.relpath(norm_tp, norm_trash)
+    if rel_path.startswith('__external__'):
+        parts = rel_path.split(os.sep)
+        if len(parts) < 3:
+            return None
+        drive = parts[1] + ':'
+        return os.path.join(drive, *parts[2:])
+    else:
+        return os.path.join(WORK_DIR, rel_path)
 def _check_permission(cmd, *paths):
+    # [新增] 拦截对专属回收站的非授权访问
+    if cmd not in ('delete', 'restore'):
+        for p in paths:
+            if p and _is_trash_path(p):
+                return f'操作被拒绝：禁止访问专属回收站目录 — {p}'
     for p in paths:
         if p and not permission_mgr.check(cmd, p):
             return f'操作被拒绝：路径超出工作目录 — {p}'
@@ -356,13 +409,15 @@ def execute_line_streaming(line, task_id):
         if line_range:
             if len(parts) < 2:
                 return '错误：行号模式需要提供新文本。用法：replace <路径> -l <行号范围>'
-            new_text = parts[1].strip().replace('TICK3', '```')
+            # [修改] 不strip首尾，保留原始缩进和空行
+            new_text = parts[1].replace('TICK3', '```')
             old_text = ''
         else:
             if len(parts) < 3:
                 return '错误：缺少参数。用法：replace <路径> [选项]'
-            old_text = parts[1].strip().replace('TICK3', '```')
-            new_text = parts[2].strip().replace('TICK3', '```')
+            # [修改] 不strip首尾，保留原始缩进和空行
+            old_text = parts[1].replace('TICK3', '```')
+            new_text = parts[2].replace('TICK3', '```')
         ignore_case = '-i' in flags
         replace_all = '-a' in flags
         strip_indent = '-s' in flags
@@ -433,35 +488,37 @@ def execute_line_streaming(line, task_id):
                         else:
                             candidates.sort(key=lambda x: x[0])
                             matches.extend(c[0] for c in candidates)
-                if not matches:
-                    old_diag = [_norm(l, True) for l in old_lines]
-                    best_pos = -1
-                    best_cnt = 0
-                    for i in range(len(file_lines) - len(old_lines) + 1):
-                        cnt = sum(1 for j in range(len(old_lines)) if _norm(file_lines[i + j], True) == old_diag[j])
-                        if cnt > best_cnt:
-                            best_cnt = cnt
-                            best_pos = i
-                    diag = []
-                    if best_pos >= 0 and best_cnt > 0:
-                        diag.append(f'最接近的匹配：第 {best_pos + 1} 行起，{best_cnt}/{len(old_lines)} 行精确匹配（空白归一化后）')
-                        for j in range(len(old_lines)):
-                            ol = old_diag[j]
-                            fl = _norm(file_lines[best_pos + j], True)
-                            if ol == fl:
-                                diag.append(f'    \u2713 {repr(fl[:120])}')
-                            else:
-                                diag.append(f'    \u2717 旧文本: {repr(ol[:120])}')
-                                diag.append(f'    \u2717 文件:   {repr(fl[:120])}')
-                        total_fuzz = sum(
-                            difflib.SequenceMatcher(None, ol, fl).ratio()
-                            for ol, fl in zip(old_diag, [_norm(file_lines[best_pos + j], True) for j in range(len(old_lines))])
-                        )
-                        diag.append(f'    模糊相似度: {total_fuzz / len(old_lines):.2%}')
-                    else:
-                        diag.append('未找到任何部分匹配。')
-                    return ('未找到要替换的文本（忽略缩进模式，已依次尝试精确匹配、空白归一化匹配、模糊匹配三种策略）。\n'
-                            + '\n'.join(diag))
+                    if not matches:
+                        old_diag = [_norm(l, True) for l in old_lines]
+                        best_pos = -1
+                        best_cnt = 0
+                        for i in range(len(file_lines) - len(old_lines) + 1):
+                            cnt = sum(1 for j in range(len(old_lines))
+                                      if _norm(file_lines[i + j], True) == old_diag[j])
+                            if cnt > best_cnt:
+                                best_cnt = cnt
+                                best_pos = i
+                        diag = []
+                        if best_pos >= 0 and best_cnt > 0:
+                            diag.append(f'最接近的匹配：第 {best_pos + 1} 行起，{best_cnt}/{len(old_lines)} 行精确匹配（空白归一化后）')
+                            for j in range(len(old_lines)):
+                                ol = old_diag[j]
+                                fl = _norm(file_lines[best_pos + j], True)
+                                if ol == fl:
+                                    diag.append(f'  \u2713 {repr(fl[:120])}')
+                                else:
+                                    diag.append(f'  \u2717 旧文本: {repr(ol[:120])}')
+                                    diag.append(f'  \u2717 文件: {repr(fl[:120])}')
+                            total_fuzz = sum(
+                                difflib.SequenceMatcher(None, ol, fl).ratio()
+                                for ol, fl in zip(old_diag,
+                                                  [_norm(file_lines[best_pos + j], True) for j in range(len(old_lines))])
+                            )
+                            diag.append(f'  模糊相似度: {total_fuzz / len(old_lines):.2%}')
+                        else:
+                            diag.append('未找到任何部分匹配。')
+                        return ('未找到要替换的文本（忽略缩进模式，已依次尝试精确匹配、空白归一化匹配、模糊匹配三种策略）。\n'
+                                + '\n'.join(diag))
                 for idx in reversed(matches):
                     indent = re.match(r'^(\s*)', file_lines[idx]).group(1)
                     new_lines = new_text.split('\n')
@@ -828,26 +885,95 @@ def execute_line_streaming(line, task_id):
         except Exception as e:
             return f'追加失败：{e}'
     elif cmd == 'delete':
-        if not arg.strip():
-            return '错误：缺少文件路径。用法：delete <路径>'
-        parts = parse_args_with_quotes(arg.strip())
-        if not parts:
-            return '错误：缺少文件路径。用法：delete <路径>'
-        filepath = safe_path(W, parts[0])
+        # [修改] 严格格式校验：只允许 delete "路径" 或 delete 路径
+        arg = arg.strip()
+        m = re.match(r'^delete\s+["\']?(.+?)["\']?\s*$', line, re.IGNORECASE)
+        if not m:
+            return '错误：delete 指令格式不正确。正确用法：delete "<文件或目录路径>"，不允许带额外参数。'
+        target_path_str = m.group(1).strip()
+        filepath = safe_path(W, target_path_str)
+        # 拒绝删除工作目录本身
+        if os.path.normpath(filepath).lower() == os.path.normpath(W).lower():
+            return '错误：拒绝删除工作目录本身。'
+        # 拦截对回收站的删除
+        if _is_trash_path(filepath):
+            return '错误：拒绝操作专属回收站。'
         err = _check_permission('delete', filepath)
         if err:
             return err
+        if not os.path.exists(filepath):
+            return f'错误：目标不存在：{filepath}'
         try:
-            if os.path.isfile(filepath):
-                os.remove(filepath)
-                log_action('DELETE', filepath)
-                return f'已删除文件：{filepath}'
-            elif os.path.isdir(filepath):
-                return f'错误：{filepath} 是一个目录，请使用 exec rd /s /q "{filepath}" 手动删除。'
-            else:
-                return f'错误：文件不存在：{filepath}'
+            os.makedirs(TRASH_DIR, exist_ok=True)
+            # 计算回收站内的对应路径
+            trash_path = _get_trash_path(filepath)
+            # 防覆盖：如果回收站已有同名残留（删了没恢复又删），拒绝操作
+            if os.path.exists(trash_path):
+                return f'错误：回收站已存在该路径的历史残留 [{trash_path}]，请先手动清理回收站或恢复历史文件。'
+            # 创建回收站内的目录层级
+            os.makedirs(os.path.dirname(trash_path), exist_ok=True)
+            # 移动文件/目录
+            shutil.move(filepath, trash_path)
+            # 在日志中记录，用于 "restore 最近" 查询
+            with open(os.path.join(TRASH_DIR, 'trash.log'), 'a', encoding='utf-8') as f:
+                f.write(f'{time.time()}|{filepath}\n')
+            log_action('DELETE', f'{filepath} -> 回收站')
+            return f'已将 {filepath} 移入专属回收站。如需恢复，请使用：restore "{target_path_str}" 或 restore 最近'
         except Exception as e:
             return f'删除失败：{e}'
+    elif cmd == 'restore':
+        # [新增] 从专属回收站恢复文件/目录
+        arg = arg.strip()
+        if not os.path.exists(TRASH_DIR):
+            return '错误：回收站为空或不存在。'
+        try:
+            trash_path_to_restore = None
+            # 模式1：恢复最近删除
+            if arg == '最近' or arg == '"最近"':
+                log_file = os.path.join(TRASH_DIR, 'trash.log')
+                if not os.path.exists(log_file):
+                    return '错误：回收站没有任何删除记录。'
+                with open(log_file, 'r', encoding='utf-8') as f:
+                    lines = f.readlines()
+                if not lines:
+                    return '错误：回收站没有任何删除记录。'
+                # 取最后一行的时间戳和路径
+                last_line = lines[-1].strip()
+                ts_str, orig_path = last_line.split('|', 1)
+                trash_path_to_restore = _get_trash_path(orig_path)
+            # 模式2：按原路径恢复
+            else:
+                m_name = re.match(r'^["\']?(.+?)["\']?\s*$', arg)
+                if not m_name:
+                    return '错误：restore 指令格式不正确。用法：restore "<原路径>" 或 restore 最近'
+                # 兼容 gitignore 风格的目录斜杠，去掉末尾斜杠
+                target_name = m_name.group(1).strip().rstrip('\\/').strip('"\'')
+                # 还原为绝对路径用于计算层级
+                orig_path = safe_path(W, target_name)
+                trash_path_to_restore = _get_trash_path(orig_path)
+            if not trash_path_to_restore or not os.path.exists(trash_path_to_restore):
+                return f'错误：在回收站中未找到对应的记录。'
+            # 反推原始绝对路径
+            original_path = _get_original_path(trash_path_to_restore)
+            if not original_path:
+                return '错误：无法解析原始路径。'
+            # 防覆盖：如果原路径已有同名文件，拒绝恢复
+            if os.path.exists(original_path):
+                return f'错误：原路径已存在文件/目录，为防止覆盖，恢复中止：{original_path}'
+            # 确保原路径的父目录存在
+            os.makedirs(os.path.dirname(original_path), exist_ok=True)
+            # 执行恢复
+            shutil.move(trash_path_to_restore, original_path)
+            # 清理回收站中可能残留的空目录
+            for root, dirs, files in os.walk(TRASH_DIR, topdown=False):
+                for dir_name in dirs:
+                    dir_path = os.path.join(root, dir_name)
+                    if not os.listdir(dir_path):
+                        os.rmdir(dir_path)
+            log_action('RESTORE', f'-> {original_path}')
+            return f'已恢复：{original_path}'
+        except Exception as e:
+            return f'恢复失败：{e}'
     elif cmd == 'copy':
         if not arg:
             return '错误：缺少参数。用法：copy <源路径> <目标路径>'
@@ -861,7 +987,6 @@ def execute_line_streaming(line, task_id):
             return err
         try:
             os.makedirs(os.path.dirname(dst) or '.', exist_ok=True)
-            import shutil
             shutil.copy2(src, dst)
             log_action('COPY', f'{src} -> {dst}')
             return f'已复制：{src} -> {dst}'
@@ -880,7 +1005,6 @@ def execute_line_streaming(line, task_id):
             return err
         try:
             os.makedirs(os.path.dirname(dst) or '.', exist_ok=True)
-            import shutil
             shutil.move(src, dst)
             log_action('MOVE', f'{src} -> {dst}')
             return f'已移动：{src} -> {dst}'
@@ -900,7 +1024,7 @@ def execute_line_streaming(line, task_id):
             for name in sorted(entries):
                 full = os.path.join(dirpath, name)
                 if os.path.isdir(full):
-                    lines.append(f'  [DIR]  {name}')
+                    lines.append(f'  [DIR] {name}')
                 else:
                     size = os.path.getsize(full)
                     if size < 1024:
@@ -937,16 +1061,24 @@ def execute_line_streaming(line, task_id):
             return '错误：exec 指令已被管理员禁用。'
         if not arg.strip():
             return '错误：缺少命令。用法：exec <系统命令>'
+        # [新增] 危险命令拦截与弹窗确认
+        dangerous_patterns = re.compile(r'\b(del|rd|rm|rmdir|format|erase|diskpart|mkfs)\b', re.IGNORECASE)
+        if dangerous_patterns.search(arg):
+            if permission_mgr._callback:
+                # 触发 GUI 弹窗或 CLI 询问
+                approved = permission_mgr._callback('高危命令拦截', arg.strip())
+                if not approved:
+                    return f'操作被拒绝：执行高危系统命令需用户确认。命令：{arg.strip()}'
+            else:
+                approved = _default_permission_callback('高危命令拦截', arg.strip())
+                if not approved:
+                    return f'操作被拒绝：执行高危系统命令需用户确认。命令：{arg.strip()}'
         log_action('EXEC', arg.strip())
         try:
             process = subprocess.Popen(
-                f'cmd /c {arg.strip()}',
-                shell=True,
-                stdout=subprocess.PIPE,
-                stderr=subprocess.STDOUT,
-                text=True,
-                encoding=encoding,
-                errors='replace',
+                f'cmd /c {arg.strip()}', shell=True,
+                stdout=subprocess.PIPE, stderr=subprocess.STDOUT,
+                text=True, encoding=encoding, errors='replace',
                 cwd=W
             )
             output_lines = []
@@ -988,11 +1120,8 @@ def execute_line_streaming(line, task_id):
         try:
             process = subprocess.Popen(
                 ['python', script],
-                stdout=subprocess.PIPE,
-                stderr=subprocess.STDOUT,
-                text=True,
-                encoding=encoding,
-                errors='replace',
+                stdout=subprocess.PIPE, stderr=subprocess.STDOUT,
+                text=True, encoding=encoding, errors='replace',
                 cwd=W
             )
             output_lines = []
@@ -1026,22 +1155,22 @@ def execute_line_streaming(line, task_id):
             req = urllib.request.Request(url, headers={'User-Agent': 'Agent/1.0 (PokerAgent)'})
             with urllib.request.urlopen(req, timeout=15) as resp:
                 raw_bytes = resp.read()
-                content_type = resp.headers.get('Content-Type', '')
-                charset = 'utf-8'
-                m = re.search(r'charset=([a-zA-Z0-9\-]+)', content_type, re.I)
-                if m:
-                    charset = m.group(1)
+            content_type = resp.headers.get('Content-Type', '')
+            charset = 'utf-8'
+            m = re.search(r'charset=([a-zA-Z0-9\-]+)', content_type, re.I)
+            if m:
+                charset = m.group(1)
+            try:
+                body = raw_bytes.decode(charset)
+            except (UnicodeDecodeError, LookupError):
                 try:
-                    body = raw_bytes.decode(charset)
-                except (UnicodeDecodeError, LookupError):
-                    try:
-                        body = raw_bytes.decode('utf-8')
-                    except UnicodeDecodeError:
-                        body = raw_bytes.decode('gbk', errors='replace')
-                if len(body) > 8000:
-                    body = body[:8000] + '\n\n...（内容过长，仅显示前 8000 字符）'
-                log_action('GET', url)
-                return body
+                    body = raw_bytes.decode('utf-8')
+                except UnicodeDecodeError:
+                    body = raw_bytes.decode('gbk', errors='replace')
+            if len(body) > 8000:
+                body = body[:8000] + '\n\n...（内容过长，仅显示前 8000 字符）'
+            log_action('GET', url)
+            return body
         except urllib.error.HTTPError as e:
             return f'HTTP 错误：{e.code} {e.reason}'
         except Exception as e:
@@ -1081,17 +1210,17 @@ def agent_stream():
     with _task_registry_lock:
         with _sse_lock:
             sse_clients.append(q)
-        # 回放所有任务的当前状态（晚订阅补偿）
-        for tid, entry in _task_registry.items():
-            evt = {'id': tid, 'type': 'status', 'status': entry['status']}
-            if entry['status'] == 'done' and entry['result']:
-                evt['result'] = entry['result']
-            q.put(f"data: {json.dumps(evt, ensure_ascii=False)}\n\n")
-            # 只对未完成任务回放日志（done 的任务结果已含全部信息）
-            if entry['status'] != 'done':
-                for log_line in entry['logs']:
-                    log_evt = {'id': tid, 'type': 'log', 'data': log_line}
-                    q.put(f"data: {json.dumps(log_evt, ensure_ascii=False)}\n\n")
+            # 回放所有任务的当前状态（晚订阅补偿）
+            for tid, entry in _task_registry.items():
+                evt = {'id': tid, 'type': 'status', 'status': entry['status']}
+                if entry['status'] == 'done' and entry['result']:
+                    evt['result'] = entry['result']
+                q.put(f"data: {json.dumps(evt, ensure_ascii=False)}\n\n")
+                # 只对未完成任务回放日志（done 的任务结果已含全部信息）
+                if entry['status'] != 'done':
+                    for log_line in entry['logs']:
+                        log_evt = {'id': tid, 'type': 'log', 'data': log_line}
+                        q.put(f"data: {json.dumps(log_evt, ensure_ascii=False)}\n\n")
     def generate():
         try:
             while True:
@@ -1126,175 +1255,130 @@ def agent_exec():
         stale = [tid for tid, e in _task_registry.items() if e['status'] == 'done']
         for tid in stale:
             del _task_registry[tid]
+
+            
     command_text = command_text.replace('\r\n', '\n').replace('\r', '\n')
     log_action('RECEIVED', command_text[:20000])
     lines = command_text.split('\n')
     i = 0
     task_ids = []
+    
+    # [新增] 提取代码块的独立函数，兼容 【CodeSTART】 和 ```
+    def extract_blocks(start_idx):
+        blocks = []
+        peek = start_idx
+        while peek < len(lines):
+            stripped = lines[peek].strip()
+            # 匹配 【CodeSTART】...【/CodeEND】
+            if '【codestart】' in stripped.lower():
+                peek += 1
+                block = []
+                while peek < len(lines):
+                    bln = lines[peek]
+                    if '【/codeend】' in bln.lower():
+                        idx = bln.lower().find('【/codeend】')
+                        if idx != -1:
+                            block.append(bln[:idx])
+                        peek += 1
+                        break
+                    block.append(bln)
+                    peek += 1
+                blocks.append('\n'.join(block).strip('\n'))
+            # 兼容 ``` 代码块
+            elif stripped.startswith('```'):
+                peek += 1
+                block = []
+                while peek < len(lines):
+                    bln = lines[peek]
+                    if bln.strip().startswith('```'):
+                        peek += 1
+                        break
+                    block.append(bln)
+                    peek += 1
+                blocks.append('\n'.join(block).strip('\n'))
+            # 遇到空行，跳过继续找代码块
+            elif stripped == '':
+                peek += 1
+            # 遇到其他内容，认为多行指令内容结束
+            else:
+                break
+        return blocks, peek
     while i < len(lines):
         line = lines[i].strip()
         if not line or line.startswith('#'):
             i += 1
             continue
+            
         parts = line.split(None, 1)
         cmd = parts[0].lower()
         arg = parts[1] if len(parts) > 1 else ''
-        # ── replace 多行指令解析 ──
-        if cmd == 'replace':
-            peek = i + 1
-            blocks = []
-            if '【codestart】' in lines[i].lower():
-                if peek < len(lines) and lines[peek].strip().startswith('```'):
-                    peek += 1
-                block = []
-                while peek < len(lines):
-                    bln = lines[peek]
-                    if bln.strip().startswith('```') or '【/codeend】' in bln.lower():
-                        if '【/codeend】' in bln.lower():
-                            idx2 = bln.lower().find('【/codeend】')
-                            if idx2 != -1:
-                                block.append(bln[:idx2])
-                                peek += 1
-                                break
-                        peek += 1
-                        break
-                    block.append(bln)
-                    peek += 1
-                blocks.append('\n'.join(block))
-            while peek < len(lines) and len(blocks) < 2:
-                ln = lines[peek]
-                stripped = ln.strip()
-                if stripped.lower() == '【codestart】':
-                    peek += 1
-                    if peek < len(lines) and lines[peek].strip().startswith('```'):
-                        peek += 1
-                    block = []
-                    while peek < len(lines):
-                        bln = lines[peek]
-                        if bln.strip().startswith('```') or '【/codeend】' in bln.lower():
-                            if '【/codeend】' in bln.lower():
-                                idx = bln.lower().find('【/codeend】')
-                                if idx != -1:
-                                    block.append(bln[:idx])
-                                    peek += 1
-                                    break
-                            peek += 1
-                            break
-                        block.append(bln)
-                        peek += 1
-                    blocks.append('\n'.join(block))
-                elif stripped.startswith('```'):
-                    peek += 1
-                    block = []
-                    while peek < len(lines):
-                        bln = lines[peek]
-                        if bln.strip().startswith('```'):
-                            peek += 1
-                            break
-                        block.append(bln)
-                        peek += 1
-                    blocks.append('\n'.join(block))
-                else:
-                    peek += 1
-            if len(blocks) == 2:
-                final_cmd = f"replace {arg}\x00{blocks[0].strip(chr(10))}\x00{blocks[1].strip(chr(10))}"
-                task_id = str(uuid.uuid4())
-                task_queue.put({'id': task_id, 'cmd': final_cmd})
-                task_ids.append(task_id)
-                log_action('ENQUEUE', f'ID: {task_id} | CMD: {final_cmd[:50]}...')
-                i = peek
-                continue
-            elif len(blocks) == 1 and '-l' in arg:
-                final_cmd = f"replace {arg}\x00{blocks[0].strip(chr(10))}"
-                task_id = str(uuid.uuid4())
-                task_queue.put({'id': task_id, 'cmd': final_cmd})
-                task_ids.append(task_id)
-                log_action('ENQUEUE', f'ID: {task_id} | CMD: {final_cmd[:50]}...')
-                i = peek
-                continue
-        # ── 其他多行指令解析 (create, append, replace, insert, find, deleteline) ──
+        
+        # 处理多行指令
         if cmd in ('create', 'append', 'replace', 'insert', 'find', 'deleteline'):
+            # deleteline 如果带 -l 是单行
             if cmd == 'deleteline' and '-l' in arg:
-                final_cmd = line
                 task_id = str(uuid.uuid4())
-                task_queue.put({'id': task_id, 'cmd': final_cmd})
+                task_queue.put({'id': task_id, 'cmd': line})
                 task_ids.append(task_id)
-                log_action('ENQUEUE', f'ID: {task_id} | CMD: {final_cmd[:50]}...')
+                log_action('ENQUEUE', f'ID: {task_id} | CMD: {line[:50]}...')
                 i += 1
                 continue
-            else:
-                peek = i + 1
-                content_lines = []
-                has_code_start = False
-                if '【codestart】' in lines[i].lower():
-                    has_code_start = True
-                    clean_line = lines[i].split('【CodeSTART】', 1)[0].strip()
-                    parts = clean_line.split(None, 1)
-                    cmd = parts[0].lower()
-                    arg = parts[1] if len(parts) > 1 else ''
-                elif peek < len(lines) and lines[peek].strip().lower() == '【codestart】':
-                    has_code_start = True
-                    peek += 1
-                if has_code_start:
-                    if peek < len(lines) and lines[peek].strip().startswith('```'):
-                        peek += 1
-                    while peek < len(lines):
-                        ln = lines[peek]
-                        if '【/codeend】' in ln.lower():
-                            idx = ln.lower().find('【/codeend】')
-                            if idx != -1:
-                                content_lines.append(ln[:idx])
-                                peek += 1
-                                break
-                            if ln.strip().startswith('```'):
-                                peek += 1
-                                break
-                            content_lines.append(ln)
-                            peek += 1
-                            break
-                        content_lines.append(ln)
-                        peek += 1
-                    i = peek
-                elif peek < len(lines) and lines[peek].strip().startswith('```'):
-                    peek += 1
-                    while peek < len(lines) and not lines[peek].strip().startswith('```'):
-                        content_lines.append(lines[peek])
-                        peek += 1
-                    i = peek
-                else:
-                    while peek < len(lines):
-                        ln = lines[peek].strip()
-                        if ln and ln.split(None, 1)[0].lower() in KNOWN_CMDS:
-                            break
-                        content_lines.append(lines[peek])
-                        peek += 1
-                    i = peek
-                while content_lines and not content_lines[0].strip():
-                    content_lines.pop(0)
-                while content_lines and not content_lines[-1].strip():
-                    content_lines.pop()
-                if content_lines:
-                    content = '\n'.join(content_lines)
-                    final_cmd = f"{cmd} {arg}\x00{content}"
+                
+            # 提取后续的代码块
+            blocks, next_i = extract_blocks(i + 1)
+            
+            if len(blocks) > 0:
+                if cmd == 'replace':
+                    if len(blocks) >= 2:
+                        final_cmd = f"replace {arg}\x00{blocks[0]}\x00{blocks[1]}"
+                        task_id = str(uuid.uuid4())
+                        task_queue.put({'id': task_id, 'cmd': final_cmd})
+                        task_ids.append(task_id)
+                        log_action('ENQUEUE', f'ID: {task_id} | CMD: {final_cmd[:50]}...')
+                        i = next_i
+                        continue
+                    elif len(blocks) == 1 and '-l' in arg:
+                        final_cmd = f"replace {arg}\x00{blocks[0]}"
+                        task_id = str(uuid.uuid4())
+                        task_queue.put({'id': task_id, 'cmd': final_cmd})
+                        task_ids.append(task_id)
+                        log_action('ENQUEUE', f'ID: {task_id} | CMD: {final_cmd[:50]}...')
+                        i = next_i
+                        continue
+                elif cmd in ('create', 'append', 'insert', 'find'):
+                    # 这些指令只需要一个内容块
+                    final_cmd = f"{cmd} {arg}\x00{blocks[0]}"
                     task_id = str(uuid.uuid4())
                     task_queue.put({'id': task_id, 'cmd': final_cmd})
                     task_ids.append(task_id)
                     log_action('ENQUEUE', f'ID: {task_id} | CMD: {final_cmd[:50]}...')
-                else:
-                    final_cmd = line
+                    i = next_i
+                    continue
+                elif cmd == 'deleteline':
+                    final_cmd = f"deleteline {arg}\x00{blocks[0]}"
                     task_id = str(uuid.uuid4())
                     task_queue.put({'id': task_id, 'cmd': final_cmd})
                     task_ids.append(task_id)
                     log_action('ENQUEUE', f'ID: {task_id} | CMD: {final_cmd[:50]}...')
-                continue
-        else:
-            final_cmd = line
+                    i = next_i
+                    continue
+            # 如果没收集到块，当作单行处理
             task_id = str(uuid.uuid4())
-            task_queue.put({'id': task_id, 'cmd': final_cmd})
+            task_queue.put({'id': task_id, 'cmd': line})
             task_ids.append(task_id)
-            log_action('ENQUEUE', f'ID: {task_id} | CMD: {final_cmd[:50]}...')
-        i += 1
+            log_action('ENQUEUE', f'ID: {task_id} | CMD: {line[:50]}...')
+            i += 1
+        else:
+            # 其他单行指令
+            task_id = str(uuid.uuid4())
+            task_queue.put({'id': task_id, 'cmd': line})
+            task_ids.append(task_id)
+            log_action('ENQUEUE', f'ID: {task_id} | CMD: {line[:50]}...')
+            i += 1
+            
     return jsonify({'type': 'task_batch', 'task_ids': task_ids})
+
+
 @app.route('/agent-config-poll', methods=['GET'])
 def agent_config_poll():
     _config_changed.wait(timeout=25)
