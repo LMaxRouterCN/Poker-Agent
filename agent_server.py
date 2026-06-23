@@ -83,7 +83,7 @@ def worker_loop():
                 break
             task_id = task['id']
             cmd_str = task['cmd']
-            print(f'[{datetime.datetime.now().strftime("%H:%M:%S")}] ⚙️ Worker 取出任务 {task_id[:8]}: {cmd_str[:60]}')
+            print(f'[{datetime.datetime.now().strftime("%H:%M:%S")}] ⚙️ Worker 取出任务 {task_id[:8]}: {cmd_str}')
             emit_task_event({'id': task_id, 'type': 'status', 'status': 'running'})
             try:
                 result = execute_line_streaming(cmd_str, task_id)
@@ -92,7 +92,7 @@ def worker_loop():
                 print(f'[Worker] ❌ 执行异常: {e}')
                 traceback.print_exc()
                 result = f'执行异常：{e}'
-            print(f'[{datetime.datetime.now().strftime("%H:%M:%S")}] ✅ 任务 {task_id[:8]} 完成: {str(result)[:60]}')
+            print(f'[{datetime.datetime.now().strftime("%H:%M:%S")}] ✅ 任务 {task_id[:8]} 完成: {str(result)}')
             emit_task_event({'id': task_id, 'type': 'status', 'status': 'done', 'result': result})
         except Exception as e:
             print(f'[Worker] 致命错误: {e}')
@@ -1353,7 +1353,7 @@ def agent_exec():
         for tid in stale:
             del _task_registry[tid]
     command_text = command_text.replace('\r\n', '\n').replace('\r', '\n')
-    log_action('RECEIVED', command_text[:20000])
+    log_action('RECEIVED', command_text)
     lines = command_text.split('\n')
     i = 0
     task_ids = []
@@ -1412,7 +1412,7 @@ def agent_exec():
                 task_id = str(uuid.uuid4())
                 task_queue.put({'id': task_id, 'cmd': line})
                 task_ids.append(task_id)
-                log_action('ENQUEUE', f'ID: {task_id} | CMD: {line[:50]}...')
+                log_action('ENQUEUE', f'ID: {task_id} | CMD: {line}')
                 i += 1
                 continue
             # 提取后续的代码块
@@ -1424,7 +1424,7 @@ def agent_exec():
                         task_id = str(uuid.uuid4())
                         task_queue.put({'id': task_id, 'cmd': final_cmd})
                         task_ids.append(task_id)
-                        log_action('ENQUEUE', f'ID: {task_id} | CMD: {final_cmd[:50]}...')
+                        log_action('ENQUEUE', f'ID: {task_id} | CMD: {final_cmd}')
                         i = next_i
                         continue
                     elif len(blocks) == 1 and '-l' in arg:
@@ -1432,7 +1432,7 @@ def agent_exec():
                         task_id = str(uuid.uuid4())
                         task_queue.put({'id': task_id, 'cmd': final_cmd})
                         task_ids.append(task_id)
-                        log_action('ENQUEUE', f'ID: {task_id} | CMD: {final_cmd[:50]}...')
+                        log_action('ENQUEUE', f'ID: {task_id} | CMD: {final_cmd}')
                         i = next_i
                         continue
                 elif cmd in ('create', 'append', 'insert', 'find'):
@@ -1441,7 +1441,7 @@ def agent_exec():
                     task_id = str(uuid.uuid4())
                     task_queue.put({'id': task_id, 'cmd': final_cmd})
                     task_ids.append(task_id)
-                    log_action('ENQUEUE', f'ID: {task_id} | CMD: {final_cmd[:50]}...')
+                    log_action('ENQUEUE', f'ID: {task_id} | CMD: {final_cmd}')
                     i = next_i
                     continue
                 elif cmd == 'deleteline':
@@ -1449,21 +1449,21 @@ def agent_exec():
                     task_id = str(uuid.uuid4())
                     task_queue.put({'id': task_id, 'cmd': final_cmd})
                     task_ids.append(task_id)
-                    log_action('ENQUEUE', f'ID: {task_id} | CMD: {final_cmd[:50]}...')
+                    log_action('ENQUEUE', f'ID: {task_id} | CMD: {final_cmd}')
                     i = next_i
                     continue
             # 如果没收集到块，当作单行处理
             task_id = str(uuid.uuid4())
             task_queue.put({'id': task_id, 'cmd': line})
             task_ids.append(task_id)
-            log_action('ENQUEUE', f'ID: {task_id} | CMD: {line[:50]}...')
+            log_action('ENQUEUE', f'ID: {task_id} | CMD: {line}')
             i += 1
         else:
             # 其他单行指令
             task_id = str(uuid.uuid4())
             task_queue.put({'id': task_id, 'cmd': line})
             task_ids.append(task_id)
-            log_action('ENQUEUE', f'ID: {task_id} | CMD: {line[:50]}...')
+            log_action('ENQUEUE', f'ID: {task_id} | CMD: {line}')
             i += 1
     return jsonify({'type': 'task_batch', 'task_ids': task_ids})
 @app.route('/agent-config-poll', methods=['GET'])
