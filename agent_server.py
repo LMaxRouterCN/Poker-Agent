@@ -1189,10 +1189,10 @@ def execute_line_streaming(line, task_id):
                     line_out = line_out.rstrip()
                     output_lines.append(line_out)
                     emit_task_event({'id': task_id, 'type': 'log', 'data': line_out})
-                if time.time() - start_time > 60:
+                if time.time() - start_time > 3600:
                     process.kill()
                     process.wait()
-                    return '错误：命令执行超时（60秒限制），进程已强杀。'
+                    return '错误：命令执行超时（3600秒限制），进程已强杀。'
             process.wait()
             output = '\n'.join(output_lines).strip()
             if not output:
@@ -1291,7 +1291,7 @@ def execute_line_streaming(line, task_id):
         except Exception as e:
             return f'下载失败：{e}'
     else:
-        return f'未知指令：{cmd}\n输入 @@help 查看可用指令列表。'
+        return f'未知指令：{cmd}\n输入 @@help fast 查看可用指令列表。'
 _EXEC_SRC = inspect.getsource(execute_line_streaming)
 KNOWN_CMDS = set(re.findall(r"cmd\s*==\s*'([^']+)'", _EXEC_SRC))
 # ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
