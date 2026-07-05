@@ -25,11 +25,11 @@
 #### count
 作用：统计文件的行数、字数和字符数 - 输入信息：文件路径 - 返回信息：行数、字数、字符数统计结果
 #### find
-作用：智能查找（根据路径类型自动切换文件内容搜索或文件名递归搜索） - 输入信息：文件或目录路径 [选项] 查找内容或文件名 - 返回信息：文件内容搜索返回匹配的行号及内容；文件名搜索返回匹配文件的完整绝对路径
+作用：智能查找（根据是否有代码块自动切换两种模式） - 输入信息：文件或目录路径 [选项] 查找内容或文件名 - 返回信息：文件内容搜索返回匹配的行号及内容；文件名搜索返回匹配文件的完整绝对路径
 #### deleteline
 作用：删除文件内的某一行/几行，或删除匹配的文本 - 输入信息：文件路径 [选项 -l 行号/范围 或 -i/-w/-a 及文本内容] - 返回信息：操作结果
 #### replace
-作用：精确替换文件内的文本（支持内容匹配或行号模式） - 输入信息：文件路径 [选项] 旧文本和新文本（或行号模式下的新文本） - 返回信息：操作结果
+作用：精确替换文件内的文本（支持内容匹配或行号模式）- 输入信息：文件路径 [选项] 旧文本和新文本（或行号模式下的新文本）- 返回信息：操作结果
 #### insert
 作用：在指定位置插入内容 - 输入信息：文件路径 -after/-before <行号或文本> 及插入内容 - 返回信息：操作结果
 #### grep
@@ -67,6 +67,130 @@
 
 **如果不清楚用法请发送【cmd】@@help [指令名]【/cmd】获取用法,或者寻求管理员**
 
+## 系统命令快捷参考（exec 指令）
+请尽量使用专用指令,如果专用指令出现问题,或者无对应的专用指令,或者为了效率,可以使用 exec 指令.
+以下操作可以通过以下 exec 指令完成。
+### 目录与文件浏览
+列出当前目录：exec dir /b
+列出指定目录：exec dir /b <路径>
+递归列出所有文件：exec dir /s /b <路径>
+按名称搜索文件：exec dir /s /b <路径>\*<关键词>*
+查看文件大小和属性：exec dir <文件路径>
+### 目录操作
+创建目录（支持多级）：exec mkdir <路径>
+同时创建多个目录：exec mkdir <路径1> <路径2>
+### 文件操作
+复制文件：exec copy <源路径> <目标路径>
+移动/重命名文件：exec move <源路径> <目标路径>
+删除文件：exec del <文件路径>
+删除文件（不提示）：exec del /q <文件路径>
+删除目录及其内容：exec rd /s /q <目录路径>
+### 文件内容查看（简单场景）
+查看整个文件：exec type <文件路径>
+查看文件前N行：exec powershell "Get-Content <文件路径> -Head <N>"
+查看文件后N行：exec powershell "Get-Content <文件路径> -Tail <N>"
+### 环境信息
+查看当前工作目录：exec cd
+查看环境变量：exec set
+查看PATH：exec echo %PATH%
+查看当前日期时间：exec echo %date% %time%
+查看磁盘空间：exec wmic logicaldisk get size,freespace,caption
+查看系统信息：exec systeminfo
+### 网络相关
+测试连通性：exec ping <地址>
+查看本机IP：exec ipconfig
+查看端口占用：exec netstat -ano | findstr <端口号>
+查看指定PID的进程：exec tasklist | findstr <PID>
+### 进程管理
+查看所有进程：exec tasklist
+结束进程：exec taskkill /pid <PID> /f
+按名称结束进程：exec taskkill /im <进程名> /f
+### 其他实用
+计算文件行数：exec find /c /v "" <文件路径>
+按编码查看文件（如UTF-8）：exec powershell "Get-Content <文件路径> -Encoding UTF8"
+
+## 注意事项
+- **此文件是存在换行的,如果你在看到这个文件内容时没有换行证明有些信息在传输过程中丢失了,立刻停止所有动作并告知用户**
+- 小改动时不要频繁用create指令,很慢而且很消耗上下文窗口,小改动时使用replace或insert指令
+- 写入多行内容时，必须在外层使用 【CodeSTART】 和 【/CodeEND】 包裹，内侧用 ``` 包裹代码使其变为代码块。
+- 替换整个文件内容时用create覆写,而不是replace
+- 如果要写入的内容本身包含三个反引号，请用 TICK3 代替避免在浏览器处理文本后打乱排版格式（后端会自动还原）。
+- 代码块内的一切内容都会原封不动写入文件，包括空行、空格、特殊符号。
+- replace 指令中，请用**两个独立的代码块**分别提供旧文本和新文本（按出现顺序区分）。
+- 危险操作（delete、exec）会记录日志。
+- 如果此文档中指令说明更新的不及时，你可以读取此项目下根目录的`agent_server.py`源文件以确定某个指令在代码中的实现方式。
+- 【CodeSTART】 和 【/CodeEND】的作用就是标记代码块的起始和结束,所以在指令中每个代码块都必须用【CodeSTART】 和 【/CodeEND】包裹,【CodeSTART】 和 【/CodeEND】必须和代码块同时存在,如果没有代码块就不要用【CodeSTART】 和 【/CodeEND】
+- 如果你不知道要修改的文件的内容,就不要操作文件,不要猜测,先read要修改的文件
+- 任何情况下,指令内用于包裹代码的```的同一行都不能出现任何标识代码块的编程语言标签
+    >写:
+    >【cmd】create hello.txt
+    >【CodeSTART】
+    >```
+    >something
+    >```
+    >【/CodeEND】
+    >【/cmd】
+    >不要写:
+    >【cmd】create hello.txt
+    >【CodeSTART】
+    >```java
+    >something
+    >```
+    >【/CodeEND】
+    >【/cmd】
+- 关于```,TICK3,三联反引号的详细说明
+    >
+    >**正确示例:**
+    >好的,我会帮你写一段说明文本,介绍使用三联反引号创建代码块的方式.
+    >【cmd】create code_blocks.md
+    >【CodeSTART】
+    >```
+    >Yes, you can use TICK3 to create code blocks, like this:
+    >TICK3
+    >something
+    >TICK3
+    >```
+    >【/CodeEND】
+    >【/cmd】
+    >
+    >**完全错误示例:**
+    >好的,我会帮你写一段说明文本,介绍使用```创建代码块的方式.
+    >【cmd】create code_blocks.md
+    >【CodeSTART】
+    >TICK3
+    >Yes, you can use ``` to create code blocks, like this:
+    >三联反引号
+    >something
+    >三联反引号
+    >TICK3
+    >【/CodeEND】
+    >【/cmd】
+
+
+
+# 已安装的CLI扩展程序 - 对应的起始指令
+1. OpenCLI - 【cmd】exec opencli list【/cmd】
+
+
+# 紧急告示栏
+
+*⚠️ 已知问题：`exec` 指令在某些情况下可能出错*
+
+**现象**
+在执行 `exec cd` 或其他简单系统命令时，返回类似错误：
+```
+'cd"' 不是内部或外部命令，也不是可运行的程序或批处理文件。
+```
+**注意**：错误信息中的命令末尾多了一个双引号（`"`）。
+
+**影响范围**
+- **Python 3.14.2**（以及可能的其他版本）在 Windows 系统上使用 `subprocess.run(cmd, shell=True)` 时，内部构造的命令字符串被错误地加上了额外的双引号。
+- 该问题**不是 PokerAgent 的代码缺陷**，而是 Python 或 Windows 底层行为异常。
+
+目前建议**等待 Python 或 Microsoft 发布修复**,或尝试降级python,无其他可完美解决问题的方法
+
+该问题仅涉及 `exec` 指令，其余文件操作、内容查找等指令均运行正常。
+
 ---
 
 ## 系统指令
@@ -94,35 +218,37 @@
 【cmd】count main.py【/cmd】
 【cmd】count "my file.txt"【/cmd】
 ### find <文件或目录路径> [选项] <查找内容或文件名>
-智能查找指令，根据路径类型自动切换两种模式。
-**模式一：文件内容搜索（路径指向文件时触发）**
-精确查找文件内的文本，返回所有匹配的行号及内容。
+智能查找指令，根据是否有代码块自动切换两种模式。
 选项：
+- -r ：启用正则表达式匹配
+- -p ：部分匹配（搜索词是目标的子串或正则部分匹配）
 - -i ：忽略大小写
-- -w ：全词匹配（仅英文）
-示例:
-【cmd】find test.txt hello【/cmd】
-【cmd】find "test file.txt" -i -w hello【/cmd】
-单行简写时查找内容不允许有空格。
-多行查找，内容需要换行并用标签包裹。
-示例：
-【cmd】find test.txt -i -w
+无修饰参数时默认：全匹配 + 不忽略大小写。
+**模式一：文件内容查找（使用【CodeSTART】标签时触发）**
+路径必须是文件。支持单行或多行连续匹配。
+示例 (全匹配单行)：
+【cmd】find main.py 
 【CodeSTART】
 ```
-hello world
-hello world1
+def main():
 ```
 【/CodeEND】
 【/cmd】
-**模式二：文件名递归搜索（路径指向目录时触发）**
-递归向下搜索目录及其子目录，返回所有匹配文件的完整绝对路径。支持通配符 * 和 ?。
-选项：
-- -i ：忽略大小写（文件名匹配时有效）
-- -w ：无效（自动忽略）
-示例:
-【cmd】find "D:\projects\" readme.md【/cmd】
-【cmd】find "D:\projects\" -i *.txt【/cmd】
-【cmd】find ./ *.log【/cmd】
+示例 (正则部分匹配)：
+【cmd】find main.py -r -p
+【CodeSTART】
+```
+import .* from .*
+```
+【/CodeEND】
+【/cmd】
+**模式二：文件名递归搜索（不使用【CodeSTART】标签时触发）**
+路径必须是目录。递归向下搜索匹配的文件名。
+选项同上。若需使用通配符（如 *.txt），请开启 -r 使用正则（如 .*\.txt）。
+示例 (全匹配文件名)：
+【cmd】find ./ main.py【/cmd】
+示例 (正则部分匹配查找日志文件)：
+【cmd】find "D:\projects\" -r -p .*\.log【/cmd】
 ### deleteline <文件路径> [选项]
 删除文件内的某一行或几行，或删除匹配的文本。
 **行号模式**：使用 `-l` 选项指定行号或范围。
@@ -144,15 +270,20 @@ hello world
 【/CodeEND】
 【/cmd】
 ### replace <文件路径> [选项]
-精确替换文件内的文本。
-选项：
-- -a ：替换所有（默认只替换第一个）
-- -i ：忽略大小写
-- -s ：忽略缩进（按去除首尾空格后的内容匹配，替换时自动继承目标行的缩进）
-- -l <行号范围> ：按行号替换，格式为 `-l 5`（单行）或 `-l 5-20`（范围），只需提供一个代码块（新文本）
+**选项：**
+- `-a`：替换所有匹配项（默认只替换第一个）
+- `-i`：忽略大小写
+- `-l <行号范围>`：按行号替换，格式为 `-l 5`（单行）或 `-l 5-20`（范围），只需提供一个代码块（新文本）
+- `-s`：忽略缩进。匹配时忽略每行首尾的空格、Tab 和缩进；替换时新内容会自动继承原文本块第一行的缩进
+- `-w`：空白归一化。将连续的空白字符（包括缩进、内部多空格、Tab）统一视为单个空格进行匹配
+- `-f`：模糊匹配。基于相似度匹配，默认阈值为 0.92
+- `-f-0.X`：自定义模糊匹配阈值。例如 `-f-0.85` 表示相似度达到 85% 即视为匹配
+**匹配模式说明：**
+- 以上修饰参数（`-i`, `-s`, `-w`, `-f`）**可以任意组合**使用。例如 `-s -w -f-0.8` 会依次执行：剥离缩进、归一化空白、最后计算相似度。
+- **取消自动降级**：如果不加任何修饰参数，就是纯精确匹配。加上某个参数后，严格按该模式匹配，找不到就报错并返回最接近的诊断信息，不会自动尝试其他模式。
 **内容匹配模式**（默认）：用两个独立的代码块分别提供旧文本和新文本，第一个代码块是旧文本，第二个是新文本。
-示例：
-【cmd】replace config.json -a -s
+示例（组合匹配：忽略缩进 + 忽略大小写）：
+【cmd】replace config.json -s -i
 【CodeSTART】
 ```
 "debug": false
@@ -173,7 +304,7 @@ hello world
 ```
 【/CodeEND】
 【/cmd】
-注意replace指令*不支持*多行分别查找替换, 指令会把代码块内的所有内容作为一个整体
+注意replace指令*不支持*多行分别查找替换, 指令会把一个代码块内的所有内容作为一个整体
 建议尽可能使用行号模式,因为内容匹配模式由于缩进和换行比较脆弱,而且原文本如果tab和空格混用这种情况下将极难排查
 ### insert <文件路径> -after/-before <行号或文本>
 在指定位置插入内容。可以指定行号，也可以指定一段目标文本。
@@ -338,126 +469,4 @@ exec后的文本即是输入进cmd中的内容
 【cmd】download https://example.com/img.png images/img.png【/cmd】
 【cmd】download https://example.com/img.png "my images/img.png"【/cmd】
 ---
-## 系统命令快捷参考（exec 指令）
-请尽量使用专用指令,如果专用指令出现问题,或者无对应的专用指令,或者为了效率,可以使用 exec 指令.
-以下操作可以通过以下 exec 指令完成。
-### 目录与文件浏览
-列出当前目录：exec dir /b
-列出指定目录：exec dir /b <路径>
-递归列出所有文件：exec dir /s /b <路径>
-按名称搜索文件：exec dir /s /b <路径>\*<关键词>*
-查看文件大小和属性：exec dir <文件路径>
-### 目录操作
-创建目录（支持多级）：exec mkdir <路径>
-同时创建多个目录：exec mkdir <路径1> <路径2>
-### 文件操作
-复制文件：exec copy <源路径> <目标路径>
-移动/重命名文件：exec move <源路径> <目标路径>
-删除文件：exec del <文件路径>
-删除文件（不提示）：exec del /q <文件路径>
-删除目录及其内容：exec rd /s /q <目录路径>
-### 文件内容查看（简单场景）
-查看整个文件：exec type <文件路径>
-查看文件前N行：exec powershell "Get-Content <文件路径> -Head <N>"
-查看文件后N行：exec powershell "Get-Content <文件路径> -Tail <N>"
-### 环境信息
-查看当前工作目录：exec cd
-查看环境变量：exec set
-查看PATH：exec echo %PATH%
-查看当前日期时间：exec echo %date% %time%
-查看磁盘空间：exec wmic logicaldisk get size,freespace,caption
-查看系统信息：exec systeminfo
-### 网络相关
-测试连通性：exec ping <地址>
-查看本机IP：exec ipconfig
-查看端口占用：exec netstat -ano | findstr <端口号>
-查看指定PID的进程：exec tasklist | findstr <PID>
-### 进程管理
-查看所有进程：exec tasklist
-结束进程：exec taskkill /pid <PID> /f
-按名称结束进程：exec taskkill /im <进程名> /f
-### 其他实用
-计算文件行数：exec find /c /v "" <文件路径>
-按编码查看文件（如UTF-8）：exec powershell "Get-Content <文件路径> -Encoding UTF8"
 
-## 注意事项
-- **此文件是存在换行的,如果你在看到这个文件内容时没有换行证明有些信息在传输过程中丢失了,立刻停止所有动作并告知用户**
-- 小改动时不要频繁用create指令,很慢而且很消耗上下文窗口,小改动时使用replace或insert指令
-- 写入多行内容时，必须在外层使用 【CodeSTART】 和 【/CodeEND】 包裹，内侧用 ``` 包裹代码使其变为代码块。
-- 替换整个文件内容时用create覆写,而不是replace
-- 如果要写入的内容本身包含三个反引号，请用 TICK3 代替避免在浏览器处理文本后打乱排版格式（后端会自动还原）。
-- 代码块内的一切内容都会原封不动写入文件，包括空行、空格、特殊符号。
-- replace 指令中，请用**两个独立的代码块**分别提供旧文本和新文本（按出现顺序区分）。
-- 危险操作（delete、exec）会记录日志。
-- 如果此文档中指令说明更新的不及时，你可以读取此项目下根目录的`agent_server.py`源文件以确定某个指令在代码中的实现方式。
-- 【CodeSTART】 和 【/CodeEND】的作用就是标记代码块的起始和结束,所以在指令中每个代码块都必须用【CodeSTART】 和 【/CodeEND】包裹,【CodeSTART】 和 【/CodeEND】必须和代码块同时存在,如果没有代码块就不要用【CodeSTART】 和 【/CodeEND】
-- 如果你不知道要修改的文件的内容,就不要操作文件,不要猜测,先read要修改的文件
-- 任何情况下,指令内用于包裹代码的```的同一行都不能出现任何标识代码块的编程语言标签
-    >写:
-    >【cmd】create hello.txt
-    >【CodeSTART】
-    >```
-    >something
-    >```
-    >【/CodeEND】
-    >【/cmd】
-    >不要写:
-    >【cmd】create hello.txt
-    >【CodeSTART】
-    >```java
-    >something
-    >```
-    >【/CodeEND】
-    >【/cmd】
-- 关于```,TICK3,三联反引号的详细说明
-    >
-    >**正确示例:**
-    >好的,我会帮你写一段说明文本,介绍使用三联反引号创建代码块的方式.
-    >【cmd】create code_blocks.md
-    >【CodeSTART】
-    >```
-    >Yes, you can use TICK3 to create code blocks, like this:
-    >TICK3
-    >something
-    >TICK3
-    >```
-    >【/CodeEND】
-    >【/cmd】
-    >
-    >**完全错误示例:**
-    >好的,我会帮你写一段说明文本,介绍使用```创建代码块的方式.
-    >【cmd】create code_blocks.md
-    >【CodeSTART】
-    >TICK3
-    >Yes, you can use ``` to create code blocks, like this:
-    >三联反引号
-    >something
-    >三联反引号
-    >TICK3
-    >【/CodeEND】
-    >【/cmd】
-
-
-
-# 已安装的CLI扩展程序 - 对应的起始指令
-1. OpenCLI - 【cmd】exec opencli list【/cmd】
-
-
-# 紧急告示栏
-
-*⚠️ 已知问题：`exec` 指令在某些情况下可能出错*
-
-**现象**
-在执行 `exec cd` 或其他简单系统命令时，返回类似错误：
-```
-'cd"' 不是内部或外部命令，也不是可运行的程序或批处理文件。
-```
-**注意**：错误信息中的命令末尾多了一个双引号（`"`）。
-
-**影响范围**
-- **Python 3.14.2**（以及可能的其他版本）在 Windows 系统上使用 `subprocess.run(cmd, shell=True)` 时，内部构造的命令字符串被错误地加上了额外的双引号。
-- 该问题**不是 PokerAgent 的代码缺陷**，而是 Python 或 Windows 底层行为异常。
-
-目前建议**等待 Python 或 Microsoft 发布修复**,或尝试降级python,无其他可完美解决问题的方法
-
-该问题仅涉及 `exec` 指令，其余文件操作、内容查找等指令均运行正常。

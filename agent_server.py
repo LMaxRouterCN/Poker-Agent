@@ -248,6 +248,54 @@ def _get_original_path(trash_path):
         return os.path.join(drive, *parts[2:])
     else:
         return os.path.join(WORK_DIR, rel_path)
+    
+def _match_text_block(file_lines, old_lines, ignore_case=False, ignore_indent=False, normalize_ws=False, fuzzy_threshold=None):
+    """
+    通用文本块匹配方法，支持组合匹配条件。
+    返回匹配的起始索引列表(0-based)。
+    """
+    def _process(line):
+        if ignore_case:
+            line = line.lower()
+        if ignore_indent:
+            line = line.strip()
+        if normalize_ws:
+            line = re.sub(r'\s+', ' ', line).strip()
+        return line
+    proc_file = [_process(l) for l in file_lines]
+    proc_old = [_process(l) for l in old_lines]
+    
+    matches = []
+    num_old = len(proc_old)
+    if num_old == 0:
+        return matches
+        
+    for i in range(len(proc_file) - num_old + 1):
+        is_match = True
+        # 模糊匹配逻辑
+        if fuzzy_threshold is not None:
+            total_sim = 0.0
+            for j in range(num_old):
+                # 完全一致直接算1.0，避免计算开销
+                if proc_old[j] == proc_file[i+j]:
+                    total_sim += 1.0
+                else:
+                    total_sim += difflib.SequenceMatcher(None, proc_old[j], proc_file[i+j]).ratio()
+            avg_sim = total_sim / num_old
+            if avg_sim < fuzzy_threshold:
+                is_match = False
+        # 精确/归一化匹配逻辑
+        else:
+            for j in range(num_old):
+                if proc_old[j] != proc_file[i+j]:
+                    is_match = False
+                    break
+        
+        if is_match:
+            matches.append(i)
+            
+    return matches
+
 def _check_permission(cmd, *paths):
     # [新增] 拦截对专属回收站的非授权访问
     if cmd not in ('delete', 'restore'):
@@ -388,106 +436,168 @@ def execute_line_streaming(line, task_id):
         except Exception as e:
             return f'统计失败：{e}'
     elif cmd == 'find':
+        # [重构] 严格按是否包含 \x00 (代码块) 分流：有代码块走内容查找，无代码块走文件名查找
         if '\x00' in arg:
-            sep = arg.split('\x00', 1)
-            opts_str = sep[0].strip()
-            search_text = sep[1]
-        else:
-            all_tokens = parse_args_with_quotes(arg)
-            if len(all_tokens) < 2:
-                return '错误：缺少查找内容。发送 @@help find 获取指令详细用法'
-            j = 1
-            while j < len(all_tokens) and all_tokens[j] in ('-i', '-w'):
-                j += 1
-            opts_str = ' '.join(all_tokens[:j])
-            search_text = ' '.join(all_tokens[j:])
-        tokens = parse_args_with_quotes(opts_str)
-        if not tokens:
-            return '错误：缺少文件路径。发送 @@help find 获取指令详细用法'
-        filepath = safe_path(W, tokens[0])
-        flags = tokens[1:] if len(tokens) > 1 else []
-        ignore_case = '-i' in flags
-        whole_word = '-w' in flags
-        # [新增] 如果目标路径是目录，切换为按文件名递归搜索模式
-        if os.path.isdir(filepath):
-            filename_pattern = search_text.strip()
-            if not filename_pattern:
-                return '错误：缺少要搜索的文件名。发送 @@help find 获取指令详细用法'
+            # --- 模式一：文件内容查找 (路径必须为文件) ---
+            opts_str, search_text = arg.split('\x00', 1)
+            tokens = parse_args_with_quotes(opts_str.strip())
+            if not tokens:
+                return '错误：缺少文件路径。发送 @@help find 获取指令详细用法'
+            
+            filepath = safe_path(W, tokens[0])
+            flags = tokens[1:] if len(tokens) > 1 else []
+            
+            # 解析修饰参数
+            use_regex = '-r' in flags
+            partial = '-p' in flags
+            ignore_case = '-i' in flags
+            
+            # 清理首尾换行，保留原始缩进
+            search_text = search_text.strip('\n')
+            if not search_text:
+                return '错误：查找内容为空。'
+            
             err = _check_permission('find', filepath)
-            if err:
-                return err
+            if err: return err
+            
+            if os.path.isdir(filepath):
+                return f'错误：内容查找模式下，目标必须是文件，不能是目录 - {filepath}'
+            if not os.path.isfile(filepath):
+                return f'错误：文件不存在 - {filepath}'
+            
             try:
+                content, _ = smart_read(filepath)
+                file_lines = content.splitlines()
+                search_lines = search_text.split('\n')
+                num_search = len(search_lines)
+                
+                # 预编译正则表达式（如果开启 -r）
+                compiled_patterns = []
+                if use_regex:
+                    re_flags = re.IGNORECASE if ignore_case else 0
+                    for sl in search_lines:
+                        try:
+                            compiled_patterns.append(re.compile(sl, re_flags))
+                        except re.error as e:
+                            return f'错误：无效的正则表达式 - {sl} ({e})'
+                
+                results = []
+                # 遍历文件行，寻找连续匹配的块
+                for i in range(len(file_lines) - num_search + 1):
+                    matched_all = True
+                    for j in range(num_search):
+                        file_line = file_lines[i + j]
+                        search_line = search_lines[j]
+                        
+                        if use_regex:
+                            pat = compiled_patterns[j]
+                            m = pat.search(file_line) if partial else pat.fullmatch(file_line)
+                            if not m:
+                                matched_all = False
+                                break
+                        else:
+                            cmp_file = file_line.lower() if ignore_case else file_line
+                            cmp_search = search_line.lower() if ignore_case else search_line
+                            if partial:
+                                if cmp_search not in cmp_file:
+                                    matched_all = False
+                                    break
+                            else:
+                                if cmp_file != cmp_search:
+                                    matched_all = False
+                                    break
+                    
+                    if matched_all:
+                        start_line_no = i + 1
+                        if num_search == 1:
+                            results.append((start_line_no, file_lines[i]))
+                        else:
+                            block_text = '\n'.join(file_lines[i:i+num_search])
+                            results.append((start_line_no, block_text))
+                
+                if not results:
+                    return f'在 {filepath} 中未找到匹配内容'
+                
+                output = [f'在 {filepath} 中找到 {len(results)} 处匹配：\n']
+                for line_no, line_text in results:
+                    if '\n' in line_text:
+                        preview = line_text.split('\n')[0]
+                        output.append(f' 行 {line_no}: {preview} ... (共 {num_search} 行)')
+                    else:
+                        output.append(f' 行 {line_no}: {line_text}')
+                
+                log_action('FIND', f'{filepath} -> {len(results)} 处')
+                return '\n'.join(output)
+                
+            except Exception as e:
+                return f'查找失败：{e}'
+        
+        else:
+            # --- 模式二：文件名递归查找 (路径必须为目录) ---
+            tokens = parse_args_with_quotes(arg)
+            if len(tokens) < 2:
+                return '错误：缺少查找内容。发送 @@help find 获取指令详细用法'
+            
+            # 提取 flags 和非 flags 参数
+            flags = [t for t in tokens if t.startswith('-')]
+            non_flags = [t for t in tokens if not t.startswith('-')]
+            
+            if len(non_flags) < 2:
+                return '错误：缺少文件路径或查找内容。'
+            
+            filepath = safe_path(W, non_flags[0])
+            filename_pattern = non_flags[-1]
+            
+            # 解析修饰参数
+            use_regex = '-r' in flags
+            partial = '-p' in flags
+            ignore_case = '-i' in flags
+            
+            err = _check_permission('find', filepath)
+            if err: return err
+            
+            if os.path.isfile(filepath):
+                return f'错误：文件名查找模式下，目标必须是目录，不能是文件 - {filepath}'
+            if not os.path.isdir(filepath):
+                return f'错误：目录不存在 - {filepath}'
+            
+            try:
+                re_flags = re.IGNORECASE if ignore_case else 0
+                if use_regex:
+                    try:
+                        pattern = re.compile(filename_pattern, re_flags)
+                    except re.error as e:
+                        return f'错误：无效的正则表达式 - {filename_pattern} ({e})'
+                
                 results = []
                 for root, dirs, files in os.walk(filepath):
                     for fname in files:
-                        # 支持 -i 忽略大小写，支持通配符 * 和 ?
-                        if ignore_case:
-                            matched = fnmatch.fnmatchcase(fname.lower(), filename_pattern.lower())
+                        if use_regex:
+                            m = pattern.search(fname) if partial else pattern.fullmatch(fname)
+                            if m:
+                                results.append(os.path.join(root, fname))
                         else:
-                            matched = fnmatch.fnmatch(fname, filename_pattern)
-                        if matched:
-                            results.append(os.path.join(root, fname))
+                            cmp_fname = fname.lower() if ignore_case else fname
+                            cmp_pattern = filename_pattern.lower() if ignore_case else filename_pattern
+                            if partial:
+                                if cmp_pattern in cmp_fname:
+                                    results.append(os.path.join(root, fname))
+                            else:
+                                if cmp_fname == cmp_pattern:
+                                    results.append(os.path.join(root, fname))
+                
                 if not results:
                     return f'在目录 {filepath} 中未找到匹配 "{filename_pattern}" 的文件。'
+                
                 output = [f'在目录 {filepath} 中找到 {len(results)} 个匹配 "{filename_pattern}" 的文件：\n']
                 for fpath in results:
-                    output.append(f'  {fpath}')
+                    output.append(f' {fpath}')
+                
                 log_action('FIND', f'{filepath} -> {len(results)} 个文件')
                 return '\n'.join(output)
+                
             except Exception as e:
                 return f'搜索文件失败：{e}'
-        err = _check_permission('find', filepath)
-        if err:
-            return err
-        try:
-            content, _ = smart_read(filepath)
-            lines = content.splitlines(True)
-            results = []
-            is_multi = '\n' in search_text
-            if is_multi:
-                search_comp = search_text.lower() if ignore_case else search_text
-                full_text = ''.join(lines)
-                full_comp = full_text.lower() if ignore_case else full_text
-                start_idx = 0
-                while True:
-                    pos = full_comp.find(search_comp, start_idx)
-                    if pos == -1:
-                        break
-                    line_no = full_text[:pos].count('\n') + 1
-                    context_start = max(0, full_text.rfind('\n', 0, pos) + 1)
-                    context_end = full_text.find('\n', pos + len(search_text))
-                    if context_end == -1:
-                        context_end = len(full_text)
-                    context = full_text[context_start:context_end].rstrip()
-                    results.append((line_no, context))
-                    start_idx = pos + len(search_comp)
-            else:
-                search_comp = search_text.strip().lower() if ignore_case else search_text.strip()
-                for idx, line in enumerate(lines, 1):
-                    line_comp = line.lower() if ignore_case else line
-                    if whole_word:
-                        pattern = r'\b' + re.escape(search_comp) + r'\b'
-                        if re.search(pattern, line_comp):
-                            results.append((idx, line.rstrip()))
-                    else:
-                        if search_comp in line_comp:
-                            results.append((idx, line.rstrip()))
-            if not results:
-                opt_desc = []
-                if ignore_case:
-                    opt_desc.append('忽略大小写')
-                if whole_word:
-                    opt_desc.append('全词匹配')
-                opt_str = f' ({", ".join(opt_desc)})' if opt_desc else ''
-                preview = search_text[:50] + '...' if len(search_text) > 50 else search_text
-                return f'在 {filepath} 中未找到 "{preview}"{opt_str}'
-            output = [f'在 {filepath} 中找到 {len(results)} 处匹配：\n']
-            for line_no, line_text in results:
-                output.append(f'  行 {line_no}: {line_text}')
-            log_action('FIND', f'{filepath} -> {len(results)} 处')
-            return '\n'.join(output)
-        except Exception as e:
-            return f'查找失败：{e}'
     elif cmd == 'replace':
         parts = arg.split('\x00')
         if not parts:
@@ -498,6 +608,7 @@ def execute_line_streaming(line, task_id):
             return '错误：缺少文件路径。发送 @@help replace 获取指令详细用法'
         filepath = safe_path(W, tokens[0])
         flags = tokens[1:] if len(tokens) > 1 else []
+        
         line_range = None
         for idx_f, flag in enumerate(flags):
             if flag == '-l' and idx_f + 1 < len(flags):
@@ -507,27 +618,42 @@ def execute_line_streaming(line, task_id):
                     end = int(r_match.group(2)) if r_match.group(2) else start
                     line_range = (start, end)
                     break
+                    
         if line_range:
             if len(parts) < 2:
                 return '错误：行号模式需要提供新文本。发送 @@help replace 获取指令详细用法'
-            # [修改] 不strip首尾，保留原始缩进和空行
             new_text = parts[1].replace('TICK3', '```')
             old_text = ''
         else:
             if len(parts) < 3:
                 return '错误：缺少参数。发送 @@help replace 获取指令详细用法'
-            # [修改] 不strip首尾，保留原始缩进和空行
             old_text = parts[1].replace('TICK3', '```')
             new_text = parts[2].replace('TICK3', '```')
+            
         ignore_case = '-i' in flags
         replace_all = '-a' in flags
-        strip_indent = '-s' in flags
+        ignore_indent = '-s' in flags  # 忽略每行首尾空格和缩进
+        normalize_ws = '-w' in flags   # 空白归一化
+        
+        # 解析模糊匹配参数 -f 或 -f-0.8
+        fuzzy_threshold = None
+        for flag in flags:
+            if flag == '-f':
+                fuzzy_threshold = 0.92
+            elif flag.startswith('-f-'):
+                try:
+                    fuzzy_threshold = float(flag[3:])
+                except ValueError:
+                    return '错误：-f 参数格式不正确，应为 -f-0.92 形式'
+                    
         err = _check_permission('replace', filepath)
         if err:
             return err
+            
         try:
             content, file_enc = smart_read(filepath)
             count = 0
+            
             if line_range:
                 file_lines = content.split('\n')
                 start, end = line_range
@@ -538,111 +664,70 @@ def execute_line_streaming(line, task_id):
                 file_lines[s_idx:end] = new_lines
                 count = end - start + 1
                 new_content = '\n'.join(file_lines)
-            elif strip_indent:
-                old_lines = old_text.split('\n')
+                
+            else:
                 file_lines = content.split('\n')
-                matches = []
-                def _norm(s, aggressive=False):
-                    s = s.strip()
-                    if aggressive:
-                        s = re.sub(r'\s+', ' ', s)
-                    if ignore_case:
-                        s = s.lower()
-                    return s
-                for i in range(len(file_lines) - len(old_lines) + 1):
-                    ok = True
-                    for j in range(len(old_lines)):
-                        if _norm(file_lines[i + j]) != _norm(old_lines[j]):
-                            ok = False
-                            break
-                    if ok:
-                        matches.append(i)
-                        if not replace_all:
-                            break
+                old_lines = old_text.split('\n')
+                
+                # 调用通用匹配方法
+                matches = _match_text_block(
+                    file_lines, old_lines, 
+                    ignore_case=ignore_case, 
+                    ignore_indent=ignore_indent, 
+                    normalize_ws=normalize_ws, 
+                    fuzzy_threshold=fuzzy_threshold
+                )
+                
                 if not matches:
-                    for i in range(len(file_lines) - len(old_lines) + 1):
-                        ok = True
-                        for j in range(len(old_lines)):
-                            if _norm(file_lines[i + j], True) != _norm(old_lines[j], True):
-                                ok = False
-                                break
-                        if ok:
-                            matches.append(i)
-                            if not replace_all:
-                                break
-                if not matches:
-                    _FUZZY_THRESHOLD = 0.92
-                    old_cmp = [_norm(l, True) for l in old_lines]
-                    candidates = []
+                    # 诊断信息：找出最接近的块
+                    best_pos = -1
+                    best_avg = 0.0
                     for i in range(len(file_lines) - len(old_lines) + 1):
                         total = 0.0
                         for j in range(len(old_lines)):
-                            fl = _norm(file_lines[i + j], True)
-                            total += difflib.SequenceMatcher(None, old_cmp[j], fl).ratio()
+                            f_proc = re.sub(r'\s+', ' ', file_lines[i+j].strip()).lower()
+                            o_proc = re.sub(r'\s+', ' ', old_lines[j].strip()).lower()
+                            total += difflib.SequenceMatcher(None, o_proc, f_proc).ratio()
                         avg = total / len(old_lines)
-                        if avg >= _FUZZY_THRESHOLD:
-                            candidates.append((i, avg))
-                    if candidates:
-                        if not replace_all:
-                            candidates.sort(key=lambda x: x[1], reverse=True)
-                            matches.append(candidates[0][0])
-                        else:
-                            candidates.sort(key=lambda x: x[0])
-                            matches.extend(c[0] for c in candidates)
-                if not matches:
-                    old_diag = [_norm(l, True) for l in old_lines]
-                    best_pos = -1
-                    best_cnt = 0
-                    for i in range(len(file_lines) - len(old_lines) + 1):
-                        cnt = sum(1 for j in range(len(old_lines)) if _norm(file_lines[i + j], True) == old_diag[j])
-                        if cnt > best_cnt:
-                            best_cnt = cnt
+                        if avg > best_avg:
+                            best_avg = avg
                             best_pos = i
-                    diag = []
-                    if best_pos >= 0 and best_cnt > 0:
-                        diag.append(f'最接近的匹配：第 {best_pos + 1} 行起，{best_cnt}/{len(old_lines)} 行精确匹配（空白归一化后）')
+                            
+                    diag = ['未找到匹配的文本块。']
+                    if best_pos >= 0:
+                        diag.append(f'最接近的匹配：第 {best_pos + 1} 行起，平均相似度: {best_avg:.2%}')
                         for j in range(len(old_lines)):
-                            ol = old_diag[j]
-                            fl = _norm(file_lines[best_pos + j], True)
-                            if ol == fl:
-                                diag.append(f'    \u2713 {repr(fl[:120])}')
+                            f_proc = re.sub(r'\s+', ' ', file_lines[best_pos + j].strip()).lower()
+                            o_proc = re.sub(r'\s+', ' ', old_lines[j].strip()).lower()
+                            if o_proc == f_proc:
+                                diag.append(f' \u2713 {repr(o_proc[:120])}')
                             else:
-                                diag.append(f'    \u2717 旧文本: {repr(ol[:120])}')
-                                diag.append(f'    \u2717 文件: {repr(fl[:120])}')
-                        total_fuzz = sum(
-                            difflib.SequenceMatcher(None, ol, fl).ratio()
-                            for ol, fl in zip(old_diag, [_norm(file_lines[best_pos + j], True) for j in range(len(old_lines))])
-                        )
-                        diag.append(f'    模糊相似度: {total_fuzz / len(old_lines):.2%}')
-                    else:
-                        diag.append('未找到任何部分匹配。')
-                    return ('未找到要替换的文本（忽略缩进模式，已依次尝试精确匹配、空白归一化匹配、模糊匹配三种策略）。\n'
-                            + '\n'.join(diag))
+                                diag.append(f' \u2717 旧: {repr(o_proc[:120])}')
+                                diag.append(f' \u2717 文: {repr(f_proc[:120])}')
+                    return '\n'.join(diag)
+                    
+                # 非全量替换时，仅保留第一个匹配
+                if not replace_all and len(matches) > 1:
+                    matches = [matches[0]]
+                    
+                new_block_lines = new_text.split('\n')
+                # 从后往前替换，避免索引错乱
                 for idx in reversed(matches):
-                    indent = re.match(r'^(\s*)', file_lines[idx]).group(1)
-                    new_lines = new_text.split('\n')
-                    if indent:
-                        new_lines = [indent + l if l.strip() else l for l in new_lines]
-                    file_lines[idx:idx + len(old_lines)] = new_lines
+                    applied_lines = list(new_block_lines)
+                    # 如果开启了忽略缩进，替换时继承原文本块第一行的缩进
+                    if ignore_indent:
+                        indent_match = re.match(r'^(\s*)', file_lines[idx])
+                        indent = indent_match.group(1) if indent_match else ''
+                        applied_lines = [indent + l if l.strip() else l for l in applied_lines]
+                        
+                    file_lines[idx:idx + len(old_lines)] = applied_lines
                     count += 1
+                    
                 new_content = '\n'.join(file_lines)
-            elif replace_all:
-                if ignore_case:
-                    pattern = re.compile(re.escape(old_text), re.IGNORECASE)
-                    new_content, count = pattern.subn(new_text, content)
-                else:
-                    new_content = content.replace(old_text, new_text)
-                    count = content.count(old_text)
-            else:
-                if ignore_case:
-                    pattern = re.compile(re.escape(old_text), re.IGNORECASE)
-                    new_content = pattern.sub(new_text, content, count=1)
-                    count = 1 if new_content != content else 0
-                else:
-                    new_content = content.replace(old_text, new_text, 1)
-                    count = 1 if new_content != content else 0
+                
             if count == 0:
                 return '未找到要替换的文本。'
+                
             smart_write(filepath, new_content, file_enc)
             log_action('REPLACE', f'{filepath} ({count} 处)')
             return f'已替换 {filepath} 中的 {count} 处文本。'
