@@ -1,5 +1,5 @@
 
-"""PokerAgent - 本地接应服务 (SSE流式版) v25
+"""PokerAgent - 本地接应服务 (SSE流式版) v26
 启动方式： python agent_server.py
 默认监听：http://127.0.0.1:9966
 """
@@ -26,6 +26,9 @@ app = Flask(__name__)
 CORS(app)
 # 工作目录：脚本所在目录
 WORK_DIR = os.path.dirname(os.path.abspath(__file__))
+# [新增] 临时文件目录 (用于大文件传输)
+TEMP_FILE_DIR = os.path.join(WORK_DIR, '.agent_temp_files')
+os.makedirs(TEMP_FILE_DIR, exist_ok=True)
 # 帮助文档路径
 HELP_FILE = os.path.join(WORK_DIR, 'commands.md')
 # [新增] 专属回收站目录
@@ -980,64 +983,76 @@ def execute_line_streaming(line, task_id):
         except Exception as e:
             return f'创建失败：{e}'
     elif cmd == 'read':
-        if not arg.strip():
-            return '错误：缺少文件路径。发送 @@help read 获取指令详细用法'
-        parts = parse_args_with_quotes(arg.strip())
-        if not parts:
-            return '错误：缺少文件路径。发送 @@help read 获取指令详细用法'
-        filepath = safe_path(W, parts[0])
-        start_line = 0
-        end_line = 0
-        if len(parts) >= 2:
-            try:
-                range_str = parts[1]
-                if '-' in range_str:
-                    s, e = range_str.split('-', 1)
-                    start_line = int(s) if s else 1
-                    end_line = int(e) if e else -1
-                else:
-                    start_line = int(range_str)
-                    end_line = -1
-            except ValueError:
-                return '错误：行号格式不正确。发送 @@help read 获取指令详细用法'
-        err = _check_permission('read', filepath)
-        if err:
-            return err
-        if start_line == 0 and clipboard_mode and os.path.isfile(filepath):
-            try:
-                filename = os.path.basename(filepath)
-                with open(filepath, 'rb') as f:
-                    b64 = base64.b64encode(f.read()).decode('ascii')
-                file_size = os.path.getsize(filepath)
-                # [修改] 将 \x00 替换为 ||| 避免不可见字符破坏前端 JSON 解析
-                return f'__CLIPBOARD_FILE__{filename}|||{file_size}|||{b64}'
-            except Exception as e:
-                return f'读取失败：{e}'
-        try:
-            content, _ = smart_read(filepath)
-            lines = content.splitlines(True)
-            if start_line > 0:
-                s_idx = max(0, start_line - 1)
-                e_idx = min(end_line, len(lines)) if end_line > 0 else len(lines)
-                selected = lines[s_idx:e_idx]
-                if not selected:
-                    return f'指定范围内无内容（文件共 {len(lines)} 行）'
-                output = []
-                for i, line in enumerate(selected, start=s_idx + 1):
-                    output.append(f"{i:>5}\t{line.rstrip()}")
-                result = '\n'.join(output)
-                log_action('READ', f'{filepath} 行 {start_line}-{end_line if end_line>0 else "末尾"}')
-                return result
-            else:
-                content_str = ''.join(lines)
-                log_action('READ', filepath)
-                if len(content_str) > 5000:
-                    return f'{content_str[:5000]}\n\n...（文件过长，仅显示前 5000 字符，共 {len(content_str)} 字符）'
-                return content_str if content_str else '（文件为空）'
-        except FileNotFoundError:
-            return f'错误：文件不存在：{filepath}'
-        except Exception as e:
-            return f'读取失败：{e}'
+            if not arg.strip():
+                return '错误：缺少文件路径。发送 @@help read 获取指令详细用法'
+            parts = parse_args_with_quotes(arg.strip())
+            if not parts:
+                return '错误：缺少文件路径。发送 @@help read 获取指令详细用法'
+            filepath = safe_path(W, parts[0])
+            start_line = 0
+            end_line = 0
+            if len(parts) >= 2:
+                try:
+                    range_str = parts[1]
+                    if '-' in range_str:
+                        s, e = range_str.split('-', 1)
+                        start_line = int(s) if s else 1
+                        end_line = int(e) if e else -1
+                    else:
+                        start_line = int(range_str)
+                        end_line = -1
+                except ValueError:
+                    return '错误：行号格式不正确。发送 @@help read 获取指令详细用法'
+            
+            err = _check_permission('read', filepath)
+            if err: return err
+
+            if start_line == 0:
+                # 【修改】剪贴板模式：始终使用临时文件 + HTTP下载，避免SSE缓冲区截断
+                if clipboard_mode and os.path.isfile(filepath):
+                    try:
+                        # 生成唯一ID
+                        file_id = str(uuid.uuid4())
+                        temp_path = os.path.join(TEMP_FILE_DIR, file_id)
+                        
+                        # 复制文件到临时目录 (保留原始二进制，不Base64)
+                        shutil.copy2(filepath, temp_path)
+                        
+                        filename = os.path.basename(filepath)
+                        file_size = os.path.getsize(filepath)
+                        
+                        # TODO: [PokerAgent] 后续可在此处增加分块下载逻辑支持进度条
+                        
+                        # 返回新标记格式
+                        return f'__CLIPBOARD_FILE__ID|||{file_id}|||{filename}|||{file_size}'
+                    except Exception as e:
+                        return f'文件传输准备失败: {e}'
+
+                # 非剪贴板模式或非文件：走原有逻辑
+                try:
+                    content, _ = smart_read(filepath)
+                    lines = content.splitlines(True)
+                    if start_line > 0:
+                        s_idx = max(0, start_line - 1)
+                        e_idx = min(end_line, len(lines)) if end_line > 0 else len(lines)
+                        selected = lines[s_idx:e_idx]
+                        if not selected: return f'指定范围内无内容（文件共 {len(lines)} 行）'
+                        output = []
+                        for i, line in enumerate(selected, start=s_idx + 1):
+                            output.append(f"{i:>5}\t{line.rstrip()}")
+                        result = '\n'.join(output)
+                        log_action('READ', f'{filepath} 行 {start_line}-{end_line if end_line>0 else "末尾"}')
+                        return result
+                    else:
+                        content_str = ''.join(lines)
+                        log_action('READ', filepath)
+                        if len(content_str) > 5000:
+                            return f'{content_str[:5000]}\n\n...（文件过长，仅显示前 5000 字符，共 {len(content_str)} 字符）'
+                        return content_str if content_str else '（文件为空）'
+                except FileNotFoundError:
+                    return f'错误：文件不存在：{filepath}'
+                except Exception as e:
+                    return f'读取失败：{e}'
     elif cmd == 'append':
         if not arg:
             return '错误：缺少文件路径。发送 @@help append 获取指令详细用法'
@@ -1551,6 +1566,47 @@ def agent_exec():
             log_action('ENQUEUE', f'ID: {task_id} | CMD: {line}')
             i += 1
     return jsonify({'type': 'task_batch', 'task_ids': task_ids})
+
+@app.route('/agent-file-download')
+def agent_file_download():
+    """下载临时文件，并在响应完成后自动清理"""
+    file_id = request.args.get('id')
+    if not file_id:
+        return "错误：缺少文件ID", 400
+    
+    # 安全检查：防止路径穿越攻击
+    if not re.match(r'^[a-f0-9-]+$', file_id):
+        return "错误：无效的文件ID格式", 400
+    
+    file_path = os.path.join(TEMP_FILE_DIR, file_id)
+    
+    if not os.path.exists(file_path):
+        return "错误：文件不存在或已过期", 404
+    
+    try:
+        with open(file_path, 'rb') as f:
+            file_data = f.read()
+        
+        # 构建响应
+        response = Response(file_data, mimetype='application/octet-stream')
+        
+        # [关键] 响应发送后回调：删除文件并清理空目录
+        def cleanup():
+            try:
+                os.remove(file_path)
+                # 尝试删除空目录
+                if os.path.exists(TEMP_FILE_DIR) and not os.listdir(TEMP_FILE_DIR):
+                    os.rmdir(TEMP_FILE_DIR)
+            except OSError:
+                pass # 忽略删除失败（并发等极端情况）
+        
+        # Flask 中 call_on_close 在响应完全发送后执行
+        response.call_on_close(cleanup)
+        
+        return response
+    except Exception as e:
+        return f"下载失败: {e}", 500
+
 @app.route('/agent-config-poll', methods=['GET'])
 def agent_config_poll():
     _config_changed.wait(timeout=25)

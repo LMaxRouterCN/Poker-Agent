@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name PokerAgent
 // @namespace http://tampermonkey.net/
-// @version 12.15
+// @version 13
 // @author LMaxRouterCN
 // @description PokerAgent的浏览器端核心脚本，提供元素选择、配置管理、调试日志等功能，支持多站点独立配置和自动发送功能。
 // @match *://*/*
@@ -31,6 +31,7 @@
 //* - [v12.11] 修复剪贴板模式回执格式不一致：文件任务统一先走 _renderTaskBlock 渲染区块标记（TASK_START/[Poker Agent] [done]/All tasks done!/TASK_END），再执行文件粘贴并追加描述，避免区块标记缺失或被覆盖
 //* - [v12.13] 增加代码内容元素选择器(selCodeContentElement)，优化代码块提取流程，避免标签和空行干扰，保留故意空行
 //* - [v12.14] 在区块标记的前后添加了<|im_start|>pokeragent-system和<|im_end|>,llm对角色身份的认知(可能?)会更加清晰
+//* - [v13] 重构read指令剪贴板模式
 
 (function () {
     'use strict';
@@ -1585,58 +1586,128 @@
   
     /**
      * 解码 __CLIPBOARD_FILE__ 标记的文件内容
-     * 适配后端新格式: __CLIPBOARD_FILE__<filename>|||<size>|||<base64>
+     * 新版格式: __CLIPBOARD_FILE__ID|||<uuid>|||<filename>|||<size> (通过HTTP下载)
+     * 旧版格式: __CLIPBOARD_FILE__<filename>|||<size>|||<base64> (兼容性回退)
      */
     function _decodeClipboardFile(resultText) {
         const marker = '__CLIPBOARD_FILE__';
         const markerIdx = resultText.indexOf(marker);
         if (markerIdx === -1) return null;
+
         const beforeMarker = resultText.substring(0, markerIdx);
         let afterMarker = resultText.substring(markerIdx + marker.length);
-        // 1. 清理所有空白字符和可能残留的 \x00
+        
+        // 1. 清理空白
         let cleanStr = afterMarker.replace(/\x00/g, '').replace(/\s/g, '');
-        let filename = '';
-        let sizeStr = '';
-        let base64Raw = '';
-        // 2. 优先按新分隔符 ||| 切割
         const parts = cleanStr.split('|||');
-        if (parts.length >= 3) {
-            filename = parts[0];
-            sizeStr = parts[1];
-            base64Raw = parts.slice(2).join('|||'); // 防止 base64 内部含有 |||
+
+        // 2. 判别新旧格式
+        const isNewFormat = (parts[0] === 'ID');
+
+        if (isNewFormat) {
+            // === 新格式：HTTP下载 ===
+            const fileId = parts[1];
+            const filename = parts[2] || 'unknown';
+            const sizeStr = parts[3];
+
+            if (!fileId || !sizeStr) {
+                log('WARN', `新格式标记解析失败: ${cleanStr.substring(0, 80)}`);
+                return null;
+            }
+
+            log('INFO', `📡 检测到大文件任务，开始下载: ${filename} (${sizeStr} bytes)`);
+            
+            // 同步等待下载完成 (虽然这是网络操作，但在 finalize 流程中需要等待)
+            const b64Data = _downloadFileFromAgent(fileId);
+            if (!b64Data) return null; // 下载失败
+
+            log('OK', `📄 文件下载完成: ${filename} (${sizeStr} bytes)`);
+            return { filename, size: parseInt(sizeStr), text: '[由HTTP传输]', base64: b64Data, beforeMarker };
+
         } else {
-            // 3. 降级：兼容旧版无分隔符格式 (利用点号和字母转数字边界)
-            const dotIdx = cleanStr.lastIndexOf('.');
-            if (dotIdx !== -1) {
-                let extEnd = dotIdx + 1;
-                while (extEnd < cleanStr.length && /[a-zA-Z]/.test(cleanStr[extEnd])) extEnd++;
-                if (extEnd < cleanStr.length && /[0-9]/.test(cleanStr[extEnd])) {
-                    let numEnd = extEnd;
-                    while (numEnd < cleanStr.length && /[0-9]/.test(cleanStr[numEnd])) numEnd++;
-                    filename = cleanStr.substring(0, extEnd);
-                    sizeStr = cleanStr.substring(extEnd, numEnd);
-                    base64Raw = cleanStr.substring(numEnd);
+            // === 旧格式：Base64解析 (兼容性保留) ===
+            let filename = '';
+            let sizeStr = '';
+            let base64Raw = '';
+
+            if (parts.length >= 3) {
+                // 正常分隔符
+                filename = parts[0];
+                sizeStr = parts[1];
+                base64Raw = parts.slice(2).join('|||');
+            } else {
+                // 降级兼容旧版无分隔符格式
+                const dotIdx = cleanStr.lastIndexOf('.');
+                if (dotIdx !== -1) {
+                    let extEnd = dotIdx + 1;
+                    while (extEnd < cleanStr.length && /[a-zA-Z]/.test(cleanStr[extEnd])) extEnd++;
+                    if (extEnd < cleanStr.length && /[0-9]/.test(cleanStr[extEnd])) {
+                        let numEnd = extEnd;
+                        while (numEnd < cleanStr.length && /[0-9]/.test(cleanStr[numEnd])) numEnd++;
+                        filename = cleanStr.substring(0, extEnd);
+                        sizeStr = cleanStr.substring(extEnd, numEnd);
+                        base64Raw = cleanStr.substring(numEnd);
+                    }
                 }
             }
+
+            if (!sizeStr || !base64Raw) {
+                log('WARN', `旧格式标记解析失败: ${cleanStr.substring(0, 80)}`);
+                return null;
+            }
+
+            try {
+                let base64Clean = base64Raw.replace(/-/g, '+').replace(/_/g, '/');
+                base64Clean = base64Clean.replace(/[^A-Za-z0-9+/=]/g, '');
+                while (base64Clean.length % 4) base64Clean += '=';
+                
+                const binaryStr = atob(base64Clean);
+                const bytes = new Uint8Array(binaryStr.length);
+                for (let i = 0; i < binaryStr.length; i++) bytes[i] = binaryStr.charCodeAt(i);
+                const text = new TextDecoder('utf-8').decode(bytes);
+                
+                log('OK', `📄 文件解码成功 (旧格式): ${filename} (${sizeStr} bytes → ${text.length} 字符)`);
+                return { filename, size: parseInt(sizeStr), text, base64: base64Clean, beforeMarker };
+            } catch (e) {
+                log('ERR', `旧格式Base64解码失败: ${e.message}`);
+                return null;
+            }
         }
-        if (!sizeStr || !base64Raw) {
-            log('WARN', `无法解析 __CLIPBOARD_FILE__，提取大小或Base64为空。CleanStr前80字符: ${cleanStr.substring(0, 80)}`);
-            return null;
-        }
-        try {
-            let base64Clean = base64Raw.replace(/-/g, '+').replace(/_/g, '/');
-            base64Clean = base64Clean.replace(/[^A-Za-z0-9+/=]/g, '');
-            while (base64Clean.length % 4) base64Clean += '=';
-            const binaryStr = atob(base64Clean);
-            const bytes = new Uint8Array(binaryStr.length);
-            for (let i = 0; i < binaryStr.length; i++) bytes[i] = binaryStr.charCodeAt(i);
-            const text = new TextDecoder('utf-8').decode(bytes);
-            log('OK', `📄 文件解码成功: ${filename} (${sizeStr} bytes → ${text.length} 字符)`);
-            return { filename, size: parseInt(sizeStr), text, base64: base64Clean, beforeMarker };
-        } catch (e) {
-            log('ERR', `文件 Base64 解码失败: ${e.message}, Base64前50字符: ${base64Raw.substring(0, 50)}`);
-            return null;
-        }
+    }
+
+    /**
+     * 从后端下载文件内容并转换为 Base64
+     * TODO: [PokerAgent] 增加下载进度回调
+     */
+    function _downloadFileFromAgent(fileId) {
+        const c = cfgLoad();
+        const apiUrl = c.apiUrl.replace('/agent-exec', '/agent-file-download');
+        
+        // 使用 XMLHttpRequest 或 GM_xmlhttpRequest (GM_xhr 不直接支持 arraybuffer，需手动处理)
+        return new Promise((resolve) => {
+            const xhr = new XMLHttpRequest();
+            xhr.open('GET', apiUrl + '?id=' + fileId, true);
+            xhr.responseType = 'arraybuffer';
+            
+            xhr.onload = function() {
+                if (this.status === 200) {
+                    const u8 = new Uint8Array(this.response);
+                    const binary = Array.from(u8).map(b => String.fromCharCode(b)).join('');
+                    const b64 = btoa(binary);
+                    resolve(b64);
+                } else {
+                    log('ERR', `文件下载失败 HTTP ${this.status}`);
+                    resolve(null);
+                }
+            };
+            
+            xhr.onerror = function() {
+                log('ERR', `文件下载网络错误`);
+                resolve(null);
+            };
+            
+            xhr.send();
+        });
     }
   
     /**
