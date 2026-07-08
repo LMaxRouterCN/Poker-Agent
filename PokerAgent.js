@@ -1,20 +1,19 @@
 // ==UserScript==
-// @name PokerAgent
-// @namespace http://tampermonkey.net/
-// @version 13
-// @author LMaxRouterCN
-// @description PokerAgent的浏览器端核心脚本，提供元素选择、配置管理、调试日志等功能，支持多站点独立配置和自动发送功能。
-// @match *://*/*
-// @grant GM_registerMenuCommand
-// @grant GM_xmlhttpRequest
-// @grant GM_getValue
-// @grant GM_setValue
-// @grant GM_addStyle
-// @grant GM_setClipboard
-// @connect localhost
-// @connect 127.0.0.1
+// @name         PokerAgent
+// @namespace    http://tampermonkey.net/
+// @version      14
+// @author       LMaxRouterCN
+// @description  PokerAgent的浏览器端核心脚本，提供元素选择、配置管理、调试日志等功能，支持多站点独立配置和自动发送功能。
+// @match        *://*/*
+// @grant        GM_registerMenuCommand
+// @grant        GM_xmlhttpRequest
+// @grant        GM_getValue
+// @grant        GM_setValue
+// @grant        GM_addStyle
+// @grant        GM_setClipboard
+// @connect      localhost
+// @connect      127.0.0.1
 // ==/UserScript==
-
 //* - 增加 selAnswerItem 可配置选择器（替代硬编码 .answer）
 //* - 增加 cleanIgnoreClassKeywords / cleanRemoveButtonLike / cleanRemovePre 清理规则可配置
 //* - 修复 <pre> 处理中 .answer 硬编码 bug
@@ -32,10 +31,9 @@
 //* - [v12.13] 增加代码内容元素选择器(selCodeContentElement)，优化代码块提取流程，避免标签和空行干扰，保留故意空行
 //* - [v12.14] 在区块标记的前后添加了<|im_start|>pokeragent-system和<|im_end|>,llm对角色身份的认知(可能?)会更加清晰
 //* - [v13] 重构read指令剪贴板模式
-
+//* - [v14] 修复剪贴板模式文件下载冲突：移除 _renderTaskBlock 中的旧版文件解码逻辑(导致404重复下载)，统一在 _finalizeAndSend 中处理；_decodeClipboardFile 改为 async 并 await 下载；增加下载失败容错处理
 (function () {
     'use strict';
-  
     /* ================================================================
      * 1. 存储与配置
      * ================================================================ */
@@ -45,7 +43,7 @@
         selInputBox: '',
         selSendButton: '',
         selAnswerItem: '.answer',
-        selCodeContentElement: '', // 新增：代码块内容元素选择器
+        selCodeContentElement: '',
         cleanIgnoreClassKeywords: 'thinking,reasoning,probe,deepseek-reason',
         cleanRemoveButtonLike: true,
         cleanRemovePre: true,
@@ -58,15 +56,12 @@
         autoSendTogglePos: 'right',
         autoSendMode: 'click'
     };
-  
     const DEFAULTS = {
         whitelist: ['https://chatglm.cn/'],
         debugMode: false,
         ...SITE_DEFAULTS
     };
-  
     const STORE_KEY = 'low_cost_agent_config_v4';
-  
     function _loadStore() {
         let store;
         try {
@@ -80,20 +75,15 @@
                 debugMode: false,
                 defaults: { ...SITE_DEFAULTS },
                 perSite: {
-                    'https://chatglm.cn/': {
-                        ...SITE_DEFAULTS,
-                        selChatContainer: 'div.chatScrollContainer'
-                    }
+                    'https://chatglm.cn/': { ...SITE_DEFAULTS, selChatContainer: 'div.chatScrollContainer' }
                 }
             };
         }
         return _migrateStore(store);
     }
-  
     function _saveStore(store) {
         GM_setValue(STORE_KEY, store);
     }
-  
     function _migrateStore(store) {
         if (store.defaults && store.perSite !== undefined) {
             const clearOld = (cfg) => {
@@ -113,7 +103,8 @@
                 if (!cfg.autoSendMode) cfg.autoSendMode = 'click';
                 if (cfg.autoSendByEnter !== undefined) delete cfg.autoSendByEnter;
                 if (!cfg.selAnswerItem) cfg.selAnswerItem = '.answer';
-                if (!cfg.selCodeContentElement) cfg.selCodeContentElement = ''; // 确保新字段存在
+                if (!cfg.selCodeContentElement) cfg.selCodeContentElement = '';
+                // 确保新字段存在
                 if (cfg.cleanIgnoreClassKeywords === undefined) cfg.cleanIgnoreClassKeywords = 'thinking,reasoning,probe,deepseek-reason';
                 if (cfg.cleanRemoveButtonLike === undefined) cfg.cleanRemoveButtonLike = true;
                 if (cfg.cleanRemovePre === undefined) cfg.cleanRemovePre = true;
@@ -138,19 +129,16 @@
         }
         return newStore;
     }
-  
     function _matchSite() {
         const store = _loadStore();
         return store.whitelist.find(p => location.href.startsWith(p)) || null;
     }
-  
     function _getConfigSource() {
         const store = _loadStore();
         const site = _matchSite();
         if (site && store.perSite && store.perSite[site]) return site;
         return 'defaults';
     }
-  
     function cfgLoad() {
         const store = _loadStore();
         const site = _matchSite();
@@ -161,9 +149,7 @@
         }
         return merged;
     }
-  
     let _editTarget = 'defaults';
-  
     function cfgSave(panelValues) {
         const store = _loadStore();
         store.debugMode = panelValues.debugMode;
@@ -179,7 +165,6 @@
         }
         _saveStore(store);
     }
-  
     function cfgSaveRuntime(partial) {
         const store = _loadStore();
         const source = _getConfigSource();
@@ -193,138 +178,134 @@
         }
         _saveStore(store);
     }
-  
     const isWhitelisted = () => cfgLoad().whitelist.some(p => location.href.startsWith(p));
-  
     /* ================================================================
      * 2. 样式注入
      * ================================================================ */
     GM_addStyle(`
-        #agent-panel{position:fixed;top:50%;left:50%;transform:translate(-50%,-50%);width:min(540px,92vw);max-height:82vh;overflow-y:auto;background:#1a1b2e;color:#d4d4d8;border:1px solid #2e3047;border-radius:0;box-shadow:0 24px 80px rgba(0,0,0,.55);z-index:2147483647;font:14px/1.5 system-ui,sans-serif}
-        #agent-panel *{box-sizing:border-box;margin:0;padding:0}
-        #agent-panel-head{display:flex;align-items:center;justify-content:space-between;padding:14px 20px;border-bottom:1px solid #2e3047}
-        #agent-panel-head b{font-size:15px;color:#818cf8}
-        #agent-panel-close{background:none;border:none;color:#71717a;font-size:20px;cursor:pointer;padding:2px 8px;border-radius:0;transition:.15s}
-        #agent-panel-close:hover{background:#2e3047;color:#f472b6}
-        #agent-panel-body{padding:20px}
-        .ag-sec{margin-bottom:18px}
-        .ag-sec-title{font-size:11px;font-weight:700;color:#71717a;text-transform:uppercase;letter-spacing:.8px;margin-bottom:8px;display:flex;align-items:center;gap:6px}
-        .ag-sec-title::before{content:'';width:3px;height:13px;background:#818cf8;border-radius:0}
-        .ag-field{margin-bottom:10px}
-        .ag-field label{display:block;font-size:12px;color:#a1a1aa;margin-bottom:4px}
-        .ag-row{display:flex;gap:6px;align-items:center}
-        .ag-inp{flex:1;min-width:0;background:#2e3047;border:1px solid #3f3f46;color:#d4d4d8;padding:7px 10px;border-radius:0;font-size:12px;outline:none;transition:.15s;font-family:'SF Mono',Consolas,monospace}
-        .ag-inp:focus{border-color:#818cf8}
-        .ag-btn{padding:7px 13px;border:none;border-radius:0;font-size:12px;font-weight:600;cursor:pointer;transition:.15s;white-space:nowrap}
-        .ag-btn-p{background:#818cf8;color:#0f0f23}.ag-btn-p:hover{background:#a5b4fc}
-        .ag-btn-g{background:#2e3047;color:#d4d4d8;border:1px solid #3f3f46}.ag-btn-g:hover{border-color:#818cf8;color:#818cf8}
-        .ag-wl-list{max-height:110px;overflow-y:auto;background:#232436;border-radius:0;padding:3px;margin-bottom:6px}
-        .ag-wl-item{display:flex;align-items:center;gap:6px;padding:5px 10px;border-radius:0;font-size:12px}
-        .ag-wl-item code{flex:1;min-width:0;color:#86efac;word-break:break-all;font-family:'SF Mono',Consolas,monospace;font-size:11px}
-        .ag-wl-rm{background:none;border:none;color:#f472b6;cursor:pointer;font-size:14px;padding:0 4px;opacity:.5}.ag-wl-rm:hover{opacity:1}
-        .ag-match{font-size:11px;padding:3px 8px;border-radius:0;margin-top:3px}
-        .ag-m-ok{background:rgba(134,239,172,.12);color:#86efac}
-        .ag-m-fail{background:rgba(244,114,182,.12);color:#f472b6}
-        .ag-m-none{background:rgba(161,161,170,.1);color:#71717a}
-        .ag-foot{display:flex;justify-content:flex-end;gap:8px;padding-top:14px;border-top:1px solid #2e3047;margin-top:6px}
-        .ag-toggle{display:flex;align-items:center;gap:10px}
-        .ag-toggle input[type=checkbox]{width:16px;height:16px;accent-color:#818cf8}
-        .ag-pos-group{display:flex;gap:0}
-        .ag-pos-btn{padding:4px 10px;background:#2e3047;border:1px solid #3f3f46;color:#a1a1aa;font-size:12px;cursor:pointer;transition:.15s;border-radius:0}
-        .ag-pos-btn+.ag-pos-btn{border-left:none}
-        .ag-pos-btn.active{background:#818cf8;color:#0f0f23;border-color:#818cf8}
-        .ag-pos-btn:hover:not(.active){border-color:#818cf8;color:#818cf8}
-        .ag-site-info{background:#232436;padding:10px 14px;margin-bottom:10px;border:1px solid #2e3047}
-        .ag-site-row{display:flex;align-items:center;gap:8px;margin-bottom:4px;font-size:12px}
-        .ag-site-row:last-child{margin-bottom:0}
-        .ag-site-label{color:#71717a;min-width:56px;flex-shrink:0}
-        .ag-site-value{color:#d4d4d8;word-break:break-all}
-        .ag-site-badge{font-size:10px;padding:1px 6px;flex-shrink:0;border-radius:0}
-        .ag-badge-ok{background:rgba(134,239,172,.12);color:#86efac}
-        .ag-badge-fail{background:rgba(244,114,182,.12);color:#f472b6}
-        .ag-site-actions{display:flex;gap:6px;margin-bottom:14px;flex-wrap:wrap}
-        .ag-hint{font-size:11px;color:#52525b;margin-top:2px}
-        .ag-rule-list{max-height:220px;overflow-y:auto;background:#232436;border-radius:0;padding:6px;margin-bottom:6px;display:flex;flex-direction:column;gap:8px}
-        .ag-rule-item{background:#1e1f33;border:1px solid #2e3047;padding:8px;border-radius:0}
-        .ag-rule-item .ag-inp{font-size:11px;padding:5px 8px}
-        #agent-pick-dim{position:fixed;inset:0;background:rgba(0,0,0,.28);z-index:2147483645;pointer-events:none}
-        #agent-pick-hl{position:fixed;border:2.5px solid #818cf8;background:rgba(129,140,248,.08);border-radius:0;pointer-events:none;z-index:2147483646;transition:left .06s,top .06s,width .06s,height .06s;box-shadow:0 0 0 4000px rgba(0,0,0,.25);display:none}
-        #agent-pick-lock-hl{position:fixed;border:2.5px solid #f472b6;background:rgba(244,114,182,.06);border-radius:0;pointer-events:none;z-index:2147483646;transition:left .06s,top .06s,width .06s,height .06s;display:none}
-        #agent-pick-tip{position:fixed;background:#1a1b2e;color:#c4b5fd;border:1px solid #3f3f46;padding:5px 10px;border-radius:0;font:11px/1.4 'SF Mono',Consolas,monospace;z-index:2147483647;pointer-events:none;max-width:560px;word-break:break-all;box-shadow:0 4px 16px rgba(0,0,0,.4);opacity:0;transition:opacity .08s;display:flex;flex-direction:column;gap:3px}
-        .ag-tip-sel{display:flex;align-items:center;gap:0;flex-wrap:wrap}
-        .ag-diag-line{display:flex;align-items:center;gap:4px;flex-wrap:wrap;font-size:10px;color:#71717a;border-top:1px solid #2e3047;padding-top:3px}
-        .ag-diag-text{color:#86efac;max-width:200px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
-        .ag-diag-children{color:#a1a1aa}
-        .ag-diag-size{color:#52525b}
-        .ag-diag-ok{color:#86efac}
-        .ag-diag-warn{color:#facc15}
-        .ag-diag-err{color:#f472b6}
-        .ag-diag-shadow{color:#818cf8;background:rgba(129,140,248,.15);padding:0 4px}
-        .ag-diag-scroll{color:#facc15;background:rgba(250,204,21,.1);padding:0 4px}
-        .ag-diag-sep{color:#3f3f46;margin:0 1px}
-        #agent-pick-bar{position:fixed;top:14px;left:50%;transform:translateX(-50%);background:#1a1b2e;color:#d4d4d8;border:1px solid #818cf8;padding:10px 28px;border-radius:0;font-size:14px;z-index:2147483647;box-shadow:0 6px 24px rgba(0,0,0,.5);pointer-events:none}
-        #agent-pick-level{color:#86efac; margin-left: 8px; font-weight: bold;}
-        #ag-show-levels{pointer-events:auto;cursor:pointer;color:#f472b6;margin-right:8px;border-right:1px solid #3f3f46;padding-right:8px;white-space:nowrap;flex-shrink:0;transition:color .1s}
-        #ag-show-levels:hover{color:#fda4af}
-        .ag-level-panel{position:fixed;width:min(420px,85vw);max-height:340px;background:#1a1b2e;border:1px solid #f472b6;border-radius:0;box-shadow:0 8px 32px rgba(0,0,0,.55);z-index:2147483647;display:none;flex-direction:column;font:12px/1.5 'SF Mono',Consolas,monospace;color:#d4d4d8;}
-        .ag-level-head{display:flex;align-items:center;justify-content:space-between;padding:8px 12px;border-bottom:1px solid #2e3047;font-weight:600;color:#f472b6;flex-shrink:0;}
-        .ag-level-head button{background:none;border:none;color:#71717a;cursor:pointer;font-size:16px;padding:0 4px;}
-        .ag-level-head button:hover{color:#f472b6}
-        .ag-level-body{flex:1;overflow-y:auto;padding:4px;}
-        .ag-level-body::-webkit-scrollbar{width:4px}
-        .ag-level-body::-webkit-scrollbar-thumb{background:#3f3f46;border-radius:0}
-        .ag-level-item{display:flex;align-items:center;gap:6px;padding:6px 8px;cursor:pointer;border-left:2px solid transparent;transition:background .1s;}
-        .ag-level-item:hover{background:rgba(244,114,182,.1);border-left-color:#f472b6;}
-        .ag-level-target{background:rgba(244,114,182,.06);border-left-color:#f472b6;}
-        .ag-level-idx{color:#52525b;font-size:10px;min-width:18px;text-align:right;flex-shrink:0;}
-        .ag-level-tag{color:#86efac;font-weight:600;min-width:60px;flex-shrink:0;}
-        .ag-level-digest{color:#93c5fd;flex:1;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;font-style:italic;}
-        .ag-level-sel{color:#52525b;font-size:10px;max-width:120px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;flex-shrink:0;}
-        #agent-debug{position:fixed;top:10px;right:10px;width:380px;max-height:60vh;background:rgba(15,15,30,.92);border:1px solid #3f3f46;border-radius:0;box-shadow:0 10px 40px rgba(0,0,0,.5);z-index:2147483644;display:flex;flex-direction:column;font:12px/1.5 'SF Mono',Consolas,monospace;backdrop-filter:blur(8px);color:#a1a1aa;}
-        #agent-debug-head{padding:8px 12px;border-bottom:1px solid #2e3047;display:flex;justify-content:space-between;align-items:center;color:#d4d4d8}
-        #agent-debug-body{flex:1;overflow-y:auto;padding:8px;display:flex;flex-direction:column;gap:4px}
-        #agent-debug-body::-webkit-scrollbar{width:4px}
-        #agent-debug-body::-webkit-scrollbar-thumb{background:#3f3f46;border-radius:0}
-        .ag-log{padding:4px 6px;border-radius:0;word-break:break-all;background:rgba(255,255,255,.03);border-left:3px solid transparent}
-        .ag-log-time{color:#52525b;margin-right:6px}
-        .ag-log-info{border-left-color:#818cf8;color:#c4b5fd}
-        .ag-log-warn{border-left-color:#facc15;color:#fde68a;background:rgba(250,204,21,.05)}
-        .ag-log-err{border-left-color:#f472b6;color:#fda4af;background:rgba(244,114,182,.05)}
-        .ag-log-ok{border-left-color:#86efac;color:#bbf7d0;background:rgba(134,239,172,.05)}
-        #agent-debug-foot{padding:6px 12px;border-top:1px solid #2e3047;text-align:right}
-        .ag-dbg-btn{background:#2e3047;border:1px solid #3f3f46;color:#a1a1aa;padding:3px 10px;border-radius:0;cursor:pointer;font-size:11px}
-        .ag-dbg-btn:hover{border-color:#818cf8;color:#818cf8}
-        #agent-auto-send-toggle{position:fixed;z-index:2147483640;display:flex;flex-direction:row;align-items:stretch;background:#1a1b2e;border:1px solid #3f3f46;pointer-events:auto;white-space:nowrap;user-select:none;opacity:0.85;transition:opacity .15s;}
-        #agent-auto-send-toggle:hover{opacity:1}
-        .ag-as-opts{display:flex;flex-direction:column;padding:4px 4px 4px 8px}
-        .ag-as-opt{font-size:10px;color:#52525b;cursor:pointer;padding:5px 2px;line-height:1.3;transition:color .15s;font-family:system-ui,sans-serif}
-        .ag-as-opt:hover{color:#a1a1aa}
-        .ag-as-opt.active{color:#818cf8}
-        .ag-as-rail{width:16px;position:relative;display:flex;justify-content:center;border-left:1px solid #2e3047;padding:4px 0}
-        .ag-as-rail::before{content:'';position:absolute;top:8px;bottom:8px;width:2px;background:#3f3f46}
-        .ag-as-thumb{position:absolute;left:50%;transform:translateX(-50%);width:10px;height:10px;background:#818cf8;transition:top .25s ease;z-index:1}
-        #ag-calibrate-bar{position:fixed;top:20px;left:50%;transform:translateX(-50%);background:#1a1b2e;color:#fde68a;border:1px solid #facc15;padding:14px 24px;z-index:2147483647;box-shadow:0 8px 32px rgba(0,0,0,.6);font:13px/1.5 system-ui,sans-serif;display:none;flex-direction:column;align-items:center;gap:10px;pointer-events:auto;width:min(600px,90vw)}
-        #ag-calibrate-bar b{color:#facc15}
-        #ag-calibrate-cards{position:fixed;top:100px;left:50%;transform:translateX(-50%);background:#1a1b2e;border:1px solid #2e3047;z-index:2147483647;box-shadow:0 8px 32px rgba(0,0,0,.6);width:min(220px,45vw);overflow-y:auto;overflow-x:hidden;padding:10px;cursor:move}
-        #ag-calibrate-cards::-webkit-scrollbar{width:4px}
-        #ag-calibrate-cards::-webkit-scrollbar-thumb{background:#3f3f46}
-        .ag-cal-item{display:flex;flex-direction:column;align-items:center;gap:6px;padding:6px;background:#232436;transition:.15s;width:100%;box-sizing:border-box;overflow:hidden;position:relative;z-index:0;border:1px solid transparent;min-height:0}
-        .ag-cal-item.selected-busy{background:rgba(244,114,182,.1);border-color:#f472b6}
-        .ag-cal-item.selected-idle{background:rgba(134,239,172,.1);border-color:#86efac}
-        .ag-cal-clone{width:100%;height:60px;max-height:60px;overflow:hidden;display:flex;align-items:center;justify-content:center;background:#0f0f23}
-        .ag-cal-actions{display:flex;flex-direction:column;gap:4px;width:100%;align-items:center}
-        .ag-cal-tag{font-size:10px;padding:2px 8px;border:1px solid #3f3f46;color:#71717a;cursor:pointer;background:none;white-space:nowrap;width:60%;text-align:center}
-        .ag-cal-tag:hover{border-color:#818cf8;color:#818cf8}
-        .ag-cal-tag.active-busy{border-color:#f472b6;color:#f472b6;background:rgba(244,114,182,.2)}
-        .ag-cal-tag.active-idle{border-color:#86efac;color:#86efac;background:rgba(134,239,172,.2)}
+#agent-panel{position:fixed;top:50%;left:50%;transform:translate(-50%,-50%);width:min(540px,92vw);max-height:82vh;overflow-y:auto;background:#1a1b2e;color:#d4d4d8;border:1px solid #2e3047;border-radius:0;box-shadow:0 24px 80px rgba(0,0,0,.55);z-index:2147483647;font:14px/1.5 system-ui,sans-serif}
+#agent-panel *{box-sizing:border-box;margin:0;padding:0}
+#agent-panel-head{display:flex;align-items:center;justify-content:space-between;padding:14px 20px;border-bottom:1px solid #2e3047}
+#agent-panel-head b{font-size:15px;color:#818cf8}
+#agent-panel-close{background:none;border:none;color:#71717a;font-size:20px;cursor:pointer;padding:2px 8px;border-radius:0;transition:.15s}
+#agent-panel-close:hover{background:#2e3047;color:#f472b6}
+#agent-panel-body{padding:20px}
+.ag-sec{margin-bottom:18px}
+.ag-sec-title{font-size:11px;font-weight:700;color:#71717a;text-transform:uppercase;letter-spacing:.8px;margin-bottom:8px;display:flex;align-items:center;gap:6px}
+.ag-sec-title::before{content:'';width:3px;height:13px;background:#818cf8;border-radius:0}
+.ag-field{margin-bottom:10px}
+.ag-field label{display:block;font-size:12px;color:#a1a1aa;margin-bottom:4px}
+.ag-row{display:flex;gap:6px;align-items:center}
+.ag-inp{flex:1;min-width:0;background:#2e3047;border:1px solid #3f3f46;color:#d4d4d8;padding:7px 10px;border-radius:0;font-size:12px;outline:none;transition:.15s;font-family:'SF Mono',Consolas,monospace}
+.ag-inp:focus{border-color:#818cf8}
+.ag-btn{padding:7px 13px;border:none;border-radius:0;font-size:12px;font-weight:600;cursor:pointer;transition:.15s;white-space:nowrap}
+.ag-btn-p{background:#818cf8;color:#0f0f23}.ag-btn-p:hover{background:#a5b4fc}
+.ag-btn-g{background:#2e3047;color:#d4d4d8;border:1px solid #3f3f46}.ag-btn-g:hover{border-color:#818cf8;color:#818cf8}
+.ag-wl-list{max-height:110px;overflow-y:auto;background:#232436;border-radius:0;padding:3px;margin-bottom:6px}
+.ag-wl-item{display:flex;align-items:center;gap:6px;padding:5px 10px;border-radius:0;font-size:12px}
+.ag-wl-item code{flex:1;min-width:0;color:#86efac;word-break:break-all;font-family:'SF Mono',Consolas,monospace;font-size:11px}
+.ag-wl-rm{background:none;border:none;color:#f472b6;cursor:pointer;font-size:14px;padding:0 4px;opacity:.5}.ag-wl-rm:hover{opacity:1}
+.ag-match{font-size:11px;padding:3px 8px;border-radius:0;margin-top:3px}
+.ag-m-ok{background:rgba(134,239,172,.12);color:#86efac}
+.ag-m-fail{background:rgba(244,114,182,.12);color:#f472b6}
+.ag-m-none{background:rgba(161,161,170,.1);color:#71717a}
+.ag-foot{display:flex;justify-content:flex-end;gap:8px;padding-top:14px;border-top:1px solid #2e3047;margin-top:6px}
+.ag-toggle{display:flex;align-items:center;gap:10px}
+.ag-toggle input[type=checkbox]{width:16px;height:16px;accent-color:#818cf8}
+.ag-pos-group{display:flex;gap:0}
+.ag-pos-btn{padding:4px 10px;background:#2e3047;border:1px solid #3f3f46;color:#a1a1aa;font-size:12px;cursor:pointer;transition:.15s;border-radius:0}
+.ag-pos-btn+.ag-pos-btn{border-left:none}
+.ag-pos-btn.active{background:#818cf8;color:#0f0f23;border-color:#818cf8}
+.ag-pos-btn:hover:not(.active){border-color:#818cf8;color:#818cf8}
+.ag-site-info{background:#232436;padding:10px 14px;margin-bottom:10px;border:1px solid #2e3047}
+.ag-site-row{display:flex;align-items:center;gap:8px;margin-bottom:4px;font-size:12px}
+.ag-site-row:last-child{margin-bottom:0}
+.ag-site-label{color:#71717a;min-width:56px;flex-shrink:0}
+.ag-site-value{color:#d4d4d8;word-break:break-all}
+.ag-site-badge{font-size:10px;padding:1px 6px;flex-shrink:0;border-radius:0}
+.ag-badge-ok{background:rgba(134,239,172,.12);color:#86efac}
+.ag-badge-fail{background:rgba(244,114,182,.12);color:#f472b6}
+.ag-site-actions{display:flex;gap:6px;margin-bottom:14px;flex-wrap:wrap}
+.ag-hint{font-size:11px;color:#52525b;margin-top:2px}
+.ag-rule-list{max-height:220px;overflow-y:auto;background:#232436;border-radius:0;padding:6px;margin-bottom:6px;display:flex;flex-direction:column;gap:8px}
+.ag-rule-item{background:#1e1f33;border:1px solid #2e3047;padding:8px;border-radius:0}
+.ag-rule-item .ag-inp{font-size:11px;padding:5px 8px}
+#agent-pick-dim{position:fixed;inset:0;background:rgba(0,0,0,.28);z-index:2147483645;pointer-events:none}
+#agent-pick-hl{position:fixed;border:2.5px solid #818cf8;background:rgba(129,140,248,.08);border-radius:0;pointer-events:none;z-index:2147483646;transition:left .06s,top .06s,width .06s,height .06s;box-shadow:0 0 0 4000px rgba(0,0,0,.25);display:none}
+#agent-pick-lock-hl{position:fixed;border:2.5px solid #f472b6;background:rgba(244,114,182,.06);border-radius:0;pointer-events:none;z-index:2147483646;transition:left .06s,top .06s,width .06s,height .06s;display:none}
+#agent-pick-tip{position:fixed;background:#1a1b2e;color:#c4b5fd;border:1px solid #3f3f46;padding:5px 10px;border-radius:0;font:11px/1.4 'SF Mono',Consolas,monospace;z-index:2147483647;pointer-events:none;max-width:560px;word-break:break-all;box-shadow:0 4px 16px rgba(0,0,0,.4);opacity:0;transition:opacity .08s;display:flex;flex-direction:column;gap:3px}
+.ag-tip-sel{display:flex;align-items:center;gap:0;flex-wrap:wrap}
+.ag-diag-line{display:flex;align-items:center;gap:4px;flex-wrap:wrap;font-size:10px;color:#71717a;border-top:1px solid #2e3047;padding-top:3px}
+.ag-diag-text{color:#86efac;max-width:200px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.ag-diag-children{color:#a1a1aa}
+.ag-diag-size{color:#52525b}
+.ag-diag-ok{color:#86efac}
+.ag-diag-warn{color:#facc15}
+.ag-diag-err{color:#f472b6}
+.ag-diag-shadow{color:#818cf8;background:rgba(129,140,248,.15);padding:0 4px}
+.ag-diag-scroll{color:#facc15;background:rgba(250,204,21,.1);padding:0 4px}
+.ag-diag-sep{color:#3f3f46;margin:0 1px}
+#agent-pick-bar{position:fixed;top:14px;left:50%;transform:translateX(-50%);background:#1a1b2e;color:#d4d4d8;border:1px solid #818cf8;padding:10px 28px;border-radius:0;font-size:14px;z-index:2147483647;box-shadow:0 6px 24px rgba(0,0,0,.5);pointer-events:none}
+#agent-pick-level{color:#86efac; margin-left: 8px; font-weight: bold;}
+#ag-show-levels{pointer-events:auto;cursor:pointer;color:#f472b6;margin-right:8px;border-right:1px solid #3f3f46;padding-right:8px;white-space:nowrap;flex-shrink:0;transition:color .1s}
+#ag-show-levels:hover{color:#fda4af}
+.ag-level-panel{position:fixed;width:min(420px,85vw);max-height:340px;background:#1a1b2e;border:1px solid #f472b6;border-radius:0;box-shadow:0 8px 32px rgba(0,0,0,.55);z-index:2147483647;display:none;flex-direction:column;font:12px/1.5 'SF Mono',Consolas,monospace;color:#d4d4d8;}
+.ag-level-head{display:flex;align-items:center;justify-content:space-between;padding:8px 12px;border-bottom:1px solid #2e3047;font-weight:600;color:#f472b6;flex-shrink:0;}
+.ag-level-head button{background:none;border:none;color:#71717a;cursor:pointer;font-size:16px;padding:0 4px;}
+.ag-level-head button:hover{color:#f472b6}
+.ag-level-body{flex:1;overflow-y:auto;padding:4px;}
+.ag-level-body::-webkit-scrollbar{width:4px}
+.ag-level-body::-webkit-scrollbar-thumb{background:#3f3f46;border-radius:0}
+.ag-level-item{display:flex;align-items:center;gap:6px;padding:6px 8px;cursor:pointer;border-left:2px solid transparent;transition:background .1s;}
+.ag-level-item:hover{background:rgba(244,114,182,.1);border-left-color:#f472b6;}
+.ag-level-target{background:rgba(244,114,182,.06);border-left-color:#f472b6;}
+.ag-level-idx{color:#52525b;font-size:10px;min-width:18px;text-align:right;flex-shrink:0;}
+.ag-level-tag{color:#86efac;font-weight:600;min-width:60px;flex-shrink:0;}
+.ag-level-digest{color:#93c5fd;flex:1;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;font-style:italic;}
+.ag-level-sel{color:#52525b;font-size:10px;max-width:120px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;flex-shrink:0;}
+#agent-debug{position:fixed;top:10px;right:10px;width:380px;max-height:60vh;background:rgba(15,15,30,.92);border:1px solid #3f3f46;border-radius:0;box-shadow:0 10px 40px rgba(0,0,0,.5);z-index:2147483644;display:flex;flex-direction:column;font:12px/1.5 'SF Mono',Consolas,monospace;backdrop-filter:blur(8px);color:#a1a1aa;}
+#agent-debug-head{padding:8px 12px;border-bottom:1px solid #2e3047;display:flex;justify-content:space-between;align-items:center;color:#d4d4d8}
+#agent-debug-body{flex:1;overflow-y:auto;padding:8px;display:flex;flex-direction:column;gap:4px}
+#agent-debug-body::-webkit-scrollbar{width:4px}
+#agent-debug-body::-webkit-scrollbar-thumb{background:#3f3f46;border-radius:0}
+.ag-log{padding:4px 6px;border-radius:0;word-break:break-all;background:rgba(255,255,255,.03);border-left:3px solid transparent}
+.ag-log-time{color:#52525b;margin-right:6px}
+.ag-log-info{border-left-color:#818cf8;color:#c4b5fd}
+.ag-log-warn{border-left-color:#facc15;color:#fde68a;background:rgba(250,204,21,.05)}
+.ag-log-err{border-left-color:#f472b6;color:#fda4af;background:rgba(244,114,182,.05)}
+.ag-log-ok{border-left-color:#86efac;color:#bbf7d0;background:rgba(134,239,172,.05)}
+#agent-debug-foot{padding:6px 12px;border-top:1px solid #2e3047;text-align:right}
+.ag-dbg-btn{background:#2e3047;border:1px solid #3f3f46;color:#a1a1aa;padding:3px 10px;border-radius:0;cursor:pointer;font-size:11px}
+.ag-dbg-btn:hover{border-color:#818cf8;color:#818cf8}
+#agent-auto-send-toggle{position:fixed;z-index:2147483640;display:flex;flex-direction:row;align-items:stretch;background:#1a1b2e;border:1px solid #3f3f46;pointer-events:auto;white-space:nowrap;user-select:none;opacity:0.85;transition:opacity .15s;}
+#agent-auto-send-toggle:hover{opacity:1}
+.ag-as-opts{display:flex;flex-direction:column;padding:4px 4px 4px 8px}
+.ag-as-opt{font-size:10px;color:#52525b;cursor:pointer;padding:5px 2px;line-height:1.3;transition:color .15s;font-family:system-ui,sans-serif}
+.ag-as-opt:hover{color:#a1a1aa}
+.ag-as-opt.active{color:#818cf8}
+.ag-as-rail{width:16px;position:relative;display:flex;justify-content:center;border-left:1px solid #2e3047;padding:4px 0}
+.ag-as-rail::before{content:'';position:absolute;top:8px;bottom:8px;width:2px;background:#3f3f46}
+.ag-as-thumb{position:absolute;left:50%;transform:translateX(-50%);width:10px;height:10px;background:#818cf8;transition:top .25s ease;z-index:1}
+#ag-calibrate-bar{position:fixed;top:20px;left:50%;transform:translateX(-50%);background:#1a1b2e;color:#fde68a;border:1px solid #facc15;padding:14px 24px;z-index:2147483647;box-shadow:0 8px 32px rgba(0,0,0,.6);font:13px/1.5 system-ui,sans-serif;display:none;flex-direction:column;align-items:center;gap:10px;pointer-events:auto;width:min(600px,90vw)}
+#ag-calibrate-bar b{color:#facc15}
+#ag-calibrate-cards{position:fixed;top:100px;left:50%;transform:translateX(-50%);background:#1a1b2e;border:1px solid #2e3047;z-index:2147483647;box-shadow:0 8px 32px rgba(0,0,0,.6);width:min(220px,45vw);overflow-y:auto;overflow-x:hidden;padding:10px;cursor:move}
+#ag-calibrate-cards::-webkit-scrollbar{width:4px}
+#ag-calibrate-cards::-webkit-scrollbar-thumb{background:#3f3f46}
+.ag-cal-item{display:flex;flex-direction:column;align-items:center;gap:6px;padding:6px;background:#232436;transition:.15s;width:100%;box-sizing:border-box;overflow:hidden;position:relative;z-index:0;border:1px solid transparent;min-height:0}
+.ag-cal-item.selected-busy{background:rgba(244,114,182,.1);border-color:#f472b6}
+.ag-cal-item.selected-idle{background:rgba(134,239,172,.1);border-color:#86efac}
+.ag-cal-clone{width:100%;height:60px;max-height:60px;overflow:hidden;display:flex;align-items:center;justify-content:center;background:#0f0f23}
+.ag-cal-actions{display:flex;flex-direction:column;gap:4px;width:100%;align-items:center}
+.ag-cal-tag{font-size:10px;padding:2px 8px;border:1px solid #3f3f46;color:#71717a;cursor:pointer;background:none;white-space:nowrap;width:60%;text-align:center}
+.ag-cal-tag:hover{border-color:#818cf8;color:#818cf8}
+.ag-cal-tag.active-busy{border-color:#f472b6;color:#f472b6;background:rgba(244,114,182,.2)}
+.ag-cal-tag.active-idle{border-color:#86efac;color:#86efac;background:rgba(134,239,172,.2)}
     `);
-  
     /* ================================================================
      * 3. 调试日志系统
      * ================================================================ */
     let _debugPanel = null;
     let _debugBody = null;
-  
     function initDebugUI() {
         if (_debugPanel) return;
         _debugPanel = document.createElement('div');
@@ -343,17 +324,14 @@
         _debugPanel.querySelector('#ag-dbg-close').onclick = () => _debugPanel.style.display = 'none';
         _debugPanel.querySelector('#ag-dbg-clear').onclick = () => _debugBody.innerHTML = '';
     }
-  
     function showDebug() {
         if (!_debugPanel) initDebugUI();
         _debugPanel.style.display = 'flex';
     }
-  
     function _truncate(str, maxDisplay = 200, keepLen = 100) {
         str = String(str);
         return str.length > maxDisplay ? str.substring(0, keepLen) + `... (共 ${str.length} 字符)` : str;
     }
-  
     function log(type, msg) {
         const c = cfgLoad();
         console.log(`[Agent-${type}] ${msg}`);
@@ -366,15 +344,14 @@
         _debugBody.appendChild(div);
         _debugBody.scrollTop = _debugBody.scrollHeight;
     }
-  
     /* ================================================================
      * 4. 元素选择器
      * ================================================================ */
     const PICKER_IDS = new Set([
-        'agent-pick-dim', 'agent-pick-hl', 'agent-pick-lock-hl', 'agent-pick-tip', 'agent-pick-bar',
-        'agent-panel', 'agent-debug', 'agent-auto-send-toggle', 'ag-level-panel', 'ag-calibrate-bar'
+        'agent-pick-dim', 'agent-pick-hl', 'agent-pick-lock-hl',
+        'agent-pick-tip', 'agent-pick-bar', 'agent-panel', 'agent-debug',
+        'agent-auto-send-toggle', 'ag-level-panel', 'ag-calibrate-bar'
     ]);
-  
     let _pickActive = false, _pickType = '';
     let _pickHL, _pickTip, _pickBar, _pickDim;
     let _pickLockHL = null;
@@ -382,67 +359,53 @@
     let _pickedEl = null;
     let _domStack = [];
     let _levelPanel = null;
-  
     const TYPE_LABEL = {
         chat: '聊天记录容器',
         input: '输入框',
         send: '发送按钮',
         answer: 'AI回答元素',
         'clean-class': '清理元素Class',
-        'code-content': '代码内容元素' // 新增
+        'code-content': '代码内容元素'
     };
-  
     function _isPureHashClass(c) {
         if (/^[a-f0-9]{5,}$/i.test(c)) return true;
         if (/^(css|sc|emotion|styled)-[a-z0-9]{4,}$/i.test(c)) return true;
         return false;
     }
-  
     function _stripClassHash(c) {
         return c.replace(/[_-][a-f0-9]{5,8}$/i, '');
     }
-  
     function genSelector(el) {
         if (!el || el === document.body || el === document.documentElement) return '';
         if (el.id && !/\d/.test(el.id)) {
             const sel = '#' + CSS.escape(el.id);
-            try {
-                if (document.querySelectorAll(sel).length === 1) return sel;
-            } catch (_) {}
+            try { if (document.querySelectorAll(sel).length === 1) return sel; } catch (_) {}
         }
         for (const attr of ['data-testid', 'data-test-id', 'data-role', 'data-cy']) {
             const val = el.getAttribute(attr);
             if (val) {
                 const sel = `${el.tagName.toLowerCase()}[${attr}="${CSS.escape(val)}"]`;
-                try {
-                    if (document.querySelectorAll(sel).length === 1) return sel;
-                } catch (_) {}
+                try { if (document.querySelectorAll(sel).length === 1) return sel; } catch (_) {}
             }
         }
         const role = el.getAttribute('role');
         if (role) {
             const sel = `${el.tagName.toLowerCase()}[role="${CSS.escape(role)}"]`;
-            try {
-                if (document.querySelectorAll(sel).length === 1) return sel;
-            } catch (_) {}
+            try { if (document.querySelectorAll(sel).length === 1) return sel; } catch (_) {}
         }
         if (el.className && typeof el.className === 'string') {
             const allCls = el.className.trim().split(/\s+/).filter(c => c);
             const cleanCls = allCls.filter(c => !_isPureHashClass(c) && !/^(_|-{2})/.test(c) && !/^(is|has|can|should)/.test(c) && !/[_-][a-f0-9]{5,8}$/i.test(c));
             if (cleanCls.length) {
                 const sel = `${el.tagName.toLowerCase()}.${cleanCls.map(c => CSS.escape(c)).join('.')}`;
-                try {
-                    if (document.querySelectorAll(sel).length === 1) return sel;
-                } catch (_) {}
+                try { if (document.querySelectorAll(sel).length === 1) return sel; } catch (_) {}
             }
             const hashCls = allCls.filter(c => !_isPureHashClass(c) && !/^(_|-{2})/.test(c) && !/^(is|has|can|should)/.test(c) && /[_-][a-f0-9]{5,8}$/i.test(c));
             if (hashCls.length) {
                 const stripped = hashCls.map(c => _stripClassHash(c)).filter(s => s.length >= 3);
                 if (stripped.length) {
                     const sel = `${el.tagName.toLowerCase()}${stripped.map(s => `[class*="${CSS.escape(s)}"]`).join('')}`;
-                    try {
-                        if (document.querySelectorAll(sel).length === 1) return sel;
-                    } catch (_) {}
+                    try { if (document.querySelectorAll(sel).length === 1) return sel; } catch (_) {}
                 }
             }
         }
@@ -468,12 +431,9 @@
             cur = cur.parentElement;
         }
         const sel = segs.join(' > ');
-        try {
-            if (document.querySelectorAll(sel).length === 1) return sel;
-        } catch (_) {}
+        try { if (document.querySelectorAll(sel).length === 1) return sel; } catch (_) {}
         return sel;
     }
-  
     function pickerEnter(type) {
         _pickActive = true;
         _pickType = type;
@@ -504,7 +464,6 @@
         document.addEventListener('scroll', _syncHighlightPositions, true);
         window.addEventListener('resize', _syncHighlightPositions);
     }
-  
     function pickerExit() {
         _pickActive = false;
         _pickType = '';
@@ -522,7 +481,6 @@
         _levelPanel = null;
         showPanel();
     }
-  
     function _targetAt(x, y) {
         let el = document.elementFromPoint(x, y);
         while (el && el.shadowRoot) {
@@ -533,7 +491,6 @@
         while (el && PICKER_IDS.has(el.id)) el = el.parentElement;
         return el;
     }
-  
     function _onMove(e) {
         e.stopPropagation();
         if (!_pickedEl) {
@@ -543,7 +500,6 @@
             _updateLockHL();
         }
     }
-  
     function _getElementDigest(el) {
         const tag = el.tagName.toLowerCase();
         if (['input','textarea','select'].includes(tag)) {
@@ -563,15 +519,12 @@
         if (text) return `${tag}: "${text}"`;
         return tag;
     }
-  
     function _highlightEl(el, mouseX, mouseY) {
         const r = el.getBoundingClientRect();
         _pickHL.style.display = 'block';
         Object.assign(_pickHL.style, {
-            left: (r.left-2)+'px',
-            top: (r.top-2)+'px',
-            width: (r.width+4)+'px',
-            height: (r.height+4)+'px'
+            left: (r.left-2)+'px', top: (r.top-2)+'px',
+            width: (r.width+4)+'px', height: (r.height+4)+'px'
         });
         const sel = genSelector(el);
         const digest = _getElementDigest(el);
@@ -592,49 +545,41 @@
         diagParts.push(`<span class="ag-diag-size">${w}×${h}</span>`);
         if (el.shadowRoot) diagParts.push(`<span class="ag-diag-shadow">ShadowDOM</span>`);
         const diagHtml = diagParts.length ? `<div class="ag-diag-line">${diagParts.join('<span class="ag-diag-sep">|</span>')}</div>` : '';
-        _pickTip.innerHTML = _lockedBaseEl ? `<span class="ag-tip-sel"><span id="ag-show-levels">展开所有层级</span><span>${esc(sel)} ←${tag}${digestStr}</span></span>${diagHtml}` : `<span class="ag-tip-sel"><span>${esc(sel)} ←${tag}${digestStr}</span></span>${diagHtml}`;
+        _pickTip.innerHTML = _lockedBaseEl
+            ? `<span class="ag-tip-sel"><span id="ag-show-levels">展开所有层级</span><span>${esc(sel)} ←${tag}${digestStr}</span></span>${diagHtml}`
+            : `<span class="ag-tip-sel"><span>${esc(sel)} ←${tag}${digestStr}</span></span>${diagHtml}`;
         _pickTip.style.opacity = '1';
         _pickTip.style.left = Math.min(mouseX + 14, innerWidth - 510) + 'px';
         _pickTip.style.top = (mouseY + 22) + 'px';
     }
-  
     function _updateLockHL() {
         if (!_pickLockHL || !_lockedBaseEl) return;
         const r = _lockedBaseEl.getBoundingClientRect();
         _pickLockHL.style.display = 'block';
         Object.assign(_pickLockHL.style, {
-            left: (r.left-2)+'px',
-            top: (r.top-2)+'px',
-            width: (r.width+4)+'px',
-            height: (r.height+4)+'px'
+            left: (r.left-2)+'px', top: (r.top-2)+'px',
+            width: (r.width+4)+'px', height: (r.height+4)+'px'
         });
     }
-  
     function _syncHighlightPositions() {
         if (_pickHL && _pickedEl) {
             const r = _pickedEl.getBoundingClientRect();
             Object.assign(_pickHL.style, {
-                left: (r.left - 2) + 'px',
-                top: (r.top - 2) + 'px',
-                width: (r.width + 4) + 'px',
-                height: (r.height + 4) + 'px'
+                left: (r.left - 2) + 'px', top: (r.top - 2) + 'px',
+                width: (r.width + 4) + 'px', height: (r.height + 4) + 'px'
             });
         }
         if (_pickLockHL && _lockedBaseEl) {
             const r = _lockedBaseEl.getBoundingClientRect();
             Object.assign(_pickLockHL.style, {
-                left: (r.left - 2) + 'px',
-                top: (r.top - 2) + 'px',
-                width: (r.width + 4) + 'px',
-                height: (r.height + 4) + 'px'
+                left: (r.left - 2) + 'px', top: (r.top - 2) + 'px',
+                width: (r.width + 4) + 'px', height: (r.height + 4) + 'px'
             });
         }
     }
-  
     function _hideLockHL() {
         if (_pickLockHL) _pickLockHL.style.display = 'none';
     }
-  
     function _showLevelPanel() {
         if (!_lockedBaseEl) return;
         if (!_levelPanel) {
@@ -682,7 +627,6 @@
             };
         });
     }
-  
     function _onClick(e) {
         if (_levelPanel && _levelPanel.style.display !== 'none' && _levelPanel.contains(e.target)) return;
         e.stopPropagation();
@@ -717,7 +661,9 @@
                     _domStack.push(_pickedEl);
                     _pickedEl = _pickedEl.parentElement;
                     log('INFO', `向上穿透至: <${_pickedEl.tagName.toLowerCase()}> (栈深度: ${_domStack.length})`);
-                } else log('WARN', '已到达顶层 body，无法继续向上');
+                } else {
+                    log('WARN', '已到达顶层 body，无法继续向上');
+                }
             } else {
                 _hideLockHL();
                 _domStack = [];
@@ -730,7 +676,6 @@
         _highlightEl(_pickedEl, e.clientX, e.clientY);
         _updateBarInfo();
     }
-  
     function _onCtx(e) {
         if (_levelPanel && _levelPanel.style.display !== 'none' && _levelPanel.contains(e.target)) return;
         e.stopPropagation();
@@ -750,7 +695,9 @@
                 _updateLockHL();
                 log('INFO', `右键超出锁定范围，重新选择: <${_pickedEl.tagName.toLowerCase()}>`);
                 _highlightEl(_pickedEl, e.clientX, e.clientY);
-            } else _pickHL.style.display = 'none';
+            } else {
+                _pickHL.style.display = 'none';
+            }
             _updateBarInfo();
             return;
         }
@@ -759,19 +706,19 @@
             log('INFO', `向下回退至: <${_pickedEl.tagName.toLowerCase()}> (栈深度: ${_domStack.length})`);
             _highlightEl(_pickedEl, e.clientX, e.clientY);
             _updateBarInfo();
-        } else log('WARN', '已在最底层，无法回退');
+        } else {
+            log('WARN', '已在最底层，无法回退');
+        }
     }
-  
     function _updateBarInfo() {
         if (!_pickBar || !_pickedEl) return;
         _pickBar.innerHTML = `🎯 当前层级: <span style="color:#86efac">${_domStack.length}</span> (${_pickedEl.tagName.toLowerCase()}) | <span style="font-size:12px;opacity:0.7">左键↑ 右键↓ Shift+点击确认</span>`;
     }
-  
     function _confirmSelection(el) {
         if (_pickType === 'clean-class') {
             let classes = [];
             if (el.className && typeof el.className === 'string') {
-                classes = el.className.trim().split(/\s+/).filter(c => c && !_isPureHashClass(c) && !/^(_|-{2})/.test(c) );
+                classes = el.className.trim().split(/\s+/).filter(c => c && !_isPureHashClass(c) && !/^(_|-{2})/.test(c));
             }
             if (classes.length === 0) {
                 log('WARN', '该元素没有有效的class，请重新选择');
@@ -802,7 +749,7 @@
         if (_pickType === 'input') c.selInputBox = sel;
         if (_pickType === 'send') c.selSendButton = sel;
         if (_pickType === 'answer') c.selAnswerItem = sel;
-        if (_pickType === 'code-content') c.selCodeContentElement = sel; // 新增：保存代码内容元素选择器
+        if (_pickType === 'code-content') c.selCodeContentElement = sel;
         cfgSaveRuntime(c);
         log('OK', `已选择 [${TYPE_LABEL[_pickType]}]:${sel}`);
         const ctxChain = [];
@@ -817,7 +764,6 @@
         log('INFO', `目标元素详情: <${el.tagName.toLowerCase()}>, class="${el.className}", id="${el.id}"`);
         pickerExit();
     }
-  
     function _onKey(e) {
         if (e.key === 'Escape') {
             e.stopPropagation();
@@ -830,12 +776,10 @@
             _confirmSelection(_pickedEl);
         }
     }
-  
     /* ================================================================
      * 5. 配置面板
      * ================================================================ */
     let _panel = null;
-  
     function showPanel() {
         if (!_panel) {
             _panel = document.createElement('div');
@@ -849,11 +793,9 @@
         _renderPanel();
         _panel.style.display = 'block';
     }
-  
     function hidePanel() {
         if (_panel) _panel.style.display = 'none';
     }
-  
     function _renderRules(rules) {
         const list = _panel.querySelector('#ag-rule-list');
         if (!list) return;
@@ -882,7 +824,6 @@
             </div>
         `).join('');
     }
-  
     function _collectRulesFromDOM() {
         const items = _panel.querySelectorAll('.ag-rule-item');
         const rules = [];
@@ -897,7 +838,6 @@
         });
         return rules;
     }
-  
     function _renderPanel() {
         const store = _loadStore();
         const site = _matchSite();
@@ -1029,9 +969,7 @@
             _renderPanel();
         };
         _panel.querySelector('#ag-wl-add').onclick = doAdd;
-        wlInput.onkeydown = e => {
-            if (e.key === 'Enter') doAdd();
-        };
+        wlInput.onkeydown = e => { if (e.key === 'Enter') doAdd(); };
         _panel.querySelectorAll('.ag-wl-rm').forEach(btn => {
             btn.onclick = () => {
                 const s = _loadStore();
@@ -1077,7 +1015,7 @@
         }
         _panel.querySelector('#ag-pick-chat').onclick = () => pickerEnter('chat');
         _panel.querySelector('#ag-pick-answer').onclick = () => pickerEnter('answer');
-        _panel.querySelector('#ag-pick-code-content').onclick = () => pickerEnter('code-content'); // 新增：代码内容元素选择器
+        _panel.querySelector('#ag-pick-code-content').onclick = () => pickerEnter('code-content');
         _panel.querySelector('#ag-pick-input').onclick = () => pickerEnter('input');
         _panel.querySelector('#ag-pick-send').onclick = () => pickerEnter('send');
         _panel.querySelector('#ag-pick-clean-keyword').onclick = () => pickerEnter('clean-class');
@@ -1098,7 +1036,7 @@
                 btn.classList.add('active');
             };
         });
-        ['chat', 'input', 'send', 'answer', 'code-content'].forEach(t => { // 新增：code-content
+        ['chat', 'input', 'send', 'answer', 'code-content'].forEach(t => {
             const key = t === 'chat' ? 'selChatContainer' : t === 'input' ? 'selInputBox' : t === 'send' ? 'selSendButton' : t === 'answer' ? 'selAnswerItem' : 'selCodeContentElement';
             _panel.querySelector(`#ag-s-${t}`).addEventListener('input', function () {
                 _showMatch(this.value.trim(), `ag-m-${t}`);
@@ -1130,7 +1068,7 @@
             siteData.apiUrl = _panel.querySelector('#ag-api').value.trim() || SITE_DEFAULTS.apiUrl;
             siteData.selChatContainer = _panel.querySelector('#ag-s-chat').value.trim();
             siteData.selAnswerItem = _panel.querySelector('#ag-s-answer').value.trim() || '.answer';
-            siteData.selCodeContentElement = _panel.querySelector('#ag-s-code-content').value.trim(); // 新增：保存代码内容元素选择器
+            siteData.selCodeContentElement = _panel.querySelector('#ag-s-code-content').value.trim();
             siteData.selInputBox = _panel.querySelector('#ag-s-input').value.trim();
             siteData.selSendButton = _panel.querySelector('#ag-s-send').value.trim();
             siteData.showAutoSendToggle = _panel.querySelector('#ag-show-toggle').checked;
@@ -1157,7 +1095,6 @@
             if (s.debugMode) showDebug();
         };
     }
-  
     function _showMatch(sel, id) {
         const el = _panel.querySelector('#' + id);
         if (!sel) {
@@ -1171,7 +1108,6 @@
             el.innerHTML = '<div class="ag-match ag-m-fail">✘ 语法错误</div>';
         }
     }
-  
     /* ================================================================
      * 6. Agent 核心逻辑
      * ================================================================ */
@@ -1181,7 +1117,6 @@
     let _cmdQueue = [];
     let _sendPromiseChain = Promise.resolve();
     let _isCalibrating = false;
-  
     // ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
     // 流式任务状态机
     // ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
@@ -1189,7 +1124,6 @@
     const TASK_END = '\n=== Poker Agent Task End ===\n<|im_end|>\n';
     let _taskList = [];
     let _sseEventSource = null;
-  
     function _pollConfig() {
         const c = cfgLoad();
         const pollUrl = c.apiUrl.replace('/agent-exec', '/agent-config-poll');
@@ -1213,94 +1147,70 @@
                 }
                 _pollConfig();
             },
-            onerror() {
-                setTimeout(_pollConfig, 5000);
-            },
-            ontimeout() {
-                setTimeout(_pollConfig, 2000);
-            }
+            onerror() { setTimeout(_pollConfig, 5000); },
+            ontimeout() { setTimeout(_pollConfig, 2000); }
         });
     }
-  
     let _pollTimer = null;
     let _lastAnswerEl = null;
     const _currentRoundSent = new Set();
     let _heartbeatCounter = 0;
     let _knownAnswers = [];
     let _noAnswerCount = 0;
-  
-  function getCleanText(el, cfg) {
-      const clone = el.cloneNode(true);
-  
-      // [新增] 优先使用“代码内容元素选择器”提取纯净代码文本
-      if (cfg.selCodeContentElement) {
-          try {
-              // 直接在整个回答节点中查找匹配的元素
-              const codeEls = clone.querySelectorAll(cfg.selCodeContentElement);
-              if (codeEls.length > 0) {
-                  codeEls.forEach(codeEl => {
-                      // 找到包裹它的 pre 元素（如果有）
-                      const preParent = codeEl.closest('pre');
-                      if (preParent && preParent.parentNode) {
-                          // 用纯文本节点替换掉整个 pre 元素
-                          // 这样能彻底干掉 pre 自带的换行、class、以及多余的空行
-                          // 前后加换行确保代码块与其他文本隔离
-                          const textNode = document.createTextNode('\n' + codeEl.textContent + '\n');
-                          preParent.parentNode.replaceChild(textNode, preParent);
-                      } else if (codeEl.parentNode) {
-                          // 如果不是 pre 包裹的，直接替换自身
-                          const textNode = document.createTextNode(codeEl.textContent);
-                          codeEl.parentNode.replaceChild(textNode, codeEl);
-                      }
-                  });
-                  //log('INFO', `✨ 已通过选择器提取 ${codeEls.length} 个代码块纯净文本`);
-              } else {
-                  //log('WARN', `代码内容元素选择器 "${cfg.selCodeContentElement}" 未匹配到元素，回退到默认提取方式`);
-              }
-          } catch(e) {
-              log('ERR', `代码内容元素选择器语法错误: ${e.message}`);
-          }
-      }
-  
-      // 原有的清理逻辑
-      const ignoreKeywords = (cfg.cleanIgnoreClassKeywords || 'thinking,reasoning,probe,deepseek-reason')
-          .split(',').map(s => s.trim()).filter(s => s);
-      if (ignoreKeywords.length > 0) {
-          const sel = ignoreKeywords.map(k => `[class*="${CSS.escape(k)}"]`).join(', ');
-          try {
-              clone.querySelectorAll(sel).forEach(n => n.remove());
-          } catch(_) {}
-      }
-      clone.querySelectorAll('details').forEach(n => n.remove());
-      if (cfg.cleanRemoveButtonLike !== false) {
-          clone.querySelectorAll('button, [class*="copy"], [class*="operate"], [class*="action"], [class*="toolbar"]').forEach(n => n.remove());
-      }
-  
-      // 处理 pre 标签 (如果前面已经用选择器把 pre 替换成了文本，这里就不会再找到 pre)
-      if (cfg.cleanRemovePre !== false) {
-          clone.querySelectorAll('pre').forEach(n => {
-              if (clone.textContent.includes('\u3010CodeSTART\u3011')) return;
-              n.remove();
-          });
-      }
-  
-      // 注入换行符
-      (function injectNewlines(node) {
-          for (let i = node.childNodes.length - 1; i >= 0; i--) {
-              const child = node.childNodes[i];
-              if (child.nodeType === 1) {
-                  if (/^(P|DIV|BR|LI|H[1-6]|PRE|BLOCKQUOTE|TR|HR|TABLE|UL|OL|SECTION|ARTICLE|HEADER|FOOTER|FIGURE|DD|DT|DL|MAIN|ASIDE|NAV|ADDRESS|FIELDSET|SUMMARY|FIGCAPTION|DIALOG|SEARCH)$/.test(child.tagName)) {
-                      node.insertBefore(document.createTextNode('\n'), child);
-                  }
-                  injectNewlines(child);
-              }
-          }
-      })(clone);
-  
-      return clone.textContent;
-  }
-  
-  
+    function getCleanText(el, cfg) {
+        const clone = el.cloneNode(true);
+        // [新增] 优先使用"代码内容元素选择器"提取纯净代码文本
+        if (cfg.selCodeContentElement) {
+            try {
+                const codeEls = clone.querySelectorAll(cfg.selCodeContentElement);
+                if (codeEls.length > 0) {
+                    codeEls.forEach(codeEl => {
+                        const preParent = codeEl.closest('pre');
+                        if (preParent && preParent.parentNode) {
+                            const textNode = document.createTextNode('\n' + codeEl.textContent + '\n');
+                            preParent.parentNode.replaceChild(textNode, preParent);
+                        } else if (codeEl.parentNode) {
+                            const textNode = document.createTextNode(codeEl.textContent);
+                            codeEl.parentNode.replaceChild(textNode, codeEl);
+                        }
+                    });
+                }
+            } catch(e) {
+                log('ERR', `代码内容元素选择器语法错误: ${e.message}`);
+            }
+        }
+        // 原有的清理逻辑
+        const ignoreKeywords = (cfg.cleanIgnoreClassKeywords || 'thinking,reasoning,probe,deepseek-reason')
+            .split(',').map(s => s.trim()).filter(s => s);
+        if (ignoreKeywords.length > 0) {
+            const sel = ignoreKeywords.map(k => `[class*="${CSS.escape(k)}"]`).join(', ');
+            try { clone.querySelectorAll(sel).forEach(n => n.remove()); } catch(_) {}
+        }
+        clone.querySelectorAll('details').forEach(n => n.remove());
+        if (cfg.cleanRemoveButtonLike !== false) {
+            clone.querySelectorAll('button, [class*="copy"], [class*="operate"], [class*="action"], [class*="toolbar"]').forEach(n => n.remove());
+        }
+        // 处理 pre 标签 (如果前面已经用选择器把 pre 替换成了文本，这里就不会再找到 pre)
+        if (cfg.cleanRemovePre !== false) {
+            clone.querySelectorAll('pre').forEach(n => {
+                if (clone.textContent.includes('\u3010CodeSTART\u3011')) return;
+                n.remove();
+            });
+        }
+        // 注入换行符
+        (function injectNewlines(node) {
+            for (let i = node.childNodes.length - 1; i >= 0; i--) {
+                const child = node.childNodes[i];
+                if (child.nodeType === 1) {
+                    if (/^(P|DIV|BR|LI|H[1-6]|PRE|BLOCKQUOTE|TR|HR|TABLE|UL|OL|SECTION|ARTICLE|HEADER|FOOTER|FIGURE|DD|DT|DL|MAIN|ASIDE|NAV|ADDRESS|FIELDSET|SUMMARY|FIGCAPTION|DIALOG|SEARCH)$/.test(child.tagName)) {
+                        node.insertBefore(document.createTextNode('\n'), child);
+                    }
+                    injectNewlines(child);
+                }
+            }
+        })(clone);
+        return clone.textContent;
+    }
     function _getSendBtnFingerprint() {
         const c = cfgLoad();
         if (!c.selSendButton) return null;
@@ -1314,7 +1224,6 @@
         const ariaLabel = el.getAttribute('aria-label') || '';
         return `${el.tagName}|${style}|${cls}|${innerTag}|${disabled}|${ariaDisabled}|${ariaLabel}`;
     }
-  
     function _makeDraggable(el) {
         el.addEventListener('mousedown', (e) => {
             if (e.target.closest('button') || e.target.closest('input')) return;
@@ -1339,7 +1248,6 @@
             e.preventDefault();
         });
     }
-  
     function _startCalibration() {
         if (_isCalibrating) return;
         _isCalibrating = true;
@@ -1389,10 +1297,7 @@
             bar.querySelector('#ag-cal-stop').onclick = () => stopCalibration();
             if (canFinish) {
                 bar.querySelector('#ag-cal-finish').onclick = () => {
-                    cfgSaveRuntime({
-                        sendBtnBusyFingerprints: [...selectedBusy],
-                        sendBtnIdleFingerprints: [...selectedIdle]
-                    });
+                    cfgSaveRuntime({ sendBtnBusyFingerprints: [...selectedBusy], sendBtnIdleFingerprints: [...selectedIdle] });
                     log('OK', `校准完成！忙碌: ${selectedBusy.size}个, 空闲: ${selectedIdle.size}个`);
                     log('INFO', '注意：指纹算法已升级（新增disabled/aria属性），旧校准数据已自动适配新格式');
                     stopCalibration();
@@ -1438,7 +1343,6 @@
             }
         }, 300);
     }
-  
     function _waitForLLMFinish() {
         return new Promise(resolve => {
             const c = cfgLoad();
@@ -1489,7 +1393,6 @@
             checkPhase1();
         });
     }
-  
     async function _checkAndDispatch() {
         if (_isProcessing || _cmdQueue.length === 0) return;
         _isProcessing = true;
@@ -1503,7 +1406,6 @@
         _cmdQueue = [];
         _dispatch(batch);
     }
-  
     function _dispatch(cmdBatch) {
         const c = cfgLoad();
         // ===== 新增：应用自定义清洗规则，并移除硬编码替换 =====
@@ -1583,53 +1485,42 @@
             }
         });
     }
-  
     /**
-     * 解码 __CLIPBOARD_FILE__ 标记的文件内容
+     * 解码 __CLIPBOARD_FILE__ 标记的文件内容 (async)
      * 新版格式: __CLIPBOARD_FILE__ID|||<uuid>|||<filename>|||<size> (通过HTTP下载)
      * 旧版格式: __CLIPBOARD_FILE__<filename>|||<size>|||<base64> (兼容性回退)
      */
-    function _decodeClipboardFile(resultText) {
+    async function _decodeClipboardFile(resultText) {
         const marker = '__CLIPBOARD_FILE__';
         const markerIdx = resultText.indexOf(marker);
         if (markerIdx === -1) return null;
-
         const beforeMarker = resultText.substring(0, markerIdx);
         let afterMarker = resultText.substring(markerIdx + marker.length);
-        
         // 1. 清理空白
         let cleanStr = afterMarker.replace(/\x00/g, '').replace(/\s/g, '');
         const parts = cleanStr.split('|||');
-
         // 2. 判别新旧格式
         const isNewFormat = (parts[0] === 'ID');
-
         if (isNewFormat) {
             // === 新格式：HTTP下载 ===
             const fileId = parts[1];
             const filename = parts[2] || 'unknown';
             const sizeStr = parts[3];
-
             if (!fileId || !sizeStr) {
                 log('WARN', `新格式标记解析失败: ${cleanStr.substring(0, 80)}`);
                 return null;
             }
-
             log('INFO', `📡 检测到大文件任务，开始下载: ${filename} (${sizeStr} bytes)`);
-            
-            // 同步等待下载完成 (虽然这是网络操作，但在 finalize 流程中需要等待)
-            const b64Data = _downloadFileFromAgent(fileId);
+            // [修复] await 等待下载完成
+            const b64Data = await _downloadFileFromAgent(fileId);
             if (!b64Data) return null; // 下载失败
-
             log('OK', `📄 文件下载完成: ${filename} (${sizeStr} bytes)`);
             return { filename, size: parseInt(sizeStr), text: '[由HTTP传输]', base64: b64Data, beforeMarker };
-
         } else {
             // === 旧格式：Base64解析 (兼容性保留) ===
             let filename = '';
             let sizeStr = '';
             let base64Raw = '';
-
             if (parts.length >= 3) {
                 // 正常分隔符
                 filename = parts[0];
@@ -1650,22 +1541,18 @@
                     }
                 }
             }
-
             if (!sizeStr || !base64Raw) {
                 log('WARN', `旧格式标记解析失败: ${cleanStr.substring(0, 80)}`);
                 return null;
             }
-
             try {
                 let base64Clean = base64Raw.replace(/-/g, '+').replace(/_/g, '/');
                 base64Clean = base64Clean.replace(/[^A-Za-z0-9+/=]/g, '');
                 while (base64Clean.length % 4) base64Clean += '=';
-                
                 const binaryStr = atob(base64Clean);
                 const bytes = new Uint8Array(binaryStr.length);
                 for (let i = 0; i < binaryStr.length; i++) bytes[i] = binaryStr.charCodeAt(i);
                 const text = new TextDecoder('utf-8').decode(bytes);
-                
                 log('OK', `📄 文件解码成功 (旧格式): ${filename} (${sizeStr} bytes → ${text.length} 字符)`);
                 return { filename, size: parseInt(sizeStr), text, base64: base64Clean, beforeMarker };
             } catch (e) {
@@ -1674,21 +1561,16 @@
             }
         }
     }
-
     /**
      * 从后端下载文件内容并转换为 Base64
-     * TODO: [PokerAgent] 增加下载进度回调
      */
     function _downloadFileFromAgent(fileId) {
         const c = cfgLoad();
         const apiUrl = c.apiUrl.replace('/agent-exec', '/agent-file-download');
-        
-        // 使用 XMLHttpRequest 或 GM_xmlhttpRequest (GM_xhr 不直接支持 arraybuffer，需手动处理)
         return new Promise((resolve) => {
             const xhr = new XMLHttpRequest();
             xhr.open('GET', apiUrl + '?id=' + fileId, true);
             xhr.responseType = 'arraybuffer';
-            
             xhr.onload = function() {
                 if (this.status === 200) {
                     const u8 = new Uint8Array(this.response);
@@ -1700,65 +1582,45 @@
                     resolve(null);
                 }
             };
-            
             xhr.onerror = function() {
                 log('ERR', `文件下载网络错误`);
                 resolve(null);
             };
-            
             xhr.send();
         });
     }
-  
     /**
      * 粘贴文件到输入框（不触发发送）
-     * 使用 ClipboardEvent + DataTransfer 模拟真实的文件粘贴，
-     * 效果等同于手动选择文件后按 Ctrl+V
      */
     async function _doPasteFile(input, filename, fileSize, b64Data) {
         try {
-            // Base64 解码为二进制字节数组
             const byteChars = atob(b64Data);
             const byteArr = new Uint8Array(byteChars.length);
             for (let i = 0; i < byteChars.length; i++) byteArr[i] = byteChars.charCodeAt(i);
-            // 根据扩展名推断 MIME 类型
             const ext = filename.split('.').pop().toLowerCase();
             const mimeMap = {
-                'js': 'text/javascript',
-                'ts': 'text/typescript',
-                'html': 'text/html',
-                'css': 'text/css',
-                'json': 'application/json',
-                'md': 'text/markdown',
-                'py': 'text/x-python',
-                'txt': 'text/plain',
-                'xml': 'text/xml',
-                'csv': 'text/csv',
-                'java': 'text/x-java-source',
-                'gradle': 'text/plain',
-                'properties': 'text/plain',
-                'toml': 'text/plain',
-                'yml': 'text/yaml',
-                'yaml': 'text/yaml'
+                'js': 'text/javascript', 'ts': 'text/typescript', 'html': 'text/html',
+                'css': 'text/css', 'json': 'application/json', 'md': 'text/markdown',
+                'py': 'text/x-python', 'txt': 'text/plain', 'xml': 'text/xml',
+                'csv': 'text/csv', 'java': 'text/x-java-source', 'gradle': 'text/plain',
+                'properties': 'text/plain', 'toml': 'text/plain', 'yml': 'text/yaml', 'yaml': 'text/yaml'
             };
             const file = new File([byteArr], filename, { type: mimeMap[ext] || 'text/plain' });
             input.focus();
-            // 构造 DataTransfer + ClipboardEvent 模拟真实粘贴
             const dt = new DataTransfer();
             dt.items.add(file);
             const pasteEvt = new ClipboardEvent('paste', { bubbles: true, cancelable: true });
             Object.defineProperty(pasteEvt, 'clipboardData', { get() { return dt; } });
             input.dispatchEvent(pasteEvt);
             log('OK', `📎 已粘贴文件: ${filename}（${fileSize} 字节）`);
-            // 等待粘贴事件处理完成（DOM 变化稳定）
             await _smartWait(input, { checkDOM: true, maxWait: 3000 });
         } catch (err) {
             log('ERR', `文件粘贴失败: ${err.message}`);
         }
     }
-  
     /**
      * 渲染专属区块：只替换两个标记之间的内容，保留用户在区块外的输入
+     * [v14] 移除了 __CLIPBOARD_FILE__ 解码逻辑，统一在 _finalizeAndSend 中处理
      */
     function _renderTaskBlock() {
         const c = cfgLoad();
@@ -1769,24 +1631,12 @@
         _taskList.forEach((task, idx) => {
             if (task.status === 'done') {
                 let resultText = task.result || '';
-                // 处理 __CLIPBOARD_FILE__ 标记 (剪贴板模式文件内容)
-                if (resultText.includes('__CLIPBOARD_FILE__')) {
-                    const decoded = _decodeClipboardFile(resultText);
-                    if (decoded) {
-                        if (_clipboardMode) {
-                            // 剪贴板模式：流式更新时只显示占位文本，
-                            // 实际文件粘贴在 _finalizeAndSend 中统一执行
-                            resultText = (decoded.beforeMarker || '') + `[文件 ${decoded.filename} 等待粘贴...]`;
-                        } else {
-                            // 非剪贴板模式：直接把文件文本内容写进输入框
-                            resultText = (decoded.beforeMarker || '') + decoded.text;
-                        }
-                    }
-                }
+                // [v14] 不再在此处解码 __CLIPBOARD_FILE__，直接输出原始 resultText
                 block += `[Poker Agent] [done]\n${resultText}\n`;
             } else if (task.status === 'running') {
                 block += `[Poker Agent] [running]\n${task.logs.join('\n')}\n`;
-            } else { // waiting
+            } else {
+                // waiting
                 block += `[Poker Agent] [waiting]\n\n`;
             }
             if (idx < _taskList.length - 1) block += '\n';
@@ -1818,21 +1668,18 @@
         } else {
             // 首次渲染或标记被删了：把当前所有文本当作前缀
             prefix = currentText.trim();
-            if (prefix) prefix += '\n'; // 保证用户内容和区块间有换行
+            if (prefix) prefix += '\n';
         }
         // 4. 拼接 前缀 + 新区块 + 后缀，写入输入框
         const finalText = prefix + block + suffix;
         _directInput(input, finalText, false);
     }
-  
     /**
      * 建立 SSE 长连接，实时更新任务状态
      */
     function _initSSE() {
         if (_sseEventSource) {
-            try {
-                _sseEventSource.abort();
-            } catch(e) {}
+            try { _sseEventSource.abort(); } catch(e) {}
             _sseEventSource = null;
         }
         const c = cfgLoad();
@@ -1875,7 +1722,6 @@
             }
         });
     }
-  
     function _handleSSEData(data) {
         if (data.id === 'all') return;
         const task = _taskList.find(t => t.id === data.id);
@@ -1894,19 +1740,15 @@
         _renderTaskBlock();
         if (_taskList.length > 0 && _taskList.every(t => t.status === 'done')) {
             if (_sseEventSource) {
-                try {
-                    _sseEventSource.abort();
-                } catch(e) {}
+                try { _sseEventSource.abort(); } catch(e) {}
                 _sseEventSource = null;
             }
             _finalizeAndSend();
         }
     }
-  
     /**
      * 所有任务完成后的最终处理：写入结果并触发发送
-     * 如果有 __CLIPBOARD_FILE__ 任务，则执行文件粘贴；
-     * 但所有结果文本仍统一通过 _renderTaskBlock 写入，确保格式一致。
+     * [v14] 文件下载统一在此处 async 处理，增加失败容错
      */
     async function _finalizeAndSend() {
         log('INFO', '✅ 所有任务完成，等待 LLM 输出完毕...');
@@ -1921,7 +1763,7 @@
             return;
         }
         // 检查是否有需要粘贴文件的任务
-        const hasFileTask = _taskList.some(t => t.status === 'done' && t.result && t.result.includes('__CLIPBOARD_FILE__') );
+        const hasFileTask = _taskList.some(t => t.status === 'done' && t.result && t.result.includes('__CLIPBOARD_FILE__'));
         // 【关键修改】如果有文件任务，先将任务结果中的文件标记替换为描述文本
         // 这样 _renderTaskBlock 就会将其作为普通文本处理，生成统一的区块格式
         if (hasFileTask) {
@@ -1930,12 +1772,19 @@
                 if (task.status !== 'done') continue;
                 const resultText = task.result || '';
                 if (resultText.includes('__CLIPBOARD_FILE__')) {
-                    const decoded = _decodeClipboardFile(resultText);
+                    // [v14] 使用 await 等待下载完成
+                    const decoded = await _decodeClipboardFile(resultText);
                     if (decoded) {
-                        // 将文件标记替换为描述文本，_renderTaskBlock 会将其作为普通文本处理
+                        // 下载成功：将文件标记替换为描述文本
                         task.result = (decoded.beforeMarker || '') + `[Poker Agent] 已粘贴文件：${decoded.filename}（${decoded.size} 字节）`;
                         // 暂存解码后的文件数据，用于后续粘贴
                         task._fileData = decoded;
+                    } else {
+                        // [v14 新增] 下载失败处理，避免显示 undefined 或原始ID
+                        log('ERR', `文件任务下载失败: ${task.id}`);
+                        task.result = `[Poker Agent] 文件下载失败 (HTTP 404 或网络错误)`;
+                        // 标记为不粘贴
+                        task._fileData = null;
                     }
                 }
             }
@@ -1960,7 +1809,6 @@
         _taskList = [];
         _checkAndDispatch();
     }
-  
     function _trySendByClick() {
         const c = cfgLoad();
         if (!c.selSendButton) {
@@ -1976,7 +1824,6 @@
         log('INFO', '👆 点击发送按钮发送');
         return true;
     }
-  
     function _executeSend(input) {
         const c = cfgLoad();
         const mode = c.autoSendMode || 'click';
@@ -2006,7 +1853,6 @@
                 break;
         }
     }
-  
     function _directInput(input, text, append = false) {
         input.focus();
         if (input.tagName === 'TEXTAREA' || input.tagName === 'INPUT') {
@@ -2025,22 +1871,15 @@
             document.execCommand('insertText', false, text);
         }
     }
-  
     function _trySendByEnter(input) {
         ['keydown', 'keypress', 'keyup'].forEach(evtType => {
             input.dispatchEvent(new KeyboardEvent(evtType, {
-                key: 'Enter',
-                code: 'Enter',
-                keyCode: 13,
-                which: 13,
+                key: 'Enter', code: 'Enter', keyCode: 13, which: 13,
                 charCode: evtType === 'keypress' ? 13 : 0,
-                bubbles: true,
-                cancelable: true,
-                composed: true
+                bubbles: true, cancelable: true, composed: true
             }));
         });
     }
-  
     function _smartWait(input, opts = {}) {
         const { expectValue, checkDOM = false, maxWait = 3000, interval = 50, stableNeed = 3 } = opts;
         return new Promise(resolve => {
@@ -2067,22 +1906,15 @@
             }, maxWait);
         });
     }
-  
     /* ================================================================
      * 6.5 发送模式选择器
      * ================================================================ */
     let _toggleEl = null;
     let _togglePosTimer = null;
-  
     function _initAutoSendToggle() {
         _destroyAutoSendToggle();
         let c;
-        try {
-            c = cfgLoad();
-        } catch(e) {
-            console.error('[Agent] cfgLoad异常:', e);
-            return;
-        }
+        try { c = cfgLoad(); } catch(e) { console.error('[Agent] cfgLoad异常:', e); return; }
         if (!c.showAutoSendToggle || !c.selSendButton) return;
         const mode = c.autoSendMode || 'click';
         _toggleEl = document.createElement('div');
@@ -2119,7 +1951,6 @@
             }, 500);
         }, 100);
     }
-  
     function _updateSliderPos() {
         if (!_toggleEl) return;
         const c = cfgLoad();
@@ -2136,7 +1967,6 @@
         const top = optRect.top - railRect.top + optRect.height / 2 - 5;
         thumb.style.top = top + 'px';
     }
-  
     function _updateTogglePosition() {
         if (!_toggleEl) return;
         const c = cfgLoad();
@@ -2173,7 +2003,6 @@
         _toggleEl.style.left = left + 'px';
         _toggleEl.style.top = top + 'px';
     }
-  
     function _destroyAutoSendToggle() {
         if (_togglePosTimer) {
             clearInterval(_togglePosTimer);
@@ -2184,13 +2013,11 @@
             _toggleEl = null;
         }
     }
-  
     /* ================================================================
      * 7. 启动入口
      * ================================================================ */
     GM_registerMenuCommand('⚙️ Agent 配置面板', showPanel);
     if (cfgLoad().debugMode) setTimeout(initDebugUI, 500);
-  
     function initAgent() {
         if (_pollTimer) {
             clearInterval(_pollTimer);
@@ -2253,7 +2080,8 @@
                     log('WARN', '🚨 对话被清空，重置状态...');
                 }
                 _knownAnswers = answers;
-                if (_heartbeatCounter % 20 === 0) log('INFO', `💓 心跳 | 队列${_cmdQueue.length}条 | 锁定:${_isProcessing} | 回答:${answers.length}个`);
+                if (_heartbeatCounter % 20 === 0)
+                    log('INFO', `💓 心跳 | 队列${_cmdQueue.length}条 | 锁定:${_isProcessing} | 回答:${answers.length}个`);
                 if (answers.length === 0) return;
                 const lastAnswer = answers[answers.length - 1];
                 if (lastAnswer !== _lastAnswerEl) {
@@ -2278,21 +2106,17 @@
             }
         }, 800);
     }
-  
     if (isWhitelisted()) {
         const start = () => setTimeout(initAgent, 1500);
         if (document.readyState === 'loading') document.addEventListener('DOMContentLoaded', start);
         else start();
     }
-  
     function esc(s) {
         const d = document.createElement('div');
         d.textContent = s;
         return d.innerHTML;
     }
-  
     function escAttr(s) {
         return String(s || '').replace(/&/g, '&amp;').replace(/"/g, '&quot;').replace(/'/g, '&#39;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
     }
-  })();
-  
+})();

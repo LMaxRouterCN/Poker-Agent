@@ -1,5 +1,4 @@
-
-"""PokerAgent - 本地接应服务 (SSE流式版) v26
+"""PokerAgent - 本地接应服务 (SSE流式版) v27
 启动方式： python agent_server.py
 默认监听：http://127.0.0.1:9966
 """
@@ -26,9 +25,9 @@ app = Flask(__name__)
 CORS(app)
 # 工作目录：脚本所在目录
 WORK_DIR = os.path.dirname(os.path.abspath(__file__))
-# [新增] 临时文件目录 (用于大文件传输)
-TEMP_FILE_DIR = os.path.join(WORK_DIR, '.agent_temp_files')
-os.makedirs(TEMP_FILE_DIR, exist_ok=True)
+def get_temp_dir():
+    """获取当前工作目录下的临时文件夹路径（动态跟随 WORK_DIR）"""
+    return os.path.join(WORK_DIR, '.agent_temp_files')
 # 帮助文档路径
 HELP_FILE = os.path.join(WORK_DIR, 'commands.md')
 # [新增] 专属回收站目录
@@ -45,12 +44,12 @@ _SYS_ENCODING = locale.getpreferredencoding(False) or 'gbk'
 # 任务队列与 SSE 流式架构
 # ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 task_queue = queue.Queue()
-sse_clients = []      # 存放所有连接的 SSE 客户端队列
+sse_clients = []  # 存放所有连接的 SSE 客户端队列
 _sse_lock = threading.Lock()  # 保护 sse_clients 的锁
 # ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 # 任务状态注册表（解决 SSE 晚订阅竞态：新客户端连接时回放历史状态）
 # ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
-_task_registry = {}   # task_id -> {'status':..., 'logs':[...], 'result':...}
+_task_registry = {}  # task_id -> {'status':..., 'logs':[...], 'result':...}
 _task_registry_lock = threading.Lock()
 def emit_task_event(evt):
     """更新任务注册表并推送给所有已连接的 SSE 客户端"""
@@ -251,7 +250,6 @@ def _get_original_path(trash_path):
         return os.path.join(drive, *parts[2:])
     else:
         return os.path.join(WORK_DIR, rel_path)
-    
 def _match_text_block(file_lines, old_lines, ignore_case=False, ignore_indent=False, normalize_ws=False, fuzzy_threshold=None):
     """
     通用文本块匹配方法，支持组合匹配条件。
@@ -267,12 +265,10 @@ def _match_text_block(file_lines, old_lines, ignore_case=False, ignore_indent=Fa
         return line
     proc_file = [_process(l) for l in file_lines]
     proc_old = [_process(l) for l in old_lines]
-    
     matches = []
     num_old = len(proc_old)
     if num_old == 0:
         return matches
-        
     for i in range(len(proc_file) - num_old + 1):
         is_match = True
         # 模糊匹配逻辑
@@ -293,12 +289,9 @@ def _match_text_block(file_lines, old_lines, ignore_case=False, ignore_indent=Fa
                 if proc_old[j] != proc_file[i+j]:
                     is_match = False
                     break
-        
         if is_match:
             matches.append(i)
-            
     return matches
-
 def _check_permission(cmd, *paths):
     # [新增] 拦截对专属回收站的非授权访问
     if cmd not in ('delete', 'restore'):
@@ -446,34 +439,28 @@ def execute_line_streaming(line, task_id):
             tokens = parse_args_with_quotes(opts_str.strip())
             if not tokens:
                 return '错误：缺少文件路径。发送 @@help find 获取指令详细用法'
-            
             filepath = safe_path(W, tokens[0])
             flags = tokens[1:] if len(tokens) > 1 else []
-            
             # 解析修饰参数
             use_regex = '-r' in flags
             partial = '-p' in flags
             ignore_case = '-i' in flags
-            
             # 清理首尾换行，保留原始缩进
             search_text = search_text.strip('\n')
             if not search_text:
                 return '错误：查找内容为空。'
-            
             err = _check_permission('find', filepath)
-            if err: return err
-            
+            if err:
+                return err
             if os.path.isdir(filepath):
                 return f'错误：内容查找模式下，目标必须是文件，不能是目录 - {filepath}'
             if not os.path.isfile(filepath):
                 return f'错误：文件不存在 - {filepath}'
-            
             try:
                 content, _ = smart_read(filepath)
                 file_lines = content.splitlines()
                 search_lines = search_text.split('\n')
                 num_search = len(search_lines)
-                
                 # 预编译正则表达式（如果开启 -r）
                 compiled_patterns = []
                 if use_regex:
@@ -483,7 +470,6 @@ def execute_line_streaming(line, task_id):
                             compiled_patterns.append(re.compile(sl, re_flags))
                         except re.error as e:
                             return f'错误：无效的正则表达式 - {sl} ({e})'
-                
                 results = []
                 # 遍历文件行，寻找连续匹配的块
                 for i in range(len(file_lines) - num_search + 1):
@@ -491,7 +477,6 @@ def execute_line_streaming(line, task_id):
                     for j in range(num_search):
                         file_line = file_lines[i + j]
                         search_line = search_lines[j]
-                        
                         if use_regex:
                             pat = compiled_patterns[j]
                             m = pat.search(file_line) if partial else pat.fullmatch(file_line)
@@ -509,7 +494,6 @@ def execute_line_streaming(line, task_id):
                                 if cmp_file != cmp_search:
                                     matched_all = False
                                     break
-                    
                     if matched_all:
                         start_line_no = i + 1
                         if num_search == 1:
@@ -517,53 +501,42 @@ def execute_line_streaming(line, task_id):
                         else:
                             block_text = '\n'.join(file_lines[i:i+num_search])
                             results.append((start_line_no, block_text))
-                
                 if not results:
                     return f'在 {filepath} 中未找到匹配内容'
-                
                 output = [f'在 {filepath} 中找到 {len(results)} 处匹配：\n']
                 for line_no, line_text in results:
                     if '\n' in line_text:
                         preview = line_text.split('\n')[0]
-                        output.append(f' 行 {line_no}: {preview} ... (共 {num_search} 行)')
+                        output.append(f'  行 {line_no}: {preview} ... (共 {num_search} 行)')
                     else:
-                        output.append(f' 行 {line_no}: {line_text}')
-                
+                        output.append(f'  行 {line_no}: {line_text}')
                 log_action('FIND', f'{filepath} -> {len(results)} 处')
                 return '\n'.join(output)
-                
             except Exception as e:
                 return f'查找失败：{e}'
-        
         else:
             # --- 模式二：文件名递归查找 (路径必须为目录) ---
             tokens = parse_args_with_quotes(arg)
             if len(tokens) < 2:
                 return '错误：缺少查找内容。发送 @@help find 获取指令详细用法'
-            
             # 提取 flags 和非 flags 参数
             flags = [t for t in tokens if t.startswith('-')]
             non_flags = [t for t in tokens if not t.startswith('-')]
-            
             if len(non_flags) < 2:
                 return '错误：缺少文件路径或查找内容。'
-            
             filepath = safe_path(W, non_flags[0])
             filename_pattern = non_flags[-1]
-            
             # 解析修饰参数
             use_regex = '-r' in flags
             partial = '-p' in flags
             ignore_case = '-i' in flags
-            
             err = _check_permission('find', filepath)
-            if err: return err
-            
+            if err:
+                return err
             if os.path.isfile(filepath):
                 return f'错误：文件名查找模式下，目标必须是目录，不能是文件 - {filepath}'
             if not os.path.isdir(filepath):
                 return f'错误：目录不存在 - {filepath}'
-            
             try:
                 re_flags = re.IGNORECASE if ignore_case else 0
                 if use_regex:
@@ -571,7 +544,6 @@ def execute_line_streaming(line, task_id):
                         pattern = re.compile(filename_pattern, re_flags)
                     except re.error as e:
                         return f'错误：无效的正则表达式 - {filename_pattern} ({e})'
-                
                 results = []
                 for root, dirs, files in os.walk(filepath):
                     for fname in files:
@@ -588,17 +560,13 @@ def execute_line_streaming(line, task_id):
                             else:
                                 if cmp_fname == cmp_pattern:
                                     results.append(os.path.join(root, fname))
-                
                 if not results:
                     return f'在目录 {filepath} 中未找到匹配 "{filename_pattern}" 的文件。'
-                
                 output = [f'在目录 {filepath} 中找到 {len(results)} 个匹配 "{filename_pattern}" 的文件：\n']
                 for fpath in results:
-                    output.append(f' {fpath}')
-                
+                    output.append(f'  {fpath}')
                 log_action('FIND', f'{filepath} -> {len(results)} 个文件')
                 return '\n'.join(output)
-                
             except Exception as e:
                 return f'搜索文件失败：{e}'
     elif cmd == 'replace':
@@ -611,7 +579,6 @@ def execute_line_streaming(line, task_id):
             return '错误：缺少文件路径。发送 @@help replace 获取指令详细用法'
         filepath = safe_path(W, tokens[0])
         flags = tokens[1:] if len(tokens) > 1 else []
-        
         line_range = None
         for idx_f, flag in enumerate(flags):
             if flag == '-l' and idx_f + 1 < len(flags):
@@ -621,7 +588,6 @@ def execute_line_streaming(line, task_id):
                     end = int(r_match.group(2)) if r_match.group(2) else start
                     line_range = (start, end)
                     break
-                    
         if line_range:
             if len(parts) < 2:
                 return '错误：行号模式需要提供新文本。发送 @@help replace 获取指令详细用法'
@@ -632,12 +598,10 @@ def execute_line_streaming(line, task_id):
                 return '错误：缺少参数。发送 @@help replace 获取指令详细用法'
             old_text = parts[1].replace('TICK3', '```')
             new_text = parts[2].replace('TICK3', '```')
-            
         ignore_case = '-i' in flags
         replace_all = '-a' in flags
         ignore_indent = '-s' in flags  # 忽略每行首尾空格和缩进
         normalize_ws = '-w' in flags   # 空白归一化
-        
         # 解析模糊匹配参数 -f 或 -f-0.8
         fuzzy_threshold = None
         for flag in flags:
@@ -648,15 +612,12 @@ def execute_line_streaming(line, task_id):
                     fuzzy_threshold = float(flag[3:])
                 except ValueError:
                     return '错误：-f 参数格式不正确，应为 -f-0.92 形式'
-                    
         err = _check_permission('replace', filepath)
         if err:
             return err
-            
         try:
             content, file_enc = smart_read(filepath)
             count = 0
-            
             if line_range:
                 file_lines = content.split('\n')
                 start, end = line_range
@@ -667,20 +628,17 @@ def execute_line_streaming(line, task_id):
                 file_lines[s_idx:end] = new_lines
                 count = end - start + 1
                 new_content = '\n'.join(file_lines)
-                
             else:
                 file_lines = content.split('\n')
                 old_lines = old_text.split('\n')
-                
                 # 调用通用匹配方法
                 matches = _match_text_block(
-                    file_lines, old_lines, 
-                    ignore_case=ignore_case, 
-                    ignore_indent=ignore_indent, 
-                    normalize_ws=normalize_ws, 
+                    file_lines, old_lines,
+                    ignore_case=ignore_case,
+                    ignore_indent=ignore_indent,
+                    normalize_ws=normalize_ws,
                     fuzzy_threshold=fuzzy_threshold
                 )
-                
                 if not matches:
                     # 诊断信息：找出最接近的块
                     best_pos = -1
@@ -695,7 +653,6 @@ def execute_line_streaming(line, task_id):
                         if avg > best_avg:
                             best_avg = avg
                             best_pos = i
-                            
                     diag = ['未找到匹配的文本块。']
                     if best_pos >= 0:
                         diag.append(f'最接近的匹配：第 {best_pos + 1} 行起，平均相似度: {best_avg:.2%}')
@@ -703,16 +660,14 @@ def execute_line_streaming(line, task_id):
                             f_proc = re.sub(r'\s+', ' ', file_lines[best_pos + j].strip()).lower()
                             o_proc = re.sub(r'\s+', ' ', old_lines[j].strip()).lower()
                             if o_proc == f_proc:
-                                diag.append(f' \u2713 {repr(o_proc[:120])}')
+                                diag.append(f'    \u2713 {repr(o_proc[:120])}')
                             else:
-                                diag.append(f' \u2717 旧: {repr(o_proc[:120])}')
-                                diag.append(f' \u2717 文: {repr(f_proc[:120])}')
+                                diag.append(f'    \u2717 旧: {repr(o_proc[:120])}')
+                                diag.append(f'    \u2717 文: {repr(f_proc[:120])}')
                     return '\n'.join(diag)
-                    
                 # 非全量替换时，仅保留第一个匹配
                 if not replace_all and len(matches) > 1:
                     matches = [matches[0]]
-                    
                 new_block_lines = new_text.split('\n')
                 # 从后往前替换，避免索引错乱
                 for idx in reversed(matches):
@@ -722,15 +677,11 @@ def execute_line_streaming(line, task_id):
                         indent_match = re.match(r'^(\s*)', file_lines[idx])
                         indent = indent_match.group(1) if indent_match else ''
                         applied_lines = [indent + l if l.strip() else l for l in applied_lines]
-                        
                     file_lines[idx:idx + len(old_lines)] = applied_lines
                     count += 1
-                    
                 new_content = '\n'.join(file_lines)
-                
             if count == 0:
                 return '未找到要替换的文本。'
-                
             smart_write(filepath, new_content, file_enc)
             log_action('REPLACE', f'{filepath} ({count} 处)')
             return f'已替换 {filepath} 中的 {count} 处文本。'
@@ -983,76 +934,92 @@ def execute_line_streaming(line, task_id):
         except Exception as e:
             return f'创建失败：{e}'
     elif cmd == 'read':
-            if not arg.strip():
-                return '错误：缺少文件路径。发送 @@help read 获取指令详细用法'
-            parts = parse_args_with_quotes(arg.strip())
-            if not parts:
-                return '错误：缺少文件路径。发送 @@help read 获取指令详细用法'
-            filepath = safe_path(W, parts[0])
-            start_line = 0
-            end_line = 0
-            if len(parts) >= 2:
+        if not arg.strip():
+            return '错误：缺少文件路径。发送 @@help read 获取指令详细用法'
+        parts = parse_args_with_quotes(arg.strip())
+        if not parts:
+            return '错误：缺少文件路径。发送 @@help read 获取指令详细用法'
+        filepath = safe_path(W, parts[0])
+        start_line = 0
+        end_line = 0
+        if len(parts) >= 2:
+            try:
+                range_str = parts[1]
+                if '-' in range_str:
+                    s, e = range_str.split('-', 1)
+                    start_line = int(s) if s else 1
+                    end_line = int(e) if e else -1
+                else:
+                    start_line = int(range_str)
+                    end_line = -1
+            except ValueError:
+                return '错误：行号格式不正确。发送 @@help read 获取指令详细用法'
+        err = _check_permission('read', filepath)
+        if err:
+            return err
+        if start_line == 0:
+            # 【修改】剪贴板模式：始终使用临时文件 + HTTP下载
+            if clipboard_mode and os.path.isfile(filepath):
                 try:
-                    range_str = parts[1]
-                    if '-' in range_str:
-                        s, e = range_str.split('-', 1)
-                        start_line = int(s) if s else 1
-                        end_line = int(e) if e else -1
-                    else:
-                        start_line = int(range_str)
-                        end_line = -1
-                except ValueError:
-                    return '错误：行号格式不正确。发送 @@help read 获取指令详细用法'
-            
-            err = _check_permission('read', filepath)
-            if err: return err
-
-            if start_line == 0:
-                # 【修改】剪贴板模式：始终使用临时文件 + HTTP下载，避免SSE缓冲区截断
-                if clipboard_mode and os.path.isfile(filepath):
-                    try:
-                        # 生成唯一ID
-                        file_id = str(uuid.uuid4())
-                        temp_path = os.path.join(TEMP_FILE_DIR, file_id)
-                        
-                        # 复制文件到临时目录 (保留原始二进制，不Base64)
-                        shutil.copy2(filepath, temp_path)
-                        
-                        filename = os.path.basename(filepath)
-                        file_size = os.path.getsize(filepath)
-                        
-                        # TODO: [PokerAgent] 后续可在此处增加分块下载逻辑支持进度条
-                        
-                        # 返回新标记格式
-                        return f'__CLIPBOARD_FILE__ID|||{file_id}|||{filename}|||{file_size}'
-                    except Exception as e:
-                        return f'文件传输准备失败: {e}'
-
-                # 非剪贴板模式或非文件：走原有逻辑
-                try:
-                    content, _ = smart_read(filepath)
-                    lines = content.splitlines(True)
-                    if start_line > 0:
-                        s_idx = max(0, start_line - 1)
-                        e_idx = min(end_line, len(lines)) if end_line > 0 else len(lines)
-                        selected = lines[s_idx:e_idx]
-                        if not selected: return f'指定范围内无内容（文件共 {len(lines)} 行）'
-                        output = []
-                        for i, line in enumerate(selected, start=s_idx + 1):
-                            output.append(f"{i:>5}\t{line.rstrip()}")
-                        result = '\n'.join(output)
-                        log_action('READ', f'{filepath} 行 {start_line}-{end_line if end_line>0 else "末尾"}')
-                        return result
-                    else:
-                        content_str = ''.join(lines)
-                        log_action('READ', filepath)
-                        if len(content_str) > 5000:
-                            return f'{content_str[:5000]}\n\n...（文件过长，仅显示前 5000 字符，共 {len(content_str)} 字符）'
-                        return content_str if content_str else '（文件为空）'
-                except FileNotFoundError:
-                    return f'错误：文件不存在：{filepath}'
+                    # 生成唯一ID
+                    file_id = str(uuid.uuid4())
+                    temp_path = os.path.join(get_temp_dir(), file_id)
+                    # [修复] 确保目录存在 (防止被cleanup删掉后刷新报错)
+                    os.makedirs(get_temp_dir(), exist_ok=True)
+                    # 复制文件到临时目录 (保留原始二进制，不Base64)
+                    shutil.copy2(filepath, temp_path)
+                    filename = os.path.basename(filepath)
+                    file_size = os.path.getsize(filepath)
+                    # TODO: [PokerAgent] 后续可在此处增加分块下载逻辑支持进度条
+                    # 返回新标记格式
+                    return f'__CLIPBOARD_FILE__ID|||{file_id}|||{filename}|||{file_size}'
                 except Exception as e:
-                    return f'读取失败：{e}'
+                    return f'文件传输准备失败: {e}'
+            # 非剪贴板模式或非文件：走原有逻辑
+            try:
+                content, _ = smart_read(filepath)
+                lines = content.splitlines(True)
+                if start_line > 0:
+                    s_idx = max(0, start_line - 1)
+                    e_idx = min(end_line, len(lines)) if end_line > 0 else len(lines)
+                    selected = lines[s_idx:e_idx]
+                    if not selected:
+                        return f'指定范围内无内容（文件共 {len(lines)} 行）'
+                    output = []
+                    for i, line in enumerate(selected, start=s_idx + 1):
+                        output.append(f"{i:>5}\t{line.rstrip()}")
+                    result = '\n'.join(output)
+                    log_action('READ', f'{filepath} 行 {start_line}-{end_line if end_line>0 else "末尾"}')
+                    return result
+                else:
+                    content_str = ''.join(lines)
+                    log_action('READ', filepath)
+                    if len(content_str) > 5000:
+                        return f'{content_str[:5000]}\n\n...（文件过长，仅显示前 5000 字符，共 {len(content_str)} 字符）'
+                    return content_str if content_str else '（文件为空）'
+            except FileNotFoundError:
+                return f'错误：文件不存在：{filepath}'
+            except Exception as e:
+                return f'读取失败：{e}'
+        else:
+            try:
+                content, _ = smart_read(filepath)
+                lines = content.splitlines(True)
+                s_idx = max(0, start_line - 1)
+                e_idx = min(end_line, len(lines)) if end_line > 0 else len(lines)
+                selected = lines[s_idx:e_idx]
+                if not selected:
+                    return f'指定范围内无内容（文件共 {len(lines)} 行）'
+                output = []
+                for i, line in enumerate(selected, start=s_idx + 1):
+                    output.append(f"{i:>5}\t{line.rstrip()}")
+                result = '\n'.join(output)
+                log_action('READ', f'{filepath} 行 {start_line}-{end_line if end_line>0 else "末尾"}')
+                return result
+            except FileNotFoundError:
+                return f'错误：文件不存在：{filepath}'
+            except Exception as e:
+                return f'读取失败：{e}'
     elif cmd == 'append':
         if not arg:
             return '错误：缺少文件路径。发送 @@help append 获取指令详细用法'
@@ -1275,9 +1242,14 @@ def execute_line_streaming(line, task_id):
         log_action('EXEC', arg.strip())
         try:
             process = subprocess.Popen(
-                f'cmd /c {arg.strip()}', shell=True,
-                stdout=subprocess.PIPE, stderr=subprocess.STDOUT,
-                text=True, encoding=encoding, errors='replace', cwd=W
+                f'cmd /c {arg.strip()}',
+                shell=True,
+                stdout=subprocess.PIPE,
+                stderr=subprocess.STDOUT,
+                text=True,
+                encoding=encoding,
+                errors='replace',
+                cwd=W
             )
             output_lines = []
             start_time = time.time()
@@ -1318,8 +1290,12 @@ def execute_line_streaming(line, task_id):
         try:
             process = subprocess.Popen(
                 ['python', script],
-                stdout=subprocess.PIPE, stderr=subprocess.STDOUT,
-                text=True, encoding=encoding, errors='replace', cwd=W
+                stdout=subprocess.PIPE,
+                stderr=subprocess.STDOUT,
+                text=True,
+                encoding=encoding,
+                errors='replace',
+                cwd=W
             )
             output_lines = []
             start_time = time.time()
@@ -1407,17 +1383,17 @@ def agent_stream():
     with _task_registry_lock:
         with _sse_lock:
             sse_clients.append(q)
-            # 回放所有任务的当前状态（晚订阅补偿）
-            for tid, entry in _task_registry.items():
-                evt = {'id': tid, 'type': 'status', 'status': entry['status']}
-                if entry['status'] == 'done' and entry['result']:
-                    evt['result'] = entry['result']
-                q.put(f"data: {json.dumps(evt, ensure_ascii=False)}\n\n")
-                # 只对未完成任务回放日志（done 的任务结果已含全部信息）
-                if entry['status'] != 'done':
-                    for log_line in entry['logs']:
-                        log_evt = {'id': tid, 'type': 'log', 'data': log_line}
-                        q.put(f"data: {json.dumps(log_evt, ensure_ascii=False)}\n\n")
+        # 回放所有任务的当前状态（晚订阅补偿）
+        for tid, entry in _task_registry.items():
+            evt = {'id': tid, 'type': 'status', 'status': entry['status']}
+            if entry['status'] == 'done' and entry['result']:
+                evt['result'] = entry['result']
+            q.put(f"data: {json.dumps(evt, ensure_ascii=False)}\n\n")
+            # 只对未完成任务回放日志（done 的任务结果已含全部信息）
+            if entry['status'] != 'done':
+                for log_line in entry['logs']:
+                    log_evt = {'id': tid, 'type': 'log', 'data': log_line}
+                    q.put(f"data: {json.dumps(log_evt, ensure_ascii=False)}\n\n")
     def generate():
         try:
             while True:
@@ -1473,8 +1449,8 @@ def agent_exec():
                         idx = bln.lower().find('【/codeend】')
                         if idx != -1:
                             block.append(bln[:idx])
-                        peek += 1
-                        break
+                            peek += 1
+                            break
                     block.append(bln)
                     peek += 1
                 blocks.append('\n'.join(block).strip('\n'))
@@ -1566,47 +1542,41 @@ def agent_exec():
             log_action('ENQUEUE', f'ID: {task_id} | CMD: {line}')
             i += 1
     return jsonify({'type': 'task_batch', 'task_ids': task_ids})
-
 @app.route('/agent-file-download')
 def agent_file_download():
     """下载临时文件，并在响应完成后自动清理"""
     file_id = request.args.get('id')
     if not file_id:
         return "错误：缺少文件ID", 400
-    
-    # 安全检查：防止路径穿越攻击
     if not re.match(r'^[a-f0-9-]+$', file_id):
         return "错误：无效的文件ID格式", 400
-    
-    file_path = os.path.join(TEMP_FILE_DIR, file_id)
-    
+    # [修复] 使用动态路径，跟随 WORK_DIR 变化
+    file_path = os.path.join(get_temp_dir(), file_id)
+    # [调试日志] 打印一下请求路径，看看到底收到了什么ID
+    print(f'[Download] 请求文件ID: {file_id}, 工作目录: {WORK_DIR}, 路径: {file_path}')
     if not os.path.exists(file_path):
+        temp_dir = get_temp_dir()
+        print(f'[Download] 文件不存在，当前目录内容: {os.listdir(temp_dir) if os.path.exists(temp_dir) else "目录不存在"}')
         return "错误：文件不存在或已过期", 404
-    
     try:
         with open(file_path, 'rb') as f:
             file_data = f.read()
-        
-        # 构建响应
         response = Response(file_data, mimetype='application/octet-stream')
-        
-        # [关键] 响应发送后回调：删除文件并清理空目录
         def cleanup():
             try:
                 os.remove(file_path)
-                # 尝试删除空目录
-                if os.path.exists(TEMP_FILE_DIR) and not os.listdir(TEMP_FILE_DIR):
-                    os.rmdir(TEMP_FILE_DIR)
+                # [修复] 尝试删除空目录
+                temp_dir = get_temp_dir()
+                if os.path.exists(temp_dir) and not os.listdir(temp_dir):
+                    os.rmdir(temp_dir)
+                print(f'[Download] 文件已清理: {file_id}')
             except OSError:
-                pass # 忽略删除失败（并发等极端情况）
-        
-        # Flask 中 call_on_close 在响应完全发送后执行
+                pass
         response.call_on_close(cleanup)
-        
         return response
     except Exception as e:
+        print(f'[Download] 读取文件异常: {e}')
         return f"下载失败: {e}", 500
-
 @app.route('/agent-config-poll', methods=['GET'])
 def agent_config_poll():
     _config_changed.wait(timeout=25)
