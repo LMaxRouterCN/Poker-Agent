@@ -1,4 +1,4 @@
-"""PokerAgent - 本地接应服务 (SSE流式版) v27
+"""PokerAgent - 本地接应服务 (SSE流式版) v28
 启动方式： python agent_server.py
 默认监听：http://127.0.0.1:9966
 """
@@ -12,11 +12,11 @@ import re
 import inspect
 import threading
 import base64
-import difflib   # 用于 -s 模式的模糊匹配策略
-import fnmatch   # 用于 find 指令按文件名通配符递归搜索
-import shutil    # 用于移动文件/目录到回收站
-import time      # 用于回收站时间戳记录
-import locale    # 获取系统默认编码
+import difflib  # 用于 -s 模式的模糊匹配策略
+import fnmatch  # 用于 find 指令按文件名通配符递归搜索
+import shutil  # 用于移动文件/目录到回收站
+import time  # 用于回收站时间戳记录
+import locale  # 获取系统默认编码
 import platform  # 用于判断操作系统
 import uuid
 import queue
@@ -249,7 +249,7 @@ def _get_original_path(trash_path):
         drive = parts[1] + ':'
         return os.path.join(drive, *parts[2:])
     else:
-        return os.path.join(WORK_DIR, rel_path)
+        return os.path.normpath(os.path.join(WORK_DIR, rel_path))
 def _match_text_block(file_lines, old_lines, ignore_case=False, ignore_indent=False, normalize_ws=False, fuzzy_threshold=None):
     """
     通用文本块匹配方法，支持组合匹配条件。
@@ -304,11 +304,11 @@ def _check_permission(cmd, *paths):
     return None
 def _default_permission_callback(cmd, filepath):
     print(f'\n⚠ 路径超出工作目录!')
-    print(f'  指令: {cmd}')
-    print(f'  目标: {filepath}')
-    print(f'  工作目录: {WORK_DIR}')
+    print(f' 指令: {cmd}')
+    print(f' 目标: {filepath}')
+    print(f' 工作目录: {WORK_DIR}')
     while True:
-        ans = input('  是否允许? [y=允许/n=拒绝/a=本次会话始终允许]: ').strip().lower()
+        ans = input(' 是否允许? [y=允许/n=拒绝/a=本次会话始终允许]: ').strip().lower()
         if ans in ('y', 'yes'):
             return True
         elif ans in ('n', 'no'):
@@ -316,7 +316,7 @@ def _default_permission_callback(cmd, filepath):
         elif ans in ('a', 'always'):
             return 'always'
         else:
-            print('  请输入 y, n 或 a')
+            print(' 请输入 y, n 或 a')
 # 兼容 GUI CLI 模式的壳函数
 def execute_line(line):
     return execute_line_streaming(line, 'cli-manual')
@@ -426,9 +426,9 @@ def execute_line_streaming(line, task_id):
             words = len(re.findall(r'[\u4e00-\u9fff]|[a-zA-Z0-9]+', content))
             log_action('COUNT', filepath)
             return (f'文件统计：{filepath}\n'
-                    f'  行数：{len(lines)}\n'
-                    f'  字数（中英文混合）：{words}\n'
-                    f'  字符数（含空白）：{chars}')
+                    f' 行数：{len(lines)}\n'
+                    f' 字数（中英文混合）：{words}\n'
+                    f' 字符数（含空白）：{chars}')
         except Exception as e:
             return f'统计失败：{e}'
     elif cmd == 'find':
@@ -507,9 +507,9 @@ def execute_line_streaming(line, task_id):
                 for line_no, line_text in results:
                     if '\n' in line_text:
                         preview = line_text.split('\n')[0]
-                        output.append(f'  行 {line_no}: {preview} ... (共 {num_search} 行)')
+                        output.append(f' 行 {line_no}: {preview} ... (共 {num_search} 行)')
                     else:
-                        output.append(f'  行 {line_no}: {line_text}')
+                        output.append(f' 行 {line_no}: {line_text}')
                 log_action('FIND', f'{filepath} -> {len(results)} 处')
                 return '\n'.join(output)
             except Exception as e:
@@ -564,7 +564,7 @@ def execute_line_streaming(line, task_id):
                     return f'在目录 {filepath} 中未找到匹配 "{filename_pattern}" 的文件。'
                 output = [f'在目录 {filepath} 中找到 {len(results)} 个匹配 "{filename_pattern}" 的文件：\n']
                 for fpath in results:
-                    output.append(f'  {fpath}')
+                    output.append(f' {fpath}')
                 log_action('FIND', f'{filepath} -> {len(results)} 个文件')
                 return '\n'.join(output)
             except Exception as e:
@@ -601,7 +601,7 @@ def execute_line_streaming(line, task_id):
         ignore_case = '-i' in flags
         replace_all = '-a' in flags
         ignore_indent = '-s' in flags  # 忽略每行首尾空格和缩进
-        normalize_ws = '-w' in flags   # 空白归一化
+        normalize_ws = '-w' in flags  # 空白归一化
         # 解析模糊匹配参数 -f 或 -f-0.8
         fuzzy_threshold = None
         for flag in flags:
@@ -660,10 +660,10 @@ def execute_line_streaming(line, task_id):
                             f_proc = re.sub(r'\s+', ' ', file_lines[best_pos + j].strip()).lower()
                             o_proc = re.sub(r'\s+', ' ', old_lines[j].strip()).lower()
                             if o_proc == f_proc:
-                                diag.append(f'    \u2713 {repr(o_proc[:120])}')
+                                diag.append(f' ✓ {repr(o_proc[:120])}')
                             else:
-                                diag.append(f'    \u2717 旧: {repr(o_proc[:120])}')
-                                diag.append(f'    \u2717 文: {repr(f_proc[:120])}')
+                                diag.append(f' ✗ 旧: {repr(o_proc[:120])}')
+                                diag.append(f' ✗ 文: {repr(f_proc[:120])}')
                     return '\n'.join(diag)
                 # 非全量替换时，仅保留第一个匹配
                 if not replace_all and len(matches) > 1:
@@ -783,12 +783,12 @@ def execute_line_streaming(line, task_id):
                 non_flag_parts = [part for part in parts if not part.startswith('-')]
                 delete_text = ' '.join(non_flag_parts[1:]) if len(non_flag_parts) > 1 else ''
                 opts_str = ' '.join(parts[:1] + [part for part in parts if part.startswith('-')])
-                tokens = parse_args_with_quotes(opts_str)
-                filepath = safe_path(W, tokens[0])
-                flags = tokens[1:] if len(tokens) > 1 else []
-                ignore_case = '-i' in flags
-                whole_word = '-w' in flags
-                delete_all = '-a' in flags
+            tokens = parse_args_with_quotes(opts_str)
+            filepath = safe_path(W, tokens[0])
+            flags = tokens[1:] if len(tokens) > 1 else []
+            ignore_case = '-i' in flags
+            whole_word = '-w' in flags
+            delete_all = '-a' in flags
             if not delete_text:
                 return '错误：缺少要删除的文本。发送 @@help deleteline 获取指令详细用法'
             try:
@@ -842,7 +842,7 @@ def execute_line_streaming(line, task_id):
                     matched = any(kw in check for kw in cmp_kws)
                     if matched:
                         hit = [kw for kw in cmp_kws if kw in check]
-                        results.append(f'  行 {idx}: {line.rstrip()} ← {hit}')
+                        results.append(f' 行 {idx}: {line.rstrip()} ← {hit}')
                 if results:
                     output = [f'{target}:']
                     output.extend(results)
@@ -1043,7 +1043,7 @@ def execute_line_streaming(line, task_id):
             return err
         try:
             os.makedirs(os.path.dirname(filepath) or '.', exist_ok=True)
-            file_enc = 'utf-8' if os.path.exists(filepath) else smart_read(filepath)[1]
+            file_enc = 'utf-8' if not os.path.exists(filepath) else smart_read(filepath)[1]
             with open(filepath, 'a', encoding=file_enc) as f:
                 f.write('\n' + content)
             log_action('APPEND', filepath)
@@ -1190,15 +1190,15 @@ def execute_line_streaming(line, task_id):
             for name in sorted(entries):
                 full = os.path.join(dirpath, name)
                 if os.path.isdir(full):
-                    lines.append(f'  [DIR]  {name}')
+                    lines.append(f' [DIR] {name}')
                 else:
                     size = os.path.getsize(full)
                     if size < 1024:
-                        lines.append(f'  [FILE] {name} ({size} B)')
+                        lines.append(f' [FILE] {name} ({size} B)')
                     elif size < 1024 * 1024:
-                        lines.append(f'  [FILE] {name} ({size/1024:.1f} KB)')
+                        lines.append(f' [FILE] {name} ({size/1024:.1f} KB)')
                     else:
-                        lines.append(f'  [FILE] {name} ({size/1024/1024:.1f} MB)')
+                        lines.append(f' [FILE] {name} ({size/1024/1024:.1f} MB)')
             log_action('LIST', dirpath)
             return '\n'.join(lines)
         except FileNotFoundError:
@@ -1242,23 +1242,17 @@ def execute_line_streaming(line, task_id):
         log_action('EXEC', arg.strip())
         try:
             process = subprocess.Popen(
-                f'cmd /c {arg.strip()}',
-                shell=True,
-                stdout=subprocess.PIPE,
-                stderr=subprocess.STDOUT,
-                text=True,
-                encoding=encoding,
-                errors='replace',
+                f'cmd /c {arg.strip()}', shell=True, stdout=subprocess.PIPE, stderr=subprocess.STDOUT,
                 cwd=W
             )
             output_lines = []
             start_time = time.time()
             while True:
-                line_out = process.stdout.readline()
-                if not line_out and process.poll() is not None:
+                line_bytes = process.stdout.readline()
+                if not line_bytes and process.poll() is not None:
                     break
-                if line_out:
-                    line_out = line_out.rstrip()
+                if line_bytes:
+                    line_out = smart_decode(line_bytes).rstrip()
                     output_lines.append(line_out)
                     emit_task_event({'id': task_id, 'type': 'log', 'data': line_out})
                 if time.time() - start_time > 3600:
@@ -1267,7 +1261,7 @@ def execute_line_streaming(line, task_id):
                         subprocess.run(f'taskkill /F /T /PID {process.pid}', shell=True, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
                     else:
                         process.kill()
-                    process.wait()
+                        process.wait()
                     return '错误：命令执行超时（3600秒限制），进程树已强杀。'
             process.wait()
             output = '\n'.join(output_lines).strip()
@@ -1293,22 +1287,17 @@ def execute_line_streaming(line, task_id):
         log_action('RUN', script)
         try:
             process = subprocess.Popen(
-                ['python', script],
-                stdout=subprocess.PIPE,
-                stderr=subprocess.STDOUT,
-                text=True,
-                encoding=encoding,
-                errors='replace',
+                ['python', script], stdout=subprocess.PIPE, stderr=subprocess.STDOUT,
                 cwd=W
             )
             output_lines = []
             start_time = time.time()
             while True:
-                line_out = process.stdout.readline()
-                if not line_out and process.poll() is not None:
+                line_bytes = process.stdout.readline()
+                if not line_bytes and process.poll() is not None:
                     break
-                if line_out:
-                    line_out = line_out.rstrip()
+                if line_bytes:
+                    line_out = smart_decode(line_bytes).rstrip()
                     output_lines.append(line_out)
                     emit_task_event({'id': task_id, 'type': 'log', 'data': line_out})
                 if time.time() - start_time > 60:
@@ -1594,10 +1583,10 @@ if __name__ == '__main__':
     permission_mgr.set_callback(_default_permission_callback)
     _push_config()
     print(f'========================================')
-    print(f'  低配版Agent 本地服务已启动 (SSE流式版)')
-    print(f'  监听地址：http://127.0.0.1:9966')
-    print(f'  工作目录：{WORK_DIR}')
-    print(f'  帮助文档：{HELP_FILE}')
-    print(f'  操作日志：{LOG_FILE}')
+    print(f' 低配版Agent 本地服务已启动 (SSE流式版)')
+    print(f' 监听地址：http://127.0.0.1:9966')
+    print(f' 工作目录：{WORK_DIR}')
+    print(f' 帮助文档：{HELP_FILE}')
+    print(f' 操作日志：{LOG_FILE}')
     print(f'========================================')
     app.run(host='127.0.0.1', port=9966, debug=False, threaded=True)
