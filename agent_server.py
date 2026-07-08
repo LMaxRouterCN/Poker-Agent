@@ -13,11 +13,11 @@ import inspect
 import threading
 import base64
 import difflib   # 用于 -s 模式的模糊匹配策略
-import fnmatch   # [新增] 用于 find 指令按文件名通配符递归搜索
-import shutil    # [新增] 用于移动文件/目录到回收站
-import time      # [新增] 用于回收站时间戳记录
+import fnmatch   # 用于 find 指令按文件名通配符递归搜索
+import shutil    # 用于移动文件/目录到回收站
+import time      # 用于回收站时间戳记录
 import locale    # 获取系统默认编码
-import platform  # [新增] 用于判断操作系统
+import platform  # 用于判断操作系统
 import uuid
 import queue
 import json
@@ -1262,9 +1262,13 @@ def execute_line_streaming(line, task_id):
                     output_lines.append(line_out)
                     emit_task_event({'id': task_id, 'type': 'log', 'data': line_out})
                 if time.time() - start_time > 3600:
-                    process.kill()
+                    if platform.system() == 'Windows':
+                        # 杀掉整个进程树 ( /T )，强制 ( /F )
+                        subprocess.run(f'taskkill /F /T /PID {process.pid}', shell=True, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+                    else:
+                        process.kill()
                     process.wait()
-                    return '错误：命令执行超时（3600秒限制），进程已强杀。'
+                    return '错误：命令执行超时（3600秒限制），进程树已强杀。'
             process.wait()
             output = '\n'.join(output_lines).strip()
             if not output:
