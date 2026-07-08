@@ -1,42 +1,27 @@
 // ==UserScript==
-// @name         PokerAgent
-// @namespace    http://tampermonkey.net/
-// @version      14
-// @author       LMaxRouterCN
-// @description  PokerAgent的浏览器端核心脚本，提供元素选择、配置管理、调试日志等功能，支持多站点独立配置和自动发送功能。
-// @match        *://*/*
-// @grant        GM_registerMenuCommand
-// @grant        GM_xmlhttpRequest
-// @grant        GM_getValue
-// @grant        GM_setValue
-// @grant        GM_addStyle
-// @grant        GM_setClipboard
-// @connect      localhost
-// @connect      127.0.0.1
+// @name PokerAgent
+// @namespace http://tampermonkey.net/
+// @version 16
+// @author LMaxRouterCN
+// @description PokerAgent的浏览器端核心脚本，提供元素选择、配置管理、调试日志等功能，支持多站点独立配置和自动发送功能。
+// @match *://*/*
+// @grant GM_registerMenuCommand
+// @grant GM_xmlhttpRequest
+// @grant GM_getValue
+// @grant GM_setValue
+// @grant GM_addStyle
+// @grant GM_setClipboard
+// @connect localhost
+// @connect 127.0.0.1
 // ==/UserScript==
-//* - 增加 selAnswerItem 可配置选择器（替代硬编码 .answer）
-//* - 增加 cleanIgnoreClassKeywords / cleanRemoveButtonLike / cleanRemovePre 清理规则可配置
-//* - 修复 <pre> 处理中 .answer 硬编码 bug
-//* - 补全 injectNewlines 块级元素列表
-//* - 改进 _getSendBtnFingerprint 指纹计算
-//* - 增加心跳自诊断（连续未找到回答元素时打警告）
-//* - 重构核心逻辑适配流式架构
-//* - [v12.3] 用 GM_xmlhttpRequest 流式模式替代 EventSource，解决 SSE 跨域问题
-//* - [v12.4] _renderTaskBlock 重构：只替换标记间内容，保留区块外用户输入，移除废弃的 _userInputCache 快照机制
-//* - [v12.5] 恢复 _renderTaskBlock 中 __CLIPBOARD_FILE__ 标记处理：解码 base64 文件内容并写回输入框/剪贴板
-//* - [v12.8] 恢复 v11 文件粘贴机制：剪贴板模式下用 ClipboardEvent+DataTransfer 模拟真实粘贴，统一追加最后发送
-//* - [v12.9] 修复 __CLIPBOARD_FILE__ 解析：后端改用 ||| 可见分隔符替代 \x00；前端 _decodeClipboardFile 重写为分隔符切割；_finalizeAndSend 不再依赖 _clipboardMode 状态变量，见标记即粘贴
-//* - [v12.10] 配合后端 v21 修复：多行文本首尾空行和缩进不再被 strip 洗掉；后端 smart_write 不再给无BOM文件强加BOM
-//* - [v12.11] 修复剪贴板模式回执格式不一致：文件任务统一先走 _renderTaskBlock 渲染区块标记（TASK_START/[Poker Agent] [done]/All tasks done!/TASK_END），再执行文件粘贴并追加描述，避免区块标记缺失或被覆盖
-//* - [v12.13] 增加代码内容元素选择器(selCodeContentElement)，优化代码块提取流程，避免标签和空行干扰，保留故意空行
-//* - [v12.14] 在区块标记的前后添加了<|im_start|>pokeragent-system和<|im_end|>,llm对角色身份的认知(可能?)会更加清晰
-//* - [v13] 重构read指令剪贴板模式
-//* - [v14] 修复剪贴板模式文件下载冲突：移除 _renderTaskBlock 中的旧版文件解码逻辑(导致404重复下载)，统一在 _finalizeAndSend 中处理；_decodeClipboardFile 改为 async 并 await 下载；增加下载失败容错处理
+
 (function () {
     'use strict';
+
     /* ================================================================
      * 1. 存储与配置
      * ================================================================ */
+
     const SITE_DEFAULTS = {
         apiUrl: 'http://127.0.0.1:9966/agent-exec',
         selChatContainer: '',
@@ -50,18 +35,23 @@
         textCleanRules: [],
         sendBtnBusyFingerprints: [],
         sendBtnIdleFingerprints: [],
+        sendBtnSendableFingerprints: [],
+        sendDebounceDelay: 100,
         verifyMode: 'single',
         waitDelayAfterDone: 500,
         showAutoSendToggle: false,
         autoSendTogglePos: 'right',
         autoSendMode: 'click'
     };
+
     const DEFAULTS = {
         whitelist: ['https://chatglm.cn/'],
         debugMode: false,
         ...SITE_DEFAULTS
     };
+
     const STORE_KEY = 'low_cost_agent_config_v4';
+
     function _loadStore() {
         let store;
         try {
@@ -75,15 +65,20 @@
                 debugMode: false,
                 defaults: { ...SITE_DEFAULTS },
                 perSite: {
-                    'https://chatglm.cn/': { ...SITE_DEFAULTS, selChatContainer: 'div.chatScrollContainer' }
+                    'https://chatglm.cn/': {
+                        ...SITE_DEFAULTS,
+                        selChatContainer: 'div.chatScrollContainer'
+                    }
                 }
             };
         }
         return _migrateStore(store);
     }
+
     function _saveStore(store) {
         GM_setValue(STORE_KEY, store);
     }
+
     function _migrateStore(store) {
         if (store.defaults && store.perSite !== undefined) {
             const clearOld = (cfg) => {
@@ -94,6 +89,8 @@
                 }
                 if (!cfg.sendBtnBusyFingerprints) cfg.sendBtnBusyFingerprints = [];
                 if (!cfg.sendBtnIdleFingerprints) cfg.sendBtnIdleFingerprints = [];
+                if (!cfg.sendBtnSendableFingerprints) cfg.sendBtnSendableFingerprints = [];
+                if (cfg.sendDebounceDelay === undefined) cfg.sendDebounceDelay = 100;
                 if (!cfg.verifyMode) cfg.verifyMode = 'single';
                 if (!cfg.waitDelayAfterDone) cfg.waitDelayAfterDone = 500;
                 if (cfg.autoSendByEnter !== undefined && cfg.autoSendMode === undefined) {
@@ -104,7 +101,6 @@
                 if (cfg.autoSendByEnter !== undefined) delete cfg.autoSendByEnter;
                 if (!cfg.selAnswerItem) cfg.selAnswerItem = '.answer';
                 if (!cfg.selCodeContentElement) cfg.selCodeContentElement = '';
-                // 确保新字段存在
                 if (cfg.cleanIgnoreClassKeywords === undefined) cfg.cleanIgnoreClassKeywords = 'thinking,reasoning,probe,deepseek-reason';
                 if (cfg.cleanRemoveButtonLike === undefined) cfg.cleanRemoveButtonLike = true;
                 if (cfg.cleanRemovePre === undefined) cfg.cleanRemovePre = true;
@@ -129,16 +125,19 @@
         }
         return newStore;
     }
+
     function _matchSite() {
         const store = _loadStore();
         return store.whitelist.find(p => location.href.startsWith(p)) || null;
     }
+
     function _getConfigSource() {
         const store = _loadStore();
         const site = _matchSite();
         if (site && store.perSite && store.perSite[site]) return site;
         return 'defaults';
     }
+
     function cfgLoad() {
         const store = _loadStore();
         const site = _matchSite();
@@ -149,7 +148,9 @@
         }
         return merged;
     }
+
     let _editTarget = 'defaults';
+
     function cfgSave(panelValues) {
         const store = _loadStore();
         store.debugMode = panelValues.debugMode;
@@ -165,6 +166,7 @@
         }
         _saveStore(store);
     }
+
     function cfgSaveRuntime(partial) {
         const store = _loadStore();
         const source = _getConfigSource();
@@ -178,134 +180,142 @@
         }
         _saveStore(store);
     }
+
     const isWhitelisted = () => cfgLoad().whitelist.some(p => location.href.startsWith(p));
+
     /* ================================================================
      * 2. 样式注入
      * ================================================================ */
+
     GM_addStyle(`
-#agent-panel{position:fixed;top:50%;left:50%;transform:translate(-50%,-50%);width:min(540px,92vw);max-height:82vh;overflow-y:auto;background:#1a1b2e;color:#d4d4d8;border:1px solid #2e3047;border-radius:0;box-shadow:0 24px 80px rgba(0,0,0,.55);z-index:2147483647;font:14px/1.5 system-ui,sans-serif}
-#agent-panel *{box-sizing:border-box;margin:0;padding:0}
-#agent-panel-head{display:flex;align-items:center;justify-content:space-between;padding:14px 20px;border-bottom:1px solid #2e3047}
-#agent-panel-head b{font-size:15px;color:#818cf8}
-#agent-panel-close{background:none;border:none;color:#71717a;font-size:20px;cursor:pointer;padding:2px 8px;border-radius:0;transition:.15s}
-#agent-panel-close:hover{background:#2e3047;color:#f472b6}
-#agent-panel-body{padding:20px}
-.ag-sec{margin-bottom:18px}
-.ag-sec-title{font-size:11px;font-weight:700;color:#71717a;text-transform:uppercase;letter-spacing:.8px;margin-bottom:8px;display:flex;align-items:center;gap:6px}
-.ag-sec-title::before{content:'';width:3px;height:13px;background:#818cf8;border-radius:0}
-.ag-field{margin-bottom:10px}
-.ag-field label{display:block;font-size:12px;color:#a1a1aa;margin-bottom:4px}
-.ag-row{display:flex;gap:6px;align-items:center}
-.ag-inp{flex:1;min-width:0;background:#2e3047;border:1px solid #3f3f46;color:#d4d4d8;padding:7px 10px;border-radius:0;font-size:12px;outline:none;transition:.15s;font-family:'SF Mono',Consolas,monospace}
-.ag-inp:focus{border-color:#818cf8}
-.ag-btn{padding:7px 13px;border:none;border-radius:0;font-size:12px;font-weight:600;cursor:pointer;transition:.15s;white-space:nowrap}
-.ag-btn-p{background:#818cf8;color:#0f0f23}.ag-btn-p:hover{background:#a5b4fc}
-.ag-btn-g{background:#2e3047;color:#d4d4d8;border:1px solid #3f3f46}.ag-btn-g:hover{border-color:#818cf8;color:#818cf8}
-.ag-wl-list{max-height:110px;overflow-y:auto;background:#232436;border-radius:0;padding:3px;margin-bottom:6px}
-.ag-wl-item{display:flex;align-items:center;gap:6px;padding:5px 10px;border-radius:0;font-size:12px}
-.ag-wl-item code{flex:1;min-width:0;color:#86efac;word-break:break-all;font-family:'SF Mono',Consolas,monospace;font-size:11px}
-.ag-wl-rm{background:none;border:none;color:#f472b6;cursor:pointer;font-size:14px;padding:0 4px;opacity:.5}.ag-wl-rm:hover{opacity:1}
-.ag-match{font-size:11px;padding:3px 8px;border-radius:0;margin-top:3px}
-.ag-m-ok{background:rgba(134,239,172,.12);color:#86efac}
-.ag-m-fail{background:rgba(244,114,182,.12);color:#f472b6}
-.ag-m-none{background:rgba(161,161,170,.1);color:#71717a}
-.ag-foot{display:flex;justify-content:flex-end;gap:8px;padding-top:14px;border-top:1px solid #2e3047;margin-top:6px}
-.ag-toggle{display:flex;align-items:center;gap:10px}
-.ag-toggle input[type=checkbox]{width:16px;height:16px;accent-color:#818cf8}
-.ag-pos-group{display:flex;gap:0}
-.ag-pos-btn{padding:4px 10px;background:#2e3047;border:1px solid #3f3f46;color:#a1a1aa;font-size:12px;cursor:pointer;transition:.15s;border-radius:0}
-.ag-pos-btn+.ag-pos-btn{border-left:none}
-.ag-pos-btn.active{background:#818cf8;color:#0f0f23;border-color:#818cf8}
-.ag-pos-btn:hover:not(.active){border-color:#818cf8;color:#818cf8}
-.ag-site-info{background:#232436;padding:10px 14px;margin-bottom:10px;border:1px solid #2e3047}
-.ag-site-row{display:flex;align-items:center;gap:8px;margin-bottom:4px;font-size:12px}
-.ag-site-row:last-child{margin-bottom:0}
-.ag-site-label{color:#71717a;min-width:56px;flex-shrink:0}
-.ag-site-value{color:#d4d4d8;word-break:break-all}
-.ag-site-badge{font-size:10px;padding:1px 6px;flex-shrink:0;border-radius:0}
-.ag-badge-ok{background:rgba(134,239,172,.12);color:#86efac}
-.ag-badge-fail{background:rgba(244,114,182,.12);color:#f472b6}
-.ag-site-actions{display:flex;gap:6px;margin-bottom:14px;flex-wrap:wrap}
-.ag-hint{font-size:11px;color:#52525b;margin-top:2px}
-.ag-rule-list{max-height:220px;overflow-y:auto;background:#232436;border-radius:0;padding:6px;margin-bottom:6px;display:flex;flex-direction:column;gap:8px}
-.ag-rule-item{background:#1e1f33;border:1px solid #2e3047;padding:8px;border-radius:0}
-.ag-rule-item .ag-inp{font-size:11px;padding:5px 8px}
-#agent-pick-dim{position:fixed;inset:0;background:rgba(0,0,0,.28);z-index:2147483645;pointer-events:none}
-#agent-pick-hl{position:fixed;border:2.5px solid #818cf8;background:rgba(129,140,248,.08);border-radius:0;pointer-events:none;z-index:2147483646;transition:left .06s,top .06s,width .06s,height .06s;box-shadow:0 0 0 4000px rgba(0,0,0,.25);display:none}
-#agent-pick-lock-hl{position:fixed;border:2.5px solid #f472b6;background:rgba(244,114,182,.06);border-radius:0;pointer-events:none;z-index:2147483646;transition:left .06s,top .06s,width .06s,height .06s;display:none}
-#agent-pick-tip{position:fixed;background:#1a1b2e;color:#c4b5fd;border:1px solid #3f3f46;padding:5px 10px;border-radius:0;font:11px/1.4 'SF Mono',Consolas,monospace;z-index:2147483647;pointer-events:none;max-width:560px;word-break:break-all;box-shadow:0 4px 16px rgba(0,0,0,.4);opacity:0;transition:opacity .08s;display:flex;flex-direction:column;gap:3px}
-.ag-tip-sel{display:flex;align-items:center;gap:0;flex-wrap:wrap}
-.ag-diag-line{display:flex;align-items:center;gap:4px;flex-wrap:wrap;font-size:10px;color:#71717a;border-top:1px solid #2e3047;padding-top:3px}
-.ag-diag-text{color:#86efac;max-width:200px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
-.ag-diag-children{color:#a1a1aa}
-.ag-diag-size{color:#52525b}
-.ag-diag-ok{color:#86efac}
-.ag-diag-warn{color:#facc15}
-.ag-diag-err{color:#f472b6}
-.ag-diag-shadow{color:#818cf8;background:rgba(129,140,248,.15);padding:0 4px}
-.ag-diag-scroll{color:#facc15;background:rgba(250,204,21,.1);padding:0 4px}
-.ag-diag-sep{color:#3f3f46;margin:0 1px}
-#agent-pick-bar{position:fixed;top:14px;left:50%;transform:translateX(-50%);background:#1a1b2e;color:#d4d4d8;border:1px solid #818cf8;padding:10px 28px;border-radius:0;font-size:14px;z-index:2147483647;box-shadow:0 6px 24px rgba(0,0,0,.5);pointer-events:none}
-#agent-pick-level{color:#86efac; margin-left: 8px; font-weight: bold;}
-#ag-show-levels{pointer-events:auto;cursor:pointer;color:#f472b6;margin-right:8px;border-right:1px solid #3f3f46;padding-right:8px;white-space:nowrap;flex-shrink:0;transition:color .1s}
-#ag-show-levels:hover{color:#fda4af}
-.ag-level-panel{position:fixed;width:min(420px,85vw);max-height:340px;background:#1a1b2e;border:1px solid #f472b6;border-radius:0;box-shadow:0 8px 32px rgba(0,0,0,.55);z-index:2147483647;display:none;flex-direction:column;font:12px/1.5 'SF Mono',Consolas,monospace;color:#d4d4d8;}
-.ag-level-head{display:flex;align-items:center;justify-content:space-between;padding:8px 12px;border-bottom:1px solid #2e3047;font-weight:600;color:#f472b6;flex-shrink:0;}
-.ag-level-head button{background:none;border:none;color:#71717a;cursor:pointer;font-size:16px;padding:0 4px;}
-.ag-level-head button:hover{color:#f472b6}
-.ag-level-body{flex:1;overflow-y:auto;padding:4px;}
-.ag-level-body::-webkit-scrollbar{width:4px}
-.ag-level-body::-webkit-scrollbar-thumb{background:#3f3f46;border-radius:0}
-.ag-level-item{display:flex;align-items:center;gap:6px;padding:6px 8px;cursor:pointer;border-left:2px solid transparent;transition:background .1s;}
-.ag-level-item:hover{background:rgba(244,114,182,.1);border-left-color:#f472b6;}
-.ag-level-target{background:rgba(244,114,182,.06);border-left-color:#f472b6;}
-.ag-level-idx{color:#52525b;font-size:10px;min-width:18px;text-align:right;flex-shrink:0;}
-.ag-level-tag{color:#86efac;font-weight:600;min-width:60px;flex-shrink:0;}
-.ag-level-digest{color:#93c5fd;flex:1;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;font-style:italic;}
-.ag-level-sel{color:#52525b;font-size:10px;max-width:120px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;flex-shrink:0;}
-#agent-debug{position:fixed;top:10px;right:10px;width:380px;max-height:60vh;background:rgba(15,15,30,.92);border:1px solid #3f3f46;border-radius:0;box-shadow:0 10px 40px rgba(0,0,0,.5);z-index:2147483644;display:flex;flex-direction:column;font:12px/1.5 'SF Mono',Consolas,monospace;backdrop-filter:blur(8px);color:#a1a1aa;}
-#agent-debug-head{padding:8px 12px;border-bottom:1px solid #2e3047;display:flex;justify-content:space-between;align-items:center;color:#d4d4d8}
-#agent-debug-body{flex:1;overflow-y:auto;padding:8px;display:flex;flex-direction:column;gap:4px}
-#agent-debug-body::-webkit-scrollbar{width:4px}
-#agent-debug-body::-webkit-scrollbar-thumb{background:#3f3f46;border-radius:0}
-.ag-log{padding:4px 6px;border-radius:0;word-break:break-all;background:rgba(255,255,255,.03);border-left:3px solid transparent}
-.ag-log-time{color:#52525b;margin-right:6px}
-.ag-log-info{border-left-color:#818cf8;color:#c4b5fd}
-.ag-log-warn{border-left-color:#facc15;color:#fde68a;background:rgba(250,204,21,.05)}
-.ag-log-err{border-left-color:#f472b6;color:#fda4af;background:rgba(244,114,182,.05)}
-.ag-log-ok{border-left-color:#86efac;color:#bbf7d0;background:rgba(134,239,172,.05)}
-#agent-debug-foot{padding:6px 12px;border-top:1px solid #2e3047;text-align:right}
-.ag-dbg-btn{background:#2e3047;border:1px solid #3f3f46;color:#a1a1aa;padding:3px 10px;border-radius:0;cursor:pointer;font-size:11px}
-.ag-dbg-btn:hover{border-color:#818cf8;color:#818cf8}
-#agent-auto-send-toggle{position:fixed;z-index:2147483640;display:flex;flex-direction:row;align-items:stretch;background:#1a1b2e;border:1px solid #3f3f46;pointer-events:auto;white-space:nowrap;user-select:none;opacity:0.85;transition:opacity .15s;}
-#agent-auto-send-toggle:hover{opacity:1}
-.ag-as-opts{display:flex;flex-direction:column;padding:4px 4px 4px 8px}
-.ag-as-opt{font-size:10px;color:#52525b;cursor:pointer;padding:5px 2px;line-height:1.3;transition:color .15s;font-family:system-ui,sans-serif}
-.ag-as-opt:hover{color:#a1a1aa}
-.ag-as-opt.active{color:#818cf8}
-.ag-as-rail{width:16px;position:relative;display:flex;justify-content:center;border-left:1px solid #2e3047;padding:4px 0}
-.ag-as-rail::before{content:'';position:absolute;top:8px;bottom:8px;width:2px;background:#3f3f46}
-.ag-as-thumb{position:absolute;left:50%;transform:translateX(-50%);width:10px;height:10px;background:#818cf8;transition:top .25s ease;z-index:1}
-#ag-calibrate-bar{position:fixed;top:20px;left:50%;transform:translateX(-50%);background:#1a1b2e;color:#fde68a;border:1px solid #facc15;padding:14px 24px;z-index:2147483647;box-shadow:0 8px 32px rgba(0,0,0,.6);font:13px/1.5 system-ui,sans-serif;display:none;flex-direction:column;align-items:center;gap:10px;pointer-events:auto;width:min(600px,90vw)}
-#ag-calibrate-bar b{color:#facc15}
-#ag-calibrate-cards{position:fixed;top:100px;left:50%;transform:translateX(-50%);background:#1a1b2e;border:1px solid #2e3047;z-index:2147483647;box-shadow:0 8px 32px rgba(0,0,0,.6);width:min(220px,45vw);overflow-y:auto;overflow-x:hidden;padding:10px;cursor:move}
-#ag-calibrate-cards::-webkit-scrollbar{width:4px}
-#ag-calibrate-cards::-webkit-scrollbar-thumb{background:#3f3f46}
-.ag-cal-item{display:flex;flex-direction:column;align-items:center;gap:6px;padding:6px;background:#232436;transition:.15s;width:100%;box-sizing:border-box;overflow:hidden;position:relative;z-index:0;border:1px solid transparent;min-height:0}
-.ag-cal-item.selected-busy{background:rgba(244,114,182,.1);border-color:#f472b6}
-.ag-cal-item.selected-idle{background:rgba(134,239,172,.1);border-color:#86efac}
-.ag-cal-clone{width:100%;height:60px;max-height:60px;overflow:hidden;display:flex;align-items:center;justify-content:center;background:#0f0f23}
-.ag-cal-actions{display:flex;flex-direction:column;gap:4px;width:100%;align-items:center}
-.ag-cal-tag{font-size:10px;padding:2px 8px;border:1px solid #3f3f46;color:#71717a;cursor:pointer;background:none;white-space:nowrap;width:60%;text-align:center}
-.ag-cal-tag:hover{border-color:#818cf8;color:#818cf8}
-.ag-cal-tag.active-busy{border-color:#f472b6;color:#f472b6;background:rgba(244,114,182,.2)}
-.ag-cal-tag.active-idle{border-color:#86efac;color:#86efac;background:rgba(134,239,172,.2)}
+        #agent-panel{position:fixed;top:50%;left:50%;transform:translate(-50%,-50%);width:min(540px,92vw);max-height:82vh;overflow-y:auto;background:#1a1b2e;color:#d4d4d8;border:1px solid #2e3047;border-radius:0;box-shadow:0 24px 80px rgba(0,0,0,.55);z-index:2147483647;font:14px/1.5 system-ui,sans-serif}
+        #agent-panel *{box-sizing:border-box;margin:0;padding:0}
+        #agent-panel-head{display:flex;align-items:center;justify-content:space-between;padding:14px 20px;border-bottom:1px solid #2e3047}
+        #agent-panel-head b{font-size:15px;color:#818cf8}
+        #agent-panel-close{background:none;border:none;color:#71717a;font-size:20px;cursor:pointer;padding:2px 8px;border-radius:0;transition:.15s}
+        #agent-panel-close:hover{background:#2e3047;color:#f472b6}
+        #agent-panel-body{padding:20px}
+        .ag-sec{margin-bottom:18px}
+        .ag-sec-title{font-size:11px;font-weight:700;color:#71717a;text-transform:uppercase;letter-spacing:.8px;margin-bottom:8px;display:flex;align-items:center;gap:6px}
+        .ag-sec-title::before{content:'';width:3px;height:13px;background:#818cf8;border-radius:0}
+        .ag-field{margin-bottom:10px}
+        .ag-field label{display:block;font-size:12px;color:#a1a1aa;margin-bottom:4px}
+        .ag-row{display:flex;gap:6px;align-items:center}
+        .ag-inp{flex:1;min-width:0;background:#2e3047;border:1px solid #3f3f46;color:#d4d4d8;padding:7px 10px;border-radius:0;font-size:12px;outline:none;transition:.15s;font-family:'SF Mono',Consolas,monospace}
+        .ag-inp:focus{border-color:#818cf8}
+        .ag-btn{padding:7px 13px;border:none;border-radius:0;font-size:12px;font-weight:600;cursor:pointer;transition:.15s;white-space:nowrap}
+        .ag-btn-p{background:#818cf8;color:#0f0f23}.ag-btn-p:hover{background:#a5b4fc}
+        .ag-btn-g{background:#2e3047;color:#d4d4d8;border:1px solid #3f3f46}.ag-btn-g:hover{border-color:#818cf8;color:#818cf8}
+        .ag-wl-list{max-height:110px;overflow-y:auto;background:#232436;border-radius:0;padding:3px;margin-bottom:6px}
+        .ag-wl-item{display:flex;align-items:center;gap:6px;padding:5px 10px;border-radius:0;font-size:12px}
+        .ag-wl-item code{flex:1;min-width:0;color:#86efac;word-break:break-all;font-family:'SF Mono',Consolas,monospace;font-size:11px}
+        .ag-wl-rm{background:none;border:none;color:#f472b6;cursor:pointer;font-size:14px;padding:0 4px;opacity:.5}.ag-wl-rm:hover{opacity:1}
+        .ag-match{font-size:11px;padding:3px 8px;border-radius:0;margin-top:3px}
+        .ag-m-ok{background:rgba(134,239,172,.12);color:#86efac}
+        .ag-m-fail{background:rgba(244,114,182,.12);color:#f472b6}
+        .ag-m-none{background:rgba(161,161,170,.1);color:#71717a}
+        .ag-foot{display:flex;justify-content:flex-end;gap:8px;padding-top:14px;border-top:1px solid #2e3047;margin-top:6px}
+        .ag-toggle{display:flex;align-items:center;gap:10px}
+        .ag-toggle input[type=checkbox]{width:16px;height:16px;accent-color:#818cf8}
+        .ag-pos-group{display:flex;gap:0}
+        .ag-pos-btn{padding:4px 10px;background:#2e3047;border:1px solid #3f3f46;color:#a1a1aa;font-size:12px;cursor:pointer;transition:.15s;border-radius:0}
+        .ag-pos-btn+.ag-pos-btn{border-left:none}
+        .ag-pos-btn.active{background:#818cf8;color:#0f0f23;border-color:#818cf8}
+        .ag-pos-btn:hover:not(.active){border-color:#818cf8;color:#818cf8}
+        .ag-site-info{background:#232436;padding:10px 14px;margin-bottom:10px;border:1px solid #2e3047}
+        .ag-site-row{display:flex;align-items:center;gap:8px;margin-bottom:4px;font-size:12px}
+        .ag-site-row:last-child{margin-bottom:0}
+        .ag-site-label{color:#71717a;min-width:56px;flex-shrink:0}
+        .ag-site-value{color:#d4d4d8;word-break:break-all}
+        .ag-site-badge{font-size:10px;padding:1px 6px;flex-shrink:0;border-radius:0}
+        .ag-badge-ok{background:rgba(134,239,172,.12);color:#86efac}
+        .ag-badge-fail{background:rgba(244,114,182,.12);color:#f472b6}
+        .ag-site-actions{display:flex;gap:6px;margin-bottom:14px;flex-wrap:wrap}
+        .ag-hint{font-size:11px;color:#52525b;margin-top:2px}
+        .ag-rule-list{max-height:220px;overflow-y:auto;background:#232436;border-radius:0;padding:6px;margin-bottom:6px;display:flex;flex-direction:column;gap:8px}
+        .ag-rule-item{background:#1e1f33;border:1px solid #2e3047;padding:8px;border-radius:0}
+        .ag-rule-item .ag-inp{font-size:11px;padding:5px 8px}
+        #agent-pick-dim{position:fixed;inset:0;background:rgba(0,0,0,.28);z-index:2147483645;pointer-events:none}
+        #agent-pick-hl{position:fixed;border:2.5px solid #818cf8;background:rgba(129,140,248,.08);border-radius:0;pointer-events:none;z-index:2147483646;transition:left .06s,top .06s,width .06s,height .06s;box-shadow:0 0 0 4000px rgba(0,0,0,.25);display:none}
+        #agent-pick-lock-hl{position:fixed;border:2.5px solid #f472b6;background:rgba(244,114,182,.06);border-radius:0;pointer-events:none;z-index:2147483646;transition:left .06s,top .06s,width .06s,height .06s;display:none}
+        #agent-pick-tip{position:fixed;background:#1a1b2e;color:#c4b5fd;border:1px solid #3f3f46;padding:5px 10px;border-radius:0;font:11px/1.4 'SF Mono',Consolas,monospace;z-index:2147483647;pointer-events:none;max-width:560px;word-break:break-all;box-shadow:0 4px 16px rgba(0,0,0,.4);opacity:0;transition:opacity .08s;display:flex;flex-direction:column;gap:3px}
+        .ag-tip-sel{display:flex;align-items:center;gap:0;flex-wrap:wrap}
+        .ag-diag-line{display:flex;align-items:center;gap:4px;flex-wrap:wrap;font-size:10px;color:#71717a;border-top:1px solid #2e3047;padding-top:3px}
+        .ag-diag-text{color:#86efac;max-width:200px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+        .ag-diag-children{color:#a1a1aa}
+        .ag-diag-size{color:#52525b}
+        .ag-diag-ok{color:#86efac}
+        .ag-diag-warn{color:#facc15}
+        .ag-diag-err{color:#f472b6}
+        .ag-diag-shadow{color:#818cf8;background:rgba(129,140,248,.15);padding:0 4px}
+        .ag-diag-scroll{color:#facc15;background:rgba(250,204,21,.1);padding:0 4px}
+        .ag-diag-sep{color:#3f3f46;margin:0 1px}
+        #agent-pick-bar{position:fixed;top:14px;left:50%;transform:translateX(-50%);background:#1a1b2e;color:#d4d4d8;border:1px solid #818cf8;padding:10px 28px;border-radius:0;font-size:14px;z-index:2147483647;box-shadow:0 6px 24px rgba(0,0,0,.5);pointer-events:none}
+        #agent-pick-level{color:#86efac; margin-left: 8px; font-weight: bold;}
+        #ag-show-levels{pointer-events:auto;cursor:pointer;color:#f472b6;margin-right:8px;border-right:1px solid #3f3f46;padding-right:8px;white-space:nowrap;flex-shrink:0;transition:color .1s}
+        #ag-show-levels:hover{color:#fda4af}
+        .ag-level-panel{position:fixed;width:min(420px,85vw);max-height:340px;background:#1a1b2e;border:1px solid #f472b6;border-radius:0;box-shadow:0 8px 32px rgba(0,0,0,.55);z-index:2147483647;display:none;flex-direction:column;font:12px/1.5 'SF Mono',Consolas,monospace;color:#d4d4d8;}
+        .ag-level-head{display:flex;align-items:center;justify-content:space-between;padding:8px 12px;border-bottom:1px solid #2e3047;font-weight:600;color:#f472b6;flex-shrink:0;}
+        .ag-level-head button{background:none;border:none;color:#71717a;cursor:pointer;font-size:16px;padding:0 4px;}
+        .ag-level-head button:hover{color:#f472b6}
+        .ag-level-body{flex:1;overflow-y:auto;padding:4px;}
+        .ag-level-body::-webkit-scrollbar{width:4px}
+        .ag-level-body::-webkit-scrollbar-thumb{background:#3f3f46;border-radius:0}
+        .ag-level-item{display:flex;align-items:center;gap:6px;padding:6px 8px;cursor:pointer;border-left:2px solid transparent;transition:background .1s;}
+        .ag-level-item:hover{background:rgba(244,114,182,.1);border-left-color:#f472b6;}
+        .ag-level-target{background:rgba(244,114,182,.06);border-left-color:#f472b6;}
+        .ag-level-idx{color:#52525b;font-size:10px;min-width:18px;text-align:right;flex-shrink:0;}
+        .ag-level-tag{color:#86efac;font-weight:600;min-width:60px;flex-shrink:0;}
+        .ag-level-digest{color:#93c5fd;flex:1;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;font-style:italic;}
+        .ag-level-sel{color:#52525b;font-size:10px;max-width:120px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;flex-shrink:0;}
+        #agent-debug{position:fixed;top:10px;right:10px;width:380px;max-height:60vh;background:rgba(15,15,30,.92);border:1px solid #3f3f46;border-radius:0;box-shadow:0 10px 40px rgba(0,0,0,.5);z-index:2147483644;display:flex;flex-direction:column;font:12px/1.5 'SF Mono',Consolas,monospace;backdrop-filter:blur(8px);color:#a1a1aa;}
+        #agent-debug-head{padding:8px 12px;border-bottom:1px solid #2e3047;display:flex;justify-content:space-between;align-items:center;color:#d4d4d8}
+        #agent-debug-body{flex:1;overflow-y:auto;padding:8px;display:flex;flex-direction:column;gap:4px}
+        #agent-debug-body::-webkit-scrollbar{width:4px}
+        #agent-debug-body::-webkit-scrollbar-thumb{background:#3f3f46;border-radius:0}
+        .ag-log{padding:4px 6px;border-radius:0;word-break:break-all;background:rgba(255,255,255,.03);border-left:3px solid transparent}
+        .ag-log-time{color:#52525b;margin-right:6px}
+        .ag-log-info{border-left-color:#818cf8;color:#c4b5fd}
+        .ag-log-warn{border-left-color:#facc15;color:#fde68a;background:rgba(250,204,21,.05)}
+        .ag-log-err{border-left-color:#f472b6;color:#fda4af;background:rgba(244,114,182,.05)}
+        .ag-log-ok{border-left-color:#86efac;color:#bbf7d0;background:rgba(134,239,172,.05)}
+        #agent-debug-foot{padding:6px 12px;border-top:1px solid #2e3047;text-align:right}
+        .ag-dbg-btn{background:#2e3047;border:1px solid #3f3f46;color:#a1a1aa;padding:3px 10px;border-radius:0;cursor:pointer;font-size:11px}
+        .ag-dbg-btn:hover{border-color:#818cf8;color:#818cf8}
+        #agent-auto-send-toggle{position:fixed;z-index:2147483640;display:flex;flex-direction:row;align-items:stretch;background:#1a1b2e;border:1px solid #3f3f46;pointer-events:auto;white-space:nowrap;user-select:none;opacity:0.85;transition:opacity .15s;}
+        #agent-auto-send-toggle:hover{opacity:1}
+        .ag-as-opts{display:flex;flex-direction:column;padding:4px 4px 4px 8px}
+        .ag-as-opt{font-size:10px;color:#52525b;cursor:pointer;padding:5px 2px;line-height:1.3;transition:color .15s;font-family:system-ui,sans-serif}
+        .ag-as-opt:hover{color:#a1a1aa}
+        .ag-as-opt.active{color:#818cf8}
+        .ag-as-rail{width:16px;position:relative;display:flex;justify-content:center;border-left:1px solid #2e3047;padding:4px 0}
+        .ag-as-rail::before{content:'';position:absolute;top:8px;bottom:8px;width:2px;background:#3f3f46}
+        .ag-as-thumb{position:absolute;left:50%;transform:translateX(-50%);width:10px;height:10px;background:#818cf8;transition:top .25s ease;z-index:1}
+        #ag-calibrate-bar{position:fixed;top:20px;left:50%;transform:translateX(-50%);background:#1a1b2e;color:#fde68a;border:1px solid #facc15;padding:14px 24px;z-index:2147483647;box-shadow:0 8px 32px rgba(0,0,0,.6);font:13px/1.5 system-ui,sans-serif;display:none;flex-direction:column;align-items:center;gap:10px;pointer-events:auto;width:min(600px,90vw)}
+        #ag-calibrate-bar b{color:#facc15}
+        #ag-calibrate-cards{position:fixed;top:100px;left:50%;transform:translateX(-50%);background:#1a1b2e;border:1px solid #2e3047;z-index:2147483647;box-shadow:0 8px 32px rgba(0,0,0,.6);width:min(220px,45vw);overflow-y:auto;overflow-x:hidden;padding:10px;cursor:move}
+        #ag-calibrate-cards::-webkit-scrollbar{width:4px}
+        #ag-calibrate-cards::-webkit-scrollbar-thumb{background:#3f3f46}
+        .ag-cal-item{display:flex;flex-direction:column;align-items:center;gap:6px;padding:6px;background:#232436;transition:.15s;width:100%;box-sizing:border-box;overflow:hidden;position:relative;z-index:0;border:1px solid transparent;min-height:0}
+        .ag-cal-item.selected-busy{background:rgba(244,114,182,.1);border-color:#f472b6}
+        .ag-cal-item.selected-idle{background:rgba(134,239,172,.1);border-color:#86efac}
+        .ag-cal-item.selected-sendable{background:rgba(129,140,248,.1);border-color:#818cf8}
+        .ag-cal-clone{width:100%;height:60px;max-height:60px;overflow:hidden;display:flex;align-items:center;justify-content:center;background:#0f0f23}
+        .ag-cal-actions{display:flex;flex-direction:column;gap:4px;width:100%;align-items:center}
+        .ag-cal-tag{font-size:10px;padding:2px 8px;border:1px solid #3f3f46;color:#71717a;cursor:pointer;background:none;white-space:nowrap;width:60%;text-align:center}
+        .ag-cal-tag:hover{border-color:#818cf8;color:#818cf8}
+        .ag-cal-tag.active-busy{border-color:#f472b6;color:#f472b6;background:rgba(244,114,182,.2)}
+        .ag-cal-tag.active-idle{border-color:#86efac;color:#86efac;background:rgba(134,239,172,.2)}
+        .ag-cal-tag.active-sendable{border-color:#818cf8;color:#818cf8;background:rgba(129,140,248,.2)}
     `);
+
     /* ================================================================
      * 3. 调试日志系统
      * ================================================================ */
+
     let _debugPanel = null;
     let _debugBody = null;
+
     function initDebugUI() {
         if (_debugPanel) return;
         _debugPanel = document.createElement('div');
@@ -324,14 +334,17 @@
         _debugPanel.querySelector('#ag-dbg-close').onclick = () => _debugPanel.style.display = 'none';
         _debugPanel.querySelector('#ag-dbg-clear').onclick = () => _debugBody.innerHTML = '';
     }
+
     function showDebug() {
         if (!_debugPanel) initDebugUI();
         _debugPanel.style.display = 'flex';
     }
+
     function _truncate(str, maxDisplay = 200, keepLen = 100) {
         str = String(str);
         return str.length > maxDisplay ? str.substring(0, keepLen) + `... (共 ${str.length} 字符)` : str;
     }
+
     function log(type, msg) {
         const c = cfgLoad();
         console.log(`[Agent-${type}] ${msg}`);
@@ -344,14 +357,17 @@
         _debugBody.appendChild(div);
         _debugBody.scrollTop = _debugBody.scrollHeight;
     }
+
     /* ================================================================
      * 4. 元素选择器
      * ================================================================ */
+
     const PICKER_IDS = new Set([
-        'agent-pick-dim', 'agent-pick-hl', 'agent-pick-lock-hl',
-        'agent-pick-tip', 'agent-pick-bar', 'agent-panel', 'agent-debug',
-        'agent-auto-send-toggle', 'ag-level-panel', 'ag-calibrate-bar'
+        'agent-pick-dim', 'agent-pick-hl', 'agent-pick-lock-hl', 'agent-pick-tip',
+        'agent-pick-bar', 'agent-panel', 'agent-debug', 'agent-auto-send-toggle',
+        'ag-level-panel', 'ag-calibrate-bar'
     ]);
+
     let _pickActive = false, _pickType = '';
     let _pickHL, _pickTip, _pickBar, _pickDim;
     let _pickLockHL = null;
@@ -359,6 +375,7 @@
     let _pickedEl = null;
     let _domStack = [];
     let _levelPanel = null;
+
     const TYPE_LABEL = {
         chat: '聊天记录容器',
         input: '输入框',
@@ -367,45 +384,58 @@
         'clean-class': '清理元素Class',
         'code-content': '代码内容元素'
     };
+
     function _isPureHashClass(c) {
         if (/^[a-f0-9]{5,}$/i.test(c)) return true;
         if (/^(css|sc|emotion|styled)-[a-z0-9]{4,}$/i.test(c)) return true;
         return false;
     }
+
     function _stripClassHash(c) {
         return c.replace(/[_-][a-f0-9]{5,8}$/i, '');
     }
+
     function genSelector(el) {
         if (!el || el === document.body || el === document.documentElement) return '';
         if (el.id && !/\d/.test(el.id)) {
             const sel = '#' + CSS.escape(el.id);
-            try { if (document.querySelectorAll(sel).length === 1) return sel; } catch (_) {}
+            try {
+                if (document.querySelectorAll(sel).length === 1) return sel;
+            } catch (_) {}
         }
         for (const attr of ['data-testid', 'data-test-id', 'data-role', 'data-cy']) {
             const val = el.getAttribute(attr);
             if (val) {
                 const sel = `${el.tagName.toLowerCase()}[${attr}="${CSS.escape(val)}"]`;
-                try { if (document.querySelectorAll(sel).length === 1) return sel; } catch (_) {}
+                try {
+                    if (document.querySelectorAll(sel).length === 1) return sel;
+                } catch (_) {}
             }
         }
         const role = el.getAttribute('role');
         if (role) {
             const sel = `${el.tagName.toLowerCase()}[role="${CSS.escape(role)}"]`;
-            try { if (document.querySelectorAll(sel).length === 1) return sel; } catch (_) {}
+            try {
+                if (document.querySelectorAll(sel).length === 1) return sel;
+            } catch (_) {}
         }
         if (el.className && typeof el.className === 'string') {
             const allCls = el.className.trim().split(/\s+/).filter(c => c);
             const cleanCls = allCls.filter(c => !_isPureHashClass(c) && !/^(_|-{2})/.test(c) && !/^(is|has|can|should)/.test(c) && !/[_-][a-f0-9]{5,8}$/i.test(c));
             if (cleanCls.length) {
                 const sel = `${el.tagName.toLowerCase()}.${cleanCls.map(c => CSS.escape(c)).join('.')}`;
-                try { if (document.querySelectorAll(sel).length === 1) return sel; } catch (_) {}
+                try {
+                    if (document.querySelectorAll(sel).length === 1) return sel;
+                } catch (_) {}
             }
             const hashCls = allCls.filter(c => !_isPureHashClass(c) && !/^(_|-{2})/.test(c) && !/^(is|has|can|should)/.test(c) && /[_-][a-f0-9]{5,8}$/i.test(c));
             if (hashCls.length) {
                 const stripped = hashCls.map(c => _stripClassHash(c)).filter(s => s.length >= 3);
                 if (stripped.length) {
                     const sel = `${el.tagName.toLowerCase()}${stripped.map(s => `[class*="${CSS.escape(s)}"]`).join('')}`;
-                    try { if (document.querySelectorAll(sel).length === 1) return sel; } catch (_) {}
+                    try {
+                        if (document.querySelectorAll(sel).length === 1) return sel;
+                    } catch (_) {}
                 }
             }
         }
@@ -431,9 +461,12 @@
             cur = cur.parentElement;
         }
         const sel = segs.join(' > ');
-        try { if (document.querySelectorAll(sel).length === 1) return sel; } catch (_) {}
+        try {
+            if (document.querySelectorAll(sel).length === 1) return sel;
+        } catch (_) {}
         return sel;
     }
+
     function pickerEnter(type) {
         _pickActive = true;
         _pickType = type;
@@ -464,6 +497,7 @@
         document.addEventListener('scroll', _syncHighlightPositions, true);
         window.addEventListener('resize', _syncHighlightPositions);
     }
+
     function pickerExit() {
         _pickActive = false;
         _pickType = '';
@@ -481,6 +515,7 @@
         _levelPanel = null;
         showPanel();
     }
+
     function _targetAt(x, y) {
         let el = document.elementFromPoint(x, y);
         while (el && el.shadowRoot) {
@@ -491,6 +526,7 @@
         while (el && PICKER_IDS.has(el.id)) el = el.parentElement;
         return el;
     }
+
     function _onMove(e) {
         e.stopPropagation();
         if (!_pickedEl) {
@@ -500,6 +536,7 @@
             _updateLockHL();
         }
     }
+
     function _getElementDigest(el) {
         const tag = el.tagName.toLowerCase();
         if (['input','textarea','select'].includes(tag)) {
@@ -519,12 +556,12 @@
         if (text) return `${tag}: "${text}"`;
         return tag;
     }
+
     function _highlightEl(el, mouseX, mouseY) {
         const r = el.getBoundingClientRect();
         _pickHL.style.display = 'block';
         Object.assign(_pickHL.style, {
-            left: (r.left-2)+'px', top: (r.top-2)+'px',
-            width: (r.width+4)+'px', height: (r.height+4)+'px'
+            left: (r.left-2)+'px', top: (r.top-2)+'px', width: (r.width+4)+'px', height: (r.height+4)+'px'
         });
         const sel = genSelector(el);
         const digest = _getElementDigest(el);
@@ -545,22 +582,23 @@
         diagParts.push(`<span class="ag-diag-size">${w}×${h}</span>`);
         if (el.shadowRoot) diagParts.push(`<span class="ag-diag-shadow">ShadowDOM</span>`);
         const diagHtml = diagParts.length ? `<div class="ag-diag-line">${diagParts.join('<span class="ag-diag-sep">|</span>')}</div>` : '';
-        _pickTip.innerHTML = _lockedBaseEl
-            ? `<span class="ag-tip-sel"><span id="ag-show-levels">展开所有层级</span><span>${esc(sel)} ←${tag}${digestStr}</span></span>${diagHtml}`
-            : `<span class="ag-tip-sel"><span>${esc(sel)} ←${tag}${digestStr}</span></span>${diagHtml}`;
+        _pickTip.innerHTML = _lockedBaseEl ?
+            `<span class="ag-tip-sel"><span id="ag-show-levels">展开所有层级</span><span>${esc(sel)} ←${tag}${digestStr}</span></span>${diagHtml}` :
+            `<span class="ag-tip-sel"><span>${esc(sel)} ←${tag}${digestStr}</span></span>${diagHtml}`;
         _pickTip.style.opacity = '1';
         _pickTip.style.left = Math.min(mouseX + 14, innerWidth - 510) + 'px';
         _pickTip.style.top = (mouseY + 22) + 'px';
     }
+
     function _updateLockHL() {
         if (!_pickLockHL || !_lockedBaseEl) return;
         const r = _lockedBaseEl.getBoundingClientRect();
         _pickLockHL.style.display = 'block';
         Object.assign(_pickLockHL.style, {
-            left: (r.left-2)+'px', top: (r.top-2)+'px',
-            width: (r.width+4)+'px', height: (r.height+4)+'px'
+            left: (r.left-2)+'px', top: (r.top-2)+'px', width: (r.width+4)+'px', height: (r.height+4)+'px'
         });
     }
+
     function _syncHighlightPositions() {
         if (_pickHL && _pickedEl) {
             const r = _pickedEl.getBoundingClientRect();
@@ -577,9 +615,11 @@
             });
         }
     }
+
     function _hideLockHL() {
         if (_pickLockHL) _pickLockHL.style.display = 'none';
     }
+
     function _showLevelPanel() {
         if (!_lockedBaseEl) return;
         if (!_levelPanel) {
@@ -627,6 +667,7 @@
             };
         });
     }
+
     function _onClick(e) {
         if (_levelPanel && _levelPanel.style.display !== 'none' && _levelPanel.contains(e.target)) return;
         e.stopPropagation();
@@ -676,6 +717,7 @@
         _highlightEl(_pickedEl, e.clientX, e.clientY);
         _updateBarInfo();
     }
+
     function _onCtx(e) {
         if (_levelPanel && _levelPanel.style.display !== 'none' && _levelPanel.contains(e.target)) return;
         e.stopPropagation();
@@ -710,10 +752,12 @@
             log('WARN', '已在最底层，无法回退');
         }
     }
+
     function _updateBarInfo() {
         if (!_pickBar || !_pickedEl) return;
         _pickBar.innerHTML = `🎯 当前层级: <span style="color:#86efac">${_domStack.length}</span> (${_pickedEl.tagName.toLowerCase()}) | <span style="font-size:12px;opacity:0.7">左键↑ 右键↓ Shift+点击确认</span>`;
     }
+
     function _confirmSelection(el) {
         if (_pickType === 'clean-class') {
             let classes = [];
@@ -764,6 +808,7 @@
         log('INFO', `目标元素详情: <${el.tagName.toLowerCase()}>, class="${el.className}", id="${el.id}"`);
         pickerExit();
     }
+
     function _onKey(e) {
         if (e.key === 'Escape') {
             e.stopPropagation();
@@ -776,10 +821,13 @@
             _confirmSelection(_pickedEl);
         }
     }
+
     /* ================================================================
      * 5. 配置面板
      * ================================================================ */
+
     let _panel = null;
+
     function showPanel() {
         if (!_panel) {
             _panel = document.createElement('div');
@@ -788,14 +836,17 @@
         }
         const store = _loadStore();
         const site = _matchSite();
+        const inWhitelist = !!site;
         const hasSiteCfg = site && store.perSite && store.perSite[site];
         _editTarget = hasSiteCfg ? site : 'defaults';
         _renderPanel();
         _panel.style.display = 'block';
     }
+
     function hidePanel() {
         if (_panel) _panel.style.display = 'none';
     }
+
     function _renderRules(rules) {
         const list = _panel.querySelector('#ag-rule-list');
         if (!list) return;
@@ -806,8 +857,8 @@
         list.innerHTML = rules.map((rule, idx) => `
             <div class="ag-rule-item" data-idx="${idx}">
                 <div class="ag-row" style="margin-bottom:6px">
-                    <input class="ag-inp rule-find" placeholder="查找内容 (Find)" value="${escAttr(rule.find || '')}" style="flex:1.2">
-                    <input class="ag-inp rule-replace" placeholder="替换为 (Replace)" value="${escAttr(rule.replace || '')}" style="flex:1">
+                    <input class="ag-inp rule-find" placeholder="查找内容" value="${escAttr(rule.find || '')}" style="flex:1.2">
+                    <input class="ag-inp rule-replace" placeholder="替换为" value="${escAttr(rule.replace || '')}" style="flex:1">
                 </div>
                 <div class="ag-row" style="flex-wrap:wrap">
                     <label class="ag-toggle" style="font-size:11px;margin:0;cursor:pointer">
@@ -824,6 +875,7 @@
             </div>
         `).join('');
     }
+
     function _collectRulesFromDOM() {
         const items = _panel.querySelectorAll('.ag-rule-item');
         const rules = [];
@@ -838,6 +890,7 @@
         });
         return rules;
     }
+
     function _renderPanel() {
         const store = _loadStore();
         const site = _matchSite();
@@ -886,7 +939,7 @@
                         <label>发送按钮</label><div class="ag-row"><input class="ag-inp" id="ag-s-send" value="${esc(editCfg.selSendButton)}" /><button class="ag-btn ag-btn-p" id="ag-pick-send">🖱 选择</button></div><div id="ag-m-send"></div>
                         <div class="ag-field" id="ag-calibrate-field" style="margin-top:6px; padding:8px; background:#232436; border:1px solid #2e3047; display:${editCfg.selSendButton ? 'block' : 'none'};">
                             <div style="font-size:12px; color:#a1a1aa; margin-bottom:6px">捕获按钮的各种形态，手动标记【忙碌】(AI输出时)和【空闲】态。</div>
-                            <div class="ag-row"><div id="ag-calibrate-status" style="flex:1; font-size:11px; color:#52525b"> 忙碌:${(editCfg.sendBtnBusyFingerprints||[]).length}个 | 空闲:${(editCfg.sendBtnIdleFingerprints||[]).length}个 </div><button class="ag-btn ag-btn-p" id="ag-start-calibrate">${(editCfg.sendBtnBusyFingerprints||[]).length > 0 ? '重新校准' : '开始校准'}</button></div>
+                            <div class="ag-row"><div id="ag-calibrate-status" style="flex:1; font-size:11px; color:#52525b"> 忙碌:${(editCfg.sendBtnBusyFingerprints||[]).length}个 | 空闲:${(editCfg.sendBtnIdleFingerprints||[]).length}个 | 可发送:${(editCfg.sendBtnSendableFingerprints||[]).length}个 </div><button class="ag-btn ag-btn-p" id="ag-start-calibrate">${(editCfg.sendBtnBusyFingerprints||[]).length > 0 ? '重新校准' : '开始校准'}</button></div>
                         </div>
                     </div>
                     <div class="ag-field" style="margin-top:12px;padding-top:10px;border-top:1px solid #2e3047">
@@ -914,6 +967,13 @@
                             <button class="ag-pos-btn" data-pos="top">↑ 上</button>
                             <button class="ag-pos-btn" data-pos="right">→ 右</button>
                             <button class="ag-pos-btn" data-pos="bottom">↓ 下</button>
+                        </div>
+                    </div>
+                    <div class="ag-field" style="margin-top:8px">
+                        <label>发送前防抖延时</label>
+                        <div class="ag-row">
+                            <input class="ag-inp" id="ag-debounce-delay" type="number" value="${editCfg.sendDebounceDelay ?? 100}" style="width:80px" />
+                            <span style="font-size:11px;color:#71717a">检测到可发送状态后等待的毫秒数，0=不等待，默认100</span>
                         </div>
                     </div>
                 </div>
@@ -944,7 +1004,9 @@
                         <button class="ag-btn ag-btn-g" id="ag-add-rule">➕ 添加规则</button>
                     </div>
                 </div>
-                <div class="ag-foot"><button class="ag-btn ag-btn-g" id="ag-cancel">取消</button><button class="ag-btn ag-btn-p" id="ag-save">${saveText}</button></div>`;
+                <div class="ag-foot"><button class="ag-btn ag-btn-g" id="ag-cancel">取消</button><button class="ag-btn ag-btn-p" id="ag-save">${saveText}</button></div>
+            </div>
+        `;
         _panel.querySelector('#agent-panel-close').onclick = hidePanel;
         _panel.querySelector('#ag-cancel').onclick = hidePanel;
         _panel.querySelector('#ag-debug-toggle').onchange = (e) => {
@@ -969,7 +1031,9 @@
             _renderPanel();
         };
         _panel.querySelector('#ag-wl-add').onclick = doAdd;
-        wlInput.onkeydown = e => { if (e.key === 'Enter') doAdd(); };
+        wlInput.onkeydown = e => {
+            if (e.key === 'Enter') doAdd();
+        };
         _panel.querySelectorAll('.ag-wl-rm').forEach(btn => {
             btn.onclick = () => {
                 const s = _loadStore();
@@ -1078,6 +1142,8 @@
             siteData.waitDelayAfterDone = parseInt(_panel.querySelector('#ag-wait-delay').value) || 500;
             siteData.sendBtnBusyFingerprints = editCfg.sendBtnBusyFingerprints || [];
             siteData.sendBtnIdleFingerprints = editCfg.sendBtnIdleFingerprints || [];
+            siteData.sendBtnSendableFingerprints = editCfg.sendBtnSendableFingerprints || [];
+            siteData.sendDebounceDelay = parseInt(_panel.querySelector('#ag-debounce-delay').value) || 0;
             siteData.autoSendMode = editCfg.autoSendMode || 'click';
             siteData.cleanIgnoreClassKeywords = _panel.querySelector('#ag-clean-keywords').value.trim();
             siteData.cleanRemoveButtonLike = _panel.querySelector('#ag-clean-buttons').checked;
@@ -1095,6 +1161,7 @@
             if (s.debugMode) showDebug();
         };
     }
+
     function _showMatch(sel, id) {
         const el = _panel.querySelector('#' + id);
         if (!sel) {
@@ -1108,15 +1175,18 @@
             el.innerHTML = '<div class="ag-match ag-m-fail">✘ 语法错误</div>';
         }
     }
+
     /* ================================================================
      * 6. Agent 核心逻辑
      * ================================================================ */
+
     let _clipboardMode = false;
     let _permissionEnabled = true;
     let _isProcessing = false;
     let _cmdQueue = [];
     let _sendPromiseChain = Promise.resolve();
     let _isCalibrating = false;
+
     // ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
     // 流式任务状态机
     // ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
@@ -1124,6 +1194,7 @@
     const TASK_END = '\n=== Poker Agent Task End ===\n<|im_end|>\n';
     let _taskList = [];
     let _sseEventSource = null;
+
     function _pollConfig() {
         const c = cfgLoad();
         const pollUrl = c.apiUrl.replace('/agent-exec', '/agent-config-poll');
@@ -1148,18 +1219,47 @@
                 _pollConfig();
             },
             onerror() { setTimeout(_pollConfig, 5000); },
-            ontimeout() { setTimeout(_pollConfig, 2000); }
+            ontimeout() { _pollConfig(); }
         });
     }
+
+    function _syncInitialConfig() {
+        return new Promise(resolve => {
+            const c = cfgLoad();
+            GM_xmlhttpRequest({
+                method: 'GET',
+                url: c.apiUrl,
+                timeout: 3000,
+                onload(r) {
+                    if (r.status === 200) {
+                        try {
+                            const data = JSON.parse(r.responseText);
+                            if (!!data.clipboard_mode !== _clipboardMode) {
+                                _clipboardMode = !!data.clipboard_mode;
+                                log('INFO', `初始剪贴板模式同步: ${_clipboardMode ? '已开启' : '已关闭'}`);
+                            }
+                            if (!!data.permission_enabled !== _permissionEnabled) {
+                                _permissionEnabled = !!data.permission_enabled;
+                            }
+                        } catch (e) {}
+                    }
+                    resolve();
+                },
+                ontimeout() { resolve(); },
+                onerror() { resolve(); }
+            });
+        });
+    }
+
     let _pollTimer = null;
     let _lastAnswerEl = null;
     const _currentRoundSent = new Set();
     let _heartbeatCounter = 0;
     let _knownAnswers = [];
     let _noAnswerCount = 0;
+
     function getCleanText(el, cfg) {
         const clone = el.cloneNode(true);
-        // [新增] 优先使用"代码内容元素选择器"提取纯净代码文本
         if (cfg.selCodeContentElement) {
             try {
                 const codeEls = clone.querySelectorAll(cfg.selCodeContentElement);
@@ -1179,25 +1279,24 @@
                 log('ERR', `代码内容元素选择器语法错误: ${e.message}`);
             }
         }
-        // 原有的清理逻辑
         const ignoreKeywords = (cfg.cleanIgnoreClassKeywords || 'thinking,reasoning,probe,deepseek-reason')
             .split(',').map(s => s.trim()).filter(s => s);
         if (ignoreKeywords.length > 0) {
             const sel = ignoreKeywords.map(k => `[class*="${CSS.escape(k)}"]`).join(', ');
-            try { clone.querySelectorAll(sel).forEach(n => n.remove()); } catch(_) {}
+            try {
+                clone.querySelectorAll(sel).forEach(n => n.remove());
+            } catch(_) {}
         }
         clone.querySelectorAll('details').forEach(n => n.remove());
         if (cfg.cleanRemoveButtonLike !== false) {
             clone.querySelectorAll('button, [class*="copy"], [class*="operate"], [class*="action"], [class*="toolbar"]').forEach(n => n.remove());
         }
-        // 处理 pre 标签 (如果前面已经用选择器把 pre 替换成了文本，这里就不会再找到 pre)
         if (cfg.cleanRemovePre !== false) {
             clone.querySelectorAll('pre').forEach(n => {
                 if (clone.textContent.includes('\u3010CodeSTART\u3011')) return;
                 n.remove();
             });
         }
-        // 注入换行符
         (function injectNewlines(node) {
             for (let i = node.childNodes.length - 1; i >= 0; i--) {
                 const child = node.childNodes[i];
@@ -1211,6 +1310,7 @@
         })(clone);
         return clone.textContent;
     }
+
     function _getSendBtnFingerprint() {
         const c = cfgLoad();
         if (!c.selSendButton) return null;
@@ -1224,6 +1324,7 @@
         const ariaLabel = el.getAttribute('aria-label') || '';
         return `${el.tagName}|${style}|${cls}|${innerTag}|${disabled}|${ariaDisabled}|${ariaLabel}`;
     }
+
     function _makeDraggable(el) {
         el.addEventListener('mousedown', (e) => {
             if (e.target.closest('button') || e.target.closest('input')) return;
@@ -1248,6 +1349,7 @@
             e.preventDefault();
         });
     }
+
     function _startCalibration() {
         if (_isCalibrating) return;
         _isCalibrating = true;
@@ -1267,23 +1369,27 @@
         let capturedMap = new Map();
         let selectedBusy = new Set(c.sendBtnBusyFingerprints || []);
         let selectedIdle = new Set(c.sendBtnIdleFingerprints || []);
+        let selectedSendable = new Set(c.sendBtnSendableFingerprints || []);
         let checkInterval = null;
         const renderBar = (msg) => {
             const mode = c.verifyMode || 'single';
-            const canFinish = (mode === 'single' && selectedBusy.size > 0) || (mode === 'double' && selectedBusy.size > 0 && selectedIdle.size > 0);
+            const canFinish = selectedBusy.size > 0;
             let listHtml = '';
             capturedMap.forEach((snap, fp) => {
                 const isBusy = selectedBusy.has(fp);
                 const isIdle = selectedIdle.has(fp);
-                const cls = isBusy ? 'selected-busy' : (isIdle ? 'selected-idle' : '');
+                const isSendable = selectedSendable.has(fp);
+                const cls = isBusy ? 'selected-busy' : (isIdle ? 'selected-idle' : (isSendable ? 'selected-sendable' : ''));
                 listHtml += `
                     <div class="ag-cal-item ${cls}">
                         <div class="ag-cal-clone" style="background:${snap.bg};color:${snap.color}">${snap.html}</div>
                         <div class="ag-cal-actions">
                             <button class="ag-cal-tag ${isBusy ? 'active-busy' : ''}" data-fp="${fp}" data-type="busy">忙碌</button>
                             <button class="ag-cal-tag ${isIdle ? 'active-idle' : ''}" data-fp="${fp}" data-type="idle">空闲</button>
+                            <button class="ag-cal-tag ${isSendable ? 'active-sendable' : ''}" data-fp="${fp}" data-type="sendable">可发送</button>
                         </div>
-                    </div>`;
+                    </div>
+                `;
             });
             cards.innerHTML = listHtml || '<div style="color:#52525b;font-size:12px;text-align:center;padding:16px 0">等待按钮状态变化...</div>';
             cards.style.display = 'flex';
@@ -1292,14 +1398,18 @@
                 <div style="display:flex;gap:8px;align-items:center">
                     <button class="ag-btn ag-btn-g" id="ag-cal-stop">取消</button>
                     <button class="ag-btn ag-btn-p" id="ag-cal-finish" style="${canFinish ? '' : 'opacity:0.5;pointer-events:none'}">完成校准</button>
-                </div>`;
+                </div>
+            `;
             bar.style.display = 'flex';
             bar.querySelector('#ag-cal-stop').onclick = () => stopCalibration();
             if (canFinish) {
                 bar.querySelector('#ag-cal-finish').onclick = () => {
-                    cfgSaveRuntime({ sendBtnBusyFingerprints: [...selectedBusy], sendBtnIdleFingerprints: [...selectedIdle] });
-                    log('OK', `校准完成！忙碌: ${selectedBusy.size}个, 空闲: ${selectedIdle.size}个`);
-                    log('INFO', '注意：指纹算法已升级（新增disabled/aria属性），旧校准数据已自动适配新格式');
+                    cfgSaveRuntime({
+                        sendBtnBusyFingerprints: [...selectedBusy],
+                        sendBtnIdleFingerprints: [...selectedIdle],
+                        sendBtnSendableFingerprints: [...selectedSendable]
+                    });
+                    log('OK', `校准完成！忙碌: ${selectedBusy.size}个, 空闲: ${selectedIdle.size}个, 可发送: ${selectedSendable.size}个`);
                     stopCalibration();
                 };
             }
@@ -1312,10 +1422,17 @@
                         if (selectedBusy.has(fp)) selectedBusy.delete(fp);
                         else selectedBusy.add(fp);
                         selectedIdle.delete(fp);
-                    } else {
+                        selectedSendable.delete(fp);
+                    } else if (type === 'idle') {
                         if (selectedIdle.has(fp)) selectedIdle.delete(fp);
                         else selectedIdle.add(fp);
                         selectedBusy.delete(fp);
+                        selectedSendable.delete(fp);
+                    } else if (type === 'sendable') {
+                        if (selectedSendable.has(fp)) selectedSendable.delete(fp);
+                        else selectedSendable.add(fp);
+                        selectedBusy.delete(fp);
+                        selectedIdle.delete(fp);
                     }
                     renderBar(msg);
                 };
@@ -1328,7 +1445,7 @@
             _isCalibrating = false;
             showPanel();
         };
-        renderBar('👇 请在下方正常聊天，脚本会自动捕获按钮的不同状态。<br><b style="color:#f472b6">请将"停止生成"标记为【忙碌】，其他状态标记为【空闲】。</b>');
+        renderBar('👇 请在下方正常聊天，脚本会自动捕获按钮的不同状态。<br><b style="color:#f472b6">【忙碌】=停止生成 | 【空闲】=AI说完 | 【可发送】=可以发送消息</b>');
         checkInterval = setInterval(() => {
             const fp = _getSendBtnFingerprint();
             if (!fp || fp === 'ELEMENT_MISSING') return;
@@ -1339,10 +1456,11 @@
                 let inner = el.innerHTML.replace(/<(style|script|link)[\s\S]*?<\/\1>/gi, '');
                 capturedMap.set(fp, { html: inner, bg: cs.backgroundColor, color: cs.color });
                 log('INFO', `捕获新状态指纹 (#${capturedMap.size})`);
-                renderBar('👇 继续操作，或标记已捕获的状态后点击完成。<br><b style="color:#f472b6">请将"停止生成"标记为【忙碌】</b>');
+                renderBar('👇 继续操作，或标记已捕获的状态后点击完成。<br><b style="color:#f472b6">【忙碌】=停止生成 | 【空闲】=AI说完 | 【可发送】=可以发送消息</b>');
             }
         }, 300);
     }
+
     function _waitForLLMFinish() {
         return new Promise(resolve => {
             const c = cfgLoad();
@@ -1365,16 +1483,18 @@
             const startPhase2 = () => {
                 if (c.verifyMode === 'double') {
                     const idleList = c.sendBtnIdleFingerprints || [];
-                    if (idleList.length === 0) {
-                        log('WARN', '⚠️ 双验证模式但未设置空闲态，退化为单验证');
+                    const sendableList = c.sendBtnSendableFingerprints || [];
+                    const validList = [...new Set([...idleList, ...sendableList])];
+                    if (validList.length === 0) {
+                        log('WARN', '⚠️ 双验证模式但未设置空闲/可发送态，退化为单验证');
                         triggerDelay();
                         return;
                     }
-                    log('INFO', '👀 双验证：等待进入空闲态...');
+                    log('INFO', '👀 双验证：等待进入空闲或可发送态...');
                     const checkPhase2 = () => {
                         const fp = _getSendBtnFingerprint();
-                        if (fp && idleList.includes(fp)) {
-                            log('INFO', '🟢 进入空闲态');
+                        if (fp && validList.includes(fp)) {
+                            log('INFO', '🟢 进入空闲或可发送态');
                             triggerDelay();
                         } else {
                             setTimeout(checkPhase2, 200);
@@ -1393,6 +1513,38 @@
             checkPhase1();
         });
     }
+
+    function _waitForSendable() {
+        return new Promise(resolve => {
+            const c = cfgLoad();
+            const sendableList = c.sendBtnSendableFingerprints || [];
+            if (sendableList.length === 0) {
+                resolve();
+                return;
+            }
+            log('INFO', '👀 等待可发送状态...');
+            let elapsed = 0;
+            const interval = 200;
+            const timeout = 30000;
+            const check = () => {
+                const fp = _getSendBtnFingerprint();
+                if (fp && sendableList.includes(fp)) {
+                    log('INFO', '🟢 检测到可发送状态');
+                    resolve();
+                } else {
+                    elapsed += interval;
+                    if (elapsed >= timeout) {
+                        log('WARN', `⚠️ 等待可发送状态超时(${timeout}ms)，强制继续`);
+                        resolve();
+                    } else {
+                        setTimeout(check, interval);
+                    }
+                }
+            };
+            check();
+        });
+    }
+
     async function _checkAndDispatch() {
         if (_isProcessing || _cmdQueue.length === 0) return;
         _isProcessing = true;
@@ -1406,9 +1558,9 @@
         _cmdQueue = [];
         _dispatch(batch);
     }
+
     function _dispatch(cmdBatch) {
         const c = cfgLoad();
-        // ===== 新增：应用自定义清洗规则，并移除硬编码替换 =====
         if (c.textCleanRules && Array.isArray(c.textCleanRules) && c.textCleanRules.length > 0) {
             let cleanCount = 0;
             const parseUnicode = (str) => {
@@ -1452,7 +1604,6 @@
                 log('INFO', `✨ 已应用 ${cleanCount} 条自定义清洗规则`);
             }
         }
-        // ===== 修改结束 =====
         log('INFO', `🚀 AI已说完，发送至本地后端...`);
         GM_xmlhttpRequest({
             method: 'POST',
@@ -1485,24 +1636,17 @@
             }
         });
     }
-    /**
-     * 解码 __CLIPBOARD_FILE__ 标记的文件内容 (async)
-     * 新版格式: __CLIPBOARD_FILE__ID|||<uuid>|||<filename>|||<size> (通过HTTP下载)
-     * 旧版格式: __CLIPBOARD_FILE__<filename>|||<size>|||<base64> (兼容性回退)
-     */
+
     async function _decodeClipboardFile(resultText) {
         const marker = '__CLIPBOARD_FILE__';
         const markerIdx = resultText.indexOf(marker);
         if (markerIdx === -1) return null;
         const beforeMarker = resultText.substring(0, markerIdx);
         let afterMarker = resultText.substring(markerIdx + marker.length);
-        // 1. 清理空白
         let cleanStr = afterMarker.replace(/\x00/g, '').replace(/\s/g, '');
         const parts = cleanStr.split('|||');
-        // 2. 判别新旧格式
         const isNewFormat = (parts[0] === 'ID');
         if (isNewFormat) {
-            // === 新格式：HTTP下载 ===
             const fileId = parts[1];
             const filename = parts[2] || 'unknown';
             const sizeStr = parts[3];
@@ -1511,23 +1655,19 @@
                 return null;
             }
             log('INFO', `📡 检测到大文件任务，开始下载: ${filename} (${sizeStr} bytes)`);
-            // [修复] await 等待下载完成
             const b64Data = await _downloadFileFromAgent(fileId);
-            if (!b64Data) return null; // 下载失败
+            if (!b64Data) return null;
             log('OK', `📄 文件下载完成: ${filename} (${sizeStr} bytes)`);
             return { filename, size: parseInt(sizeStr), text: '[由HTTP传输]', base64: b64Data, beforeMarker };
         } else {
-            // === 旧格式：Base64解析 (兼容性保留) ===
             let filename = '';
             let sizeStr = '';
             let base64Raw = '';
             if (parts.length >= 3) {
-                // 正常分隔符
                 filename = parts[0];
                 sizeStr = parts[1];
                 base64Raw = parts.slice(2).join('|||');
             } else {
-                // 降级兼容旧版无分隔符格式
                 const dotIdx = cleanStr.lastIndexOf('.');
                 if (dotIdx !== -1) {
                     let extEnd = dotIdx + 1;
@@ -1561,9 +1701,7 @@
             }
         }
     }
-    /**
-     * 从后端下载文件内容并转换为 Base64
-     */
+
     function _downloadFileFromAgent(fileId) {
         const c = cfgLoad();
         const apiUrl = c.apiUrl.replace('/agent-exec', '/agent-file-download');
@@ -1589,9 +1727,7 @@
             xhr.send();
         });
     }
-    /**
-     * 粘贴文件到输入框（不触发发送）
-     */
+
     async function _doPasteFile(input, filename, fileSize, b64Data) {
         try {
             const byteChars = atob(b64Data);
@@ -1599,10 +1735,9 @@
             for (let i = 0; i < byteChars.length; i++) byteArr[i] = byteChars.charCodeAt(i);
             const ext = filename.split('.').pop().toLowerCase();
             const mimeMap = {
-                'js': 'text/javascript', 'ts': 'text/typescript', 'html': 'text/html',
-                'css': 'text/css', 'json': 'application/json', 'md': 'text/markdown',
-                'py': 'text/x-python', 'txt': 'text/plain', 'xml': 'text/xml',
-                'csv': 'text/csv', 'java': 'text/x-java-source', 'gradle': 'text/plain',
+                'js': 'text/javascript', 'ts': 'text/typescript', 'html': 'text/html', 'css': 'text/css',
+                'json': 'application/json', 'md': 'text/markdown', 'py': 'text/x-python', 'txt': 'text/plain',
+                'xml': 'text/xml', 'csv': 'text/csv', 'java': 'text/x-java-source', 'gradle': 'text/plain',
                 'properties': 'text/plain', 'toml': 'text/plain', 'yml': 'text/yaml', 'yaml': 'text/yaml'
             };
             const file = new File([byteArr], filename, { type: mimeMap[ext] || 'text/plain' });
@@ -1618,25 +1753,22 @@
             log('ERR', `文件粘贴失败: ${err.message}`);
         }
     }
-    /**
-     * 渲染专属区块：只替换两个标记之间的内容，保留用户在区块外的输入
-     * [v14] 移除了 __CLIPBOARD_FILE__ 解码逻辑，统一在 _finalizeAndSend 中处理
-     */
+
     function _renderTaskBlock() {
         const c = cfgLoad();
         const input = document.querySelector(c.selInputBox);
         if (!input) return;
-        // 1. 拼接新的区块内容
         let block = TASK_START;
         _taskList.forEach((task, idx) => {
             if (task.status === 'done') {
                 let resultText = task.result || '';
-                // [v14] 不再在此处解码 __CLIPBOARD_FILE__，直接输出原始 resultText
+                if (_clipboardMode && resultText.includes('__CLIPBOARD_FILE__')) {
+                    resultText = '[Poker Agent] [文件准备中...等待下载粘贴]';
+                }
                 block += `[Poker Agent] [done]\n${resultText}\n`;
             } else if (task.status === 'running') {
                 block += `[Poker Agent] [running]\n${task.logs.join('\n')}\n`;
             } else {
-                // waiting
                 block += `[Poker Agent] [waiting]\n\n`;
             }
             if (idx < _taskList.length - 1) block += '\n';
@@ -1646,37 +1778,29 @@
             block += `\n[Poker Agent]\nAll tasks done!`;
         }
         block += TASK_END;
-        // 2. 读取当前输入框的完整文本
         let currentText = '';
         if (input.tagName === 'TEXTAREA' || input.tagName === 'INPUT') {
             currentText = input.value;
         } else {
             currentText = input.textContent || '';
         }
-        // 3. 寻找标记，切分出用户输入的"前缀"和"后缀"
         let prefix = '';
         let suffix = '';
         const startIdx = currentText.indexOf(TASK_START);
         if (startIdx !== -1) {
-            // 找到了起始标记：前缀是标记之前的内容
             prefix = currentText.substring(0, startIdx);
             const endIdx = currentText.indexOf(TASK_END, startIdx + TASK_START.length);
             if (endIdx !== -1) {
-                // 找到了结束标记：后缀是结束标记之后的内容
                 suffix = currentText.substring(endIdx + TASK_END.length);
             }
         } else {
-            // 首次渲染或标记被删了：把当前所有文本当作前缀
             prefix = currentText.trim();
             if (prefix) prefix += '\n';
         }
-        // 4. 拼接 前缀 + 新区块 + 后缀，写入输入框
         const finalText = prefix + block + suffix;
         _directInput(input, finalText, false);
     }
-    /**
-     * 建立 SSE 长连接，实时更新任务状态
-     */
+
     function _initSSE() {
         if (_sseEventSource) {
             try { _sseEventSource.abort(); } catch(e) {}
@@ -1722,6 +1846,7 @@
             }
         });
     }
+
     function _handleSSEData(data) {
         if (data.id === 'all') return;
         const task = _taskList.find(t => t.id === data.id);
@@ -1746,10 +1871,7 @@
             _finalizeAndSend();
         }
     }
-    /**
-     * 所有任务完成后的最终处理：写入结果并触发发送
-     * [v14] 文件下载统一在此处 async 处理，增加失败容错
-     */
+
     async function _finalizeAndSend() {
         log('INFO', '✅ 所有任务完成，等待 LLM 输出完毕...');
         await _waitForLLMFinish();
@@ -1762,39 +1884,26 @@
             _checkAndDispatch();
             return;
         }
-        // 检查是否有需要粘贴文件的任务
-        const hasFileTask = _taskList.some(t => t.status === 'done' && t.result && t.result.includes('__CLIPBOARD_FILE__'));
-        // 【关键修改】如果有文件任务，先将任务结果中的文件标记替换为描述文本
-        // 这样 _renderTaskBlock 就会将其作为普通文本处理，生成统一的区块格式
+        const hasFileTask = _clipboardMode && _taskList.some(t => t.status === 'done' && t.result && t.result.includes('__CLIPBOARD_FILE__'));
         if (hasFileTask) {
             log('INFO', '📋 检测到文件任务，准备文件粘贴...');
             for (const task of _taskList) {
                 if (task.status !== 'done') continue;
                 const resultText = task.result || '';
                 if (resultText.includes('__CLIPBOARD_FILE__')) {
-                    // [v14] 使用 await 等待下载完成
                     const decoded = await _decodeClipboardFile(resultText);
                     if (decoded) {
-                        // 下载成功：将文件标记替换为描述文本
                         task.result = (decoded.beforeMarker || '') + `[Poker Agent] 已粘贴文件：${decoded.filename}（${decoded.size} 字节）`;
-                        // 暂存解码后的文件数据，用于后续粘贴
                         task._fileData = decoded;
                     } else {
-                        // [v14 新增] 下载失败处理，避免显示 undefined 或原始ID
-                        log('ERR', `文件任务下载失败: ${task.id}`);
-                        task.result = `[Poker Agent] 文件下载失败 (HTTP 404 或网络错误)`;
-                        // 标记为不粘贴
+                        log('ERR', `文件任务解析或下载失败: ${task.id}`);
+                        task.result = `[Poker Agent] 文件标记损坏或下载失败`;
                         task._fileData = null;
                     }
                 }
             }
         }
-        // 【关键修改】统一通过 _renderTaskBlock 渲染区块，确保有完整的区块标记
-        // 此时文件任务的 task.result 已经被替换为描述文本，不再包含 __CLIPBOARD_FILE__ 标记
-        // 所以 _renderTaskBlock 会生成正常的 [Poker Agent] [done] 和 All tasks done! 标记
         _renderTaskBlock();
-        // 【关键修改】如果有文件任务，在区块渲染完成后执行文件粘贴
-        // 文件附件会添加到输入框的附件区域，不会影响已写入的区块文本
         if (hasFileTask) {
             input.focus();
             for (const task of _taskList) {
@@ -1803,12 +1912,19 @@
                 }
             }
         }
+        await _waitForSendable();
+        const debounceDelay = parseInt(c.sendDebounceDelay) || 0;
+        if (debounceDelay > 0) {
+            log('INFO', `⏳ 发送防抖延时 ${debounceDelay}ms...`);
+            await new Promise(r => setTimeout(r, debounceDelay));
+        }
         log('INFO', '🚀 触发最终发送');
         _executeSend(input);
         _isProcessing = false;
         _taskList = [];
         _checkAndDispatch();
     }
+
     function _trySendByClick() {
         const c = cfgLoad();
         if (!c.selSendButton) {
@@ -1824,6 +1940,7 @@
         log('INFO', '👆 点击发送按钮发送');
         return true;
     }
+
     function _executeSend(input) {
         const c = cfgLoad();
         const mode = c.autoSendMode || 'click';
@@ -1853,6 +1970,7 @@
                 break;
         }
     }
+
     function _directInput(input, text, append = false) {
         input.focus();
         if (input.tagName === 'TEXTAREA' || input.tagName === 'INPUT') {
@@ -1871,6 +1989,7 @@
             document.execCommand('insertText', false, text);
         }
     }
+
     function _trySendByEnter(input) {
         ['keydown', 'keypress', 'keyup'].forEach(evtType => {
             input.dispatchEvent(new KeyboardEvent(evtType, {
@@ -1880,6 +1999,7 @@
             }));
         });
     }
+
     function _smartWait(input, opts = {}) {
         const { expectValue, checkDOM = false, maxWait = 3000, interval = 50, stableNeed = 3 } = opts;
         return new Promise(resolve => {
@@ -1906,15 +2026,23 @@
             }, maxWait);
         });
     }
+
     /* ================================================================
      * 6.5 发送模式选择器
      * ================================================================ */
+
     let _toggleEl = null;
     let _togglePosTimer = null;
+
     function _initAutoSendToggle() {
         _destroyAutoSendToggle();
         let c;
-        try { c = cfgLoad(); } catch(e) { console.error('[Agent] cfgLoad异常:', e); return; }
+        try {
+            c = cfgLoad();
+        } catch(e) {
+            console.error('[Agent] cfgLoad异常:', e);
+            return;
+        }
         if (!c.showAutoSendToggle || !c.selSendButton) return;
         const mode = c.autoSendMode || 'click';
         _toggleEl = document.createElement('div');
@@ -1927,7 +2055,8 @@
             </div>
             <div class="ag-as-rail">
                 <div class="ag-as-thumb"></div>
-            </div>`;
+            </div>
+        `;
         document.body.appendChild(_toggleEl);
         _toggleEl.querySelectorAll('.ag-as-opt').forEach(opt => {
             opt.onclick = (e) => {
@@ -1951,6 +2080,7 @@
             }, 500);
         }, 100);
     }
+
     function _updateSliderPos() {
         if (!_toggleEl) return;
         const c = cfgLoad();
@@ -1967,6 +2097,7 @@
         const top = optRect.top - railRect.top + optRect.height / 2 - 5;
         thumb.style.top = top + 'px';
     }
+
     function _updateTogglePosition() {
         if (!_toggleEl) return;
         const c = cfgLoad();
@@ -2003,6 +2134,7 @@
         _toggleEl.style.left = left + 'px';
         _toggleEl.style.top = top + 'px';
     }
+
     function _destroyAutoSendToggle() {
         if (_togglePosTimer) {
             clearInterval(_togglePosTimer);
@@ -2013,16 +2145,21 @@
             _toggleEl = null;
         }
     }
+
     /* ================================================================
      * 7. 启动入口
      * ================================================================ */
+
     GM_registerMenuCommand('⚙️ Agent 配置面板', showPanel);
     if (cfgLoad().debugMode) setTimeout(initDebugUI, 500);
-    function initAgent() {
+
+    async function initAgent() {
         if (_pollTimer) {
             clearInterval(_pollTimer);
             _pollTimer = null;
         }
+        await _syncInitialConfig();
+        _pollConfig();
         _lastAnswerEl = null;
         _currentRoundSent.clear();
         _noAnswerCount = 0;
@@ -2039,7 +2176,6 @@
         _knownAnswers = [...currentContainer.querySelectorAll(answerSel)];
         _lastAnswerEl = null;
         _currentRoundSent.clear();
-        _pollConfig();
         log('OK', `✅ 监听已启动！回答元素选择器: "${answerSel}"`);
         _pollTimer = setInterval(() => {
             try {
@@ -2080,8 +2216,7 @@
                     log('WARN', '🚨 对话被清空，重置状态...');
                 }
                 _knownAnswers = answers;
-                if (_heartbeatCounter % 20 === 0)
-                    log('INFO', `💓 心跳 | 队列${_cmdQueue.length}条 | 锁定:${_isProcessing} | 回答:${answers.length}个`);
+                if (_heartbeatCounter % 20 === 0) log('INFO', `💓 心跳 | 队列${_cmdQueue.length}条 | 锁定:${_isProcessing} | 回答:${answers.length}个`);
                 if (answers.length === 0) return;
                 const lastAnswer = answers[answers.length - 1];
                 if (lastAnswer !== _lastAnswerEl) {
@@ -2106,16 +2241,19 @@
             }
         }, 800);
     }
+
     if (isWhitelisted()) {
         const start = () => setTimeout(initAgent, 1500);
         if (document.readyState === 'loading') document.addEventListener('DOMContentLoaded', start);
         else start();
     }
+
     function esc(s) {
         const d = document.createElement('div');
         d.textContent = s;
         return d.innerHTML;
     }
+
     function escAttr(s) {
         return String(s || '').replace(/&/g, '&amp;').replace(/"/g, '&quot;').replace(/'/g, '&#39;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
     }
