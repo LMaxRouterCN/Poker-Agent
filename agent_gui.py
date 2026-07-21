@@ -10,8 +10,9 @@ import os
 import queue
 import re
 import logging
+import json
 
-# 导入核心引擎（复用 execute_line、app、KNOWN_CMDS 等）
+# 导入核心引擎（复用 execute_line、app, KNOWN_CMDS 等）
 try:
     import agent_server
 except ImportError as e:
@@ -20,6 +21,9 @@ except ImportError as e:
     sys.exit(1)
 
 from werkzeug.serving import make_server
+
+# [新增] GUI 专属配置文件（窗口位置/大小等纯前端状态，与后端 agent_config.json 分离）
+GUI_CONFIG_FILE = os.path.join(os.path.dirname(os.path.abspath(__file__)), 'gui_config.json')
 
 # 静默 werkzeug 日志
 logging.getLogger('werkzeug').setLevel(logging.ERROR)
@@ -103,10 +107,16 @@ class AgentGUI:
         self.root.configure(bg=BG)
         self.root.minsize(780, 480)
 
-        w, h = 1020, 660
-        x = (self.root.winfo_screenwidth() - w) // 2
-        y = (self.root.winfo_screenheight() - h) // 2
-        self.root.geometry(f'{w}x{h}+{x}+{y}')
+        # [修改] 优先从 gui_config.json 恢复窗口位置/大小，不存在则居中默认尺寸
+        gui_cfg = self._load_gui_config()
+        if gui_cfg and 'window_geometry' in gui_cfg:
+            try:
+                self.root.geometry(gui_cfg['window_geometry'])
+            except tk.TclError:
+                # geometry 格式损坏，回退默认
+                self._default_geometry()
+        else:
+            self._default_geometry()
         
         self._cli_mode = False
         self._server = None
@@ -173,6 +183,12 @@ class AgentGUI:
         agent_server._push_config()
         status = "已启用" if agent_server.exec_enabled else "已禁用"
         print(f'[Agent] 系统命令执行{status}')
+
+    # [新增] Shell 类型切换
+    def _toggle_shell(self):
+        agent_server.shell_type = self.var_shell.get()
+        agent_server._push_config()
+        print(f'[Agent] exec 终端已切换为: {agent_server.shell_type}')
 
     def _make_permission_callback(self):
         gui_ref = self
@@ -254,6 +270,33 @@ class AgentGUI:
             return False
         return callback
 
+    # ========== [新增] GUI 配置持久化 ==========
+    def _default_geometry(self):
+        """默认窗口尺寸：1020x660 屏幕居中"""
+        w, h = 1020, 660
+        x = (self.root.winfo_screenwidth() - w) // 2
+        y = (self.root.winfo_screenheight() - h) // 2
+        self.root.geometry(f'{w}x{h}+{x}+{y}')
+
+    def _load_gui_config(self):
+        """读取 gui_config.json，不存在或损坏返回 None"""
+        if not os.path.exists(GUI_CONFIG_FILE):
+            return None
+        try:
+            with open(GUI_CONFIG_FILE, 'r', encoding='utf-8') as f:
+                return json.load(f)
+        except Exception:
+            return None
+
+    def _save_gui_config(self):
+        """关闭窗口时保存窗口位置/大小"""
+        config = {'window_geometry': self.root.geometry()}
+        try:
+            with open(GUI_CONFIG_FILE, 'w', encoding='utf-8') as f:
+                json.dump(config, f, ensure_ascii=False, indent=2)
+        except Exception as e:
+            print(f'[Agent] GUI 配置保存失败: {e}')
+
     def _apply_dark_titlebar(self):
         try:
             import ctypes
@@ -267,6 +310,7 @@ class AgentGUI:
             pass
 
     def _on_close(self):
+        self._save_gui_config()  # [新增] 关闭时持久化窗口位置/大小
         if self._server:
             self._server.shutdown()
         sys.stdout = self._orig_stdout
@@ -359,6 +403,22 @@ class AgentGUI:
             font=FONT_UI, command=self._toggle_exec
         )
         self.chk_exec.pack(anchor='w', padx=20)
+
+        # [新增] Shell 类型选择（exec 指令使用的终端）
+        tk.Label(f, text="exec 终端类型", bg=PANEL, fg=TXT2, font=('Consolas', 9)).pack(anchor='w', padx=20, pady=(6, 0))
+        self.var_shell = tk.StringVar(value=agent_server.shell_type)
+        shell_frame = tk.Frame(f, bg=PANEL)
+        shell_frame.pack(anchor='w', padx=20, pady=(0, 2))
+        tk.Radiobutton(
+            shell_frame, text="PowerShell", variable=self.var_shell, value='powershell',
+            bg=PANEL, fg=TXT, selectcolor=BTN, activebackground=PANEL, activeforeground=TXT,
+            font=FONT_UI, command=self._toggle_shell
+        ).pack(side=tk.LEFT)
+        tk.Radiobutton(
+            shell_frame, text="CMD", variable=self.var_shell, value='cmd',
+            bg=PANEL, fg=TXT, selectcolor=BTN, activebackground=PANEL, activeforeground=TXT,
+            font=FONT_UI, command=self._toggle_shell
+        ).pack(side=tk.LEFT, padx=(10, 0))
 
     def _build_right(self):
         f = self.right
