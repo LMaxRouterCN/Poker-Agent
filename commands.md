@@ -57,7 +57,7 @@
 #### mkdir
 作用：创建目录（支持多级创建） - 输入信息：目录路径 - 返回信息：操作结果
 #### exec
-作用：执行系统命令 - 输入信息：系统命令 - 返回信息：命令执行的输出
+作用：执行系统命令（终端可能是 PowerShell 或 CMD，需先确认） - 输入信息：系统命令 - 返回信息：命令执行的输出
 #### run
 作用：运行 Python 脚本 - 输入信息：Python脚本路径 - 返回信息：脚本运行的输出
 #### get
@@ -69,6 +69,9 @@
 
 ## 系统命令快捷参考（exec 指令）
 请尽量使用专用指令,如果专用指令出现问题,或者无对应的专用指令,或者为了效率,可以使用 exec 指令.
+
+**⚠ 以下示例全部基于 CMD 语法。** 如果当前终端是 PowerShell，大部分命令需要改写（参见 exec 指令说明中的语法差异对照）。使用前请先确认终端类型。
+
 以下操作可以通过以下 exec 指令完成。
 ### 目录与文件浏览
 列出当前目录：exec dir /b
@@ -186,6 +189,7 @@
 **影响范围**
 - **Python 3.14.2**（以及可能的其他版本）在 Windows 系统上使用 `subprocess.run(cmd, shell=True)` 时，内部构造的命令字符串被错误地加上了额外的双引号。
 - 该问题**不是 PokerAgent 的代码缺陷**，而是 Python 或 Windows 底层行为异常。
+- **此问题仅在 CMD 终端模式下触发。** PowerShell 模式使用列表传参（不经过 shell=True），不受影响。频繁遇到此问题时建议将终端切换为 PowerShell。
 
 目前建议**等待 Python 或 Microsoft 发布修复**,或尝试降级python,无其他可完美解决问题的方法
 
@@ -447,10 +451,27 @@ Hello World!
 ## 系统命令
 ### exec <系统命令>
 执行系统命令，返回输出。
-exec后的文本即是输入进cmd中的内容
+**终端类型：** exec 使用的系统终端由后端配置决定，回退链为：
+1. PowerShell 7+（pwsh）— 优先
+2. Windows PowerShell 5.x（powershell）— 未安装 pwsh 时回退
+3. 命令提示符（cmd）— 未检测到任何 PowerShell 时回退
+
+**⚠ 你不确定当前终端是哪种。** 编写 exec 命令前必须先确认：
+- 方法一：询问用户
+- 方法二：执行 `exec $PSVersionTable.PSVersion.ToString()`，返回版本号则为 PowerShell，报错则为 CMD
+
+**PowerShell 与 CMD 语法差异示例：**
+- CMD: `dir /b` → PS: `Get-ChildItem -Name`
+- CMD: `type file.txt` → PS: `Get-Content file.txt`
+- CMD: `echo %PATH%` → PS: `$env:PATH`
+- CMD: `findstr "xxx" file` → PS: `Select-String "xxx" file`
+- CMD: `set` → PS: `Get-ChildItem Env:`
+
+请根据实际终端类型编写对应语法的命令。
 示例：
 【cmd】exec python --version【/cmd】
-【cmd】exec dir【/cmd】
+【cmd】exec $PSVersionTable.PSVersion.ToString()【/cmd】
+【cmd】exec Get-ChildItem -Name【/cmd】
 解码格式会动态获取系统编码
 ### run <脚本路径>
 运行 Python 脚本，返回输出。
