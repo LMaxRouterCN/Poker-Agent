@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name PokerAgent
 // @namespace http://tampermonkey.net/
-// @version 16
+// @version 19
 // @author LMaxRouterCN
 // @description PokerAgent的浏览器端核心脚本，提供元素选择、配置管理、调试日志等功能，支持多站点独立配置和自动发送功能。
 // @match *://*/*
@@ -15,13 +15,14 @@
 // @connect 127.0.0.1
 // ==/UserScript==
 
+//UI风格:黑灰白黄红橙绿,主黑金配色
+
 (function () {
     'use strict';
 
     /* ================================================================
      * 1. 存储与配置
      * ================================================================ */
-
     const SITE_DEFAULTS = {
         apiUrl: 'http://127.0.0.1:9966/agent-exec',
         selChatContainer: '',
@@ -33,6 +34,8 @@
         cleanRemoveButtonLike: true,
         cleanRemovePre: true,
         textCleanRules: [],
+        codeTrimStart: 0,
+        codeTrimEnd: 0,
         sendBtnBusyFingerprints: [],
         sendBtnIdleFingerprints: [],
         sendBtnSendableFingerprints: [],
@@ -65,10 +68,7 @@
                 debugMode: false,
                 defaults: { ...SITE_DEFAULTS },
                 perSite: {
-                    'https://chatglm.cn/': {
-                        ...SITE_DEFAULTS,
-                        selChatContainer: 'div.chatScrollContainer'
-                    }
+                    'https://chatglm.cn/': { ...SITE_DEFAULTS, selChatContainer: 'div.chatScrollContainer' }
                 }
             };
         }
@@ -105,6 +105,8 @@
                 if (cfg.cleanRemoveButtonLike === undefined) cfg.cleanRemoveButtonLike = true;
                 if (cfg.cleanRemovePre === undefined) cfg.cleanRemovePre = true;
                 if (!cfg.textCleanRules) cfg.textCleanRules = [];
+                if (cfg.codeTrimStart === undefined) cfg.codeTrimStart = 0;
+                if (cfg.codeTrimEnd === undefined) cfg.codeTrimEnd = 0;
             };
             if (store.defaults) clearOld(store.defaults);
             if (store.perSite) Object.values(store.perSite).forEach(clearOld);
@@ -186,133 +188,131 @@
     /* ================================================================
      * 2. 样式注入
      * ================================================================ */
-
     GM_addStyle(`
-        #agent-panel{position:fixed;top:50%;left:50%;transform:translate(-50%,-50%);width:min(540px,92vw);max-height:82vh;overflow-y:auto;background:#1a1b2e;color:#d4d4d8;border:1px solid #2e3047;border-radius:0;box-shadow:0 24px 80px rgba(0,0,0,.55);z-index:2147483647;font:14px/1.5 system-ui,sans-serif}
-        #agent-panel *{box-sizing:border-box;margin:0;padding:0}
-        #agent-panel-head{display:flex;align-items:center;justify-content:space-between;padding:14px 20px;border-bottom:1px solid #2e3047}
-        #agent-panel-head b{font-size:15px;color:#818cf8}
-        #agent-panel-close{background:none;border:none;color:#71717a;font-size:20px;cursor:pointer;padding:2px 8px;border-radius:0;transition:.15s}
-        #agent-panel-close:hover{background:#2e3047;color:#f472b6}
-        #agent-panel-body{padding:20px}
-        .ag-sec{margin-bottom:18px}
-        .ag-sec-title{font-size:11px;font-weight:700;color:#71717a;text-transform:uppercase;letter-spacing:.8px;margin-bottom:8px;display:flex;align-items:center;gap:6px}
-        .ag-sec-title::before{content:'';width:3px;height:13px;background:#818cf8;border-radius:0}
-        .ag-field{margin-bottom:10px}
-        .ag-field label{display:block;font-size:12px;color:#a1a1aa;margin-bottom:4px}
-        .ag-row{display:flex;gap:6px;align-items:center}
-        .ag-inp{flex:1;min-width:0;background:#2e3047;border:1px solid #3f3f46;color:#d4d4d8;padding:7px 10px;border-radius:0;font-size:12px;outline:none;transition:.15s;font-family:'SF Mono',Consolas,monospace}
-        .ag-inp:focus{border-color:#818cf8}
-        .ag-btn{padding:7px 13px;border:none;border-radius:0;font-size:12px;font-weight:600;cursor:pointer;transition:.15s;white-space:nowrap}
-        .ag-btn-p{background:#818cf8;color:#0f0f23}.ag-btn-p:hover{background:#a5b4fc}
-        .ag-btn-g{background:#2e3047;color:#d4d4d8;border:1px solid #3f3f46}.ag-btn-g:hover{border-color:#818cf8;color:#818cf8}
-        .ag-wl-list{max-height:110px;overflow-y:auto;background:#232436;border-radius:0;padding:3px;margin-bottom:6px}
-        .ag-wl-item{display:flex;align-items:center;gap:6px;padding:5px 10px;border-radius:0;font-size:12px}
-        .ag-wl-item code{flex:1;min-width:0;color:#86efac;word-break:break-all;font-family:'SF Mono',Consolas,monospace;font-size:11px}
-        .ag-wl-rm{background:none;border:none;color:#f472b6;cursor:pointer;font-size:14px;padding:0 4px;opacity:.5}.ag-wl-rm:hover{opacity:1}
-        .ag-match{font-size:11px;padding:3px 8px;border-radius:0;margin-top:3px}
-        .ag-m-ok{background:rgba(134,239,172,.12);color:#86efac}
-        .ag-m-fail{background:rgba(244,114,182,.12);color:#f472b6}
-        .ag-m-none{background:rgba(161,161,170,.1);color:#71717a}
-        .ag-foot{display:flex;justify-content:flex-end;gap:8px;padding-top:14px;border-top:1px solid #2e3047;margin-top:6px}
-        .ag-toggle{display:flex;align-items:center;gap:10px}
-        .ag-toggle input[type=checkbox]{width:16px;height:16px;accent-color:#818cf8}
-        .ag-pos-group{display:flex;gap:0}
-        .ag-pos-btn{padding:4px 10px;background:#2e3047;border:1px solid #3f3f46;color:#a1a1aa;font-size:12px;cursor:pointer;transition:.15s;border-radius:0}
-        .ag-pos-btn+.ag-pos-btn{border-left:none}
-        .ag-pos-btn.active{background:#818cf8;color:#0f0f23;border-color:#818cf8}
-        .ag-pos-btn:hover:not(.active){border-color:#818cf8;color:#818cf8}
-        .ag-site-info{background:#232436;padding:10px 14px;margin-bottom:10px;border:1px solid #2e3047}
-        .ag-site-row{display:flex;align-items:center;gap:8px;margin-bottom:4px;font-size:12px}
-        .ag-site-row:last-child{margin-bottom:0}
-        .ag-site-label{color:#71717a;min-width:56px;flex-shrink:0}
-        .ag-site-value{color:#d4d4d8;word-break:break-all}
-        .ag-site-badge{font-size:10px;padding:1px 6px;flex-shrink:0;border-radius:0}
-        .ag-badge-ok{background:rgba(134,239,172,.12);color:#86efac}
-        .ag-badge-fail{background:rgba(244,114,182,.12);color:#f472b6}
-        .ag-site-actions{display:flex;gap:6px;margin-bottom:14px;flex-wrap:wrap}
-        .ag-hint{font-size:11px;color:#52525b;margin-top:2px}
-        .ag-rule-list{max-height:220px;overflow-y:auto;background:#232436;border-radius:0;padding:6px;margin-bottom:6px;display:flex;flex-direction:column;gap:8px}
-        .ag-rule-item{background:#1e1f33;border:1px solid #2e3047;padding:8px;border-radius:0}
-        .ag-rule-item .ag-inp{font-size:11px;padding:5px 8px}
-        #agent-pick-dim{position:fixed;inset:0;background:rgba(0,0,0,.28);z-index:2147483645;pointer-events:none}
-        #agent-pick-hl{position:fixed;border:2.5px solid #818cf8;background:rgba(129,140,248,.08);border-radius:0;pointer-events:none;z-index:2147483646;transition:left .06s,top .06s,width .06s,height .06s;box-shadow:0 0 0 4000px rgba(0,0,0,.25);display:none}
-        #agent-pick-lock-hl{position:fixed;border:2.5px solid #f472b6;background:rgba(244,114,182,.06);border-radius:0;pointer-events:none;z-index:2147483646;transition:left .06s,top .06s,width .06s,height .06s;display:none}
-        #agent-pick-tip{position:fixed;background:#1a1b2e;color:#c4b5fd;border:1px solid #3f3f46;padding:5px 10px;border-radius:0;font:11px/1.4 'SF Mono',Consolas,monospace;z-index:2147483647;pointer-events:none;max-width:560px;word-break:break-all;box-shadow:0 4px 16px rgba(0,0,0,.4);opacity:0;transition:opacity .08s;display:flex;flex-direction:column;gap:3px}
-        .ag-tip-sel{display:flex;align-items:center;gap:0;flex-wrap:wrap}
-        .ag-diag-line{display:flex;align-items:center;gap:4px;flex-wrap:wrap;font-size:10px;color:#71717a;border-top:1px solid #2e3047;padding-top:3px}
-        .ag-diag-text{color:#86efac;max-width:200px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
-        .ag-diag-children{color:#a1a1aa}
-        .ag-diag-size{color:#52525b}
-        .ag-diag-ok{color:#86efac}
-        .ag-diag-warn{color:#facc15}
-        .ag-diag-err{color:#f472b6}
-        .ag-diag-shadow{color:#818cf8;background:rgba(129,140,248,.15);padding:0 4px}
-        .ag-diag-scroll{color:#facc15;background:rgba(250,204,21,.1);padding:0 4px}
-        .ag-diag-sep{color:#3f3f46;margin:0 1px}
-        #agent-pick-bar{position:fixed;top:14px;left:50%;transform:translateX(-50%);background:#1a1b2e;color:#d4d4d8;border:1px solid #818cf8;padding:10px 28px;border-radius:0;font-size:14px;z-index:2147483647;box-shadow:0 6px 24px rgba(0,0,0,.5);pointer-events:none}
-        #agent-pick-level{color:#86efac; margin-left: 8px; font-weight: bold;}
-        #ag-show-levels{pointer-events:auto;cursor:pointer;color:#f472b6;margin-right:8px;border-right:1px solid #3f3f46;padding-right:8px;white-space:nowrap;flex-shrink:0;transition:color .1s}
-        #ag-show-levels:hover{color:#fda4af}
-        .ag-level-panel{position:fixed;width:min(420px,85vw);max-height:340px;background:#1a1b2e;border:1px solid #f472b6;border-radius:0;box-shadow:0 8px 32px rgba(0,0,0,.55);z-index:2147483647;display:none;flex-direction:column;font:12px/1.5 'SF Mono',Consolas,monospace;color:#d4d4d8;}
-        .ag-level-head{display:flex;align-items:center;justify-content:space-between;padding:8px 12px;border-bottom:1px solid #2e3047;font-weight:600;color:#f472b6;flex-shrink:0;}
-        .ag-level-head button{background:none;border:none;color:#71717a;cursor:pointer;font-size:16px;padding:0 4px;}
-        .ag-level-head button:hover{color:#f472b6}
-        .ag-level-body{flex:1;overflow-y:auto;padding:4px;}
-        .ag-level-body::-webkit-scrollbar{width:4px}
-        .ag-level-body::-webkit-scrollbar-thumb{background:#3f3f46;border-radius:0}
-        .ag-level-item{display:flex;align-items:center;gap:6px;padding:6px 8px;cursor:pointer;border-left:2px solid transparent;transition:background .1s;}
-        .ag-level-item:hover{background:rgba(244,114,182,.1);border-left-color:#f472b6;}
-        .ag-level-target{background:rgba(244,114,182,.06);border-left-color:#f472b6;}
-        .ag-level-idx{color:#52525b;font-size:10px;min-width:18px;text-align:right;flex-shrink:0;}
-        .ag-level-tag{color:#86efac;font-weight:600;min-width:60px;flex-shrink:0;}
-        .ag-level-digest{color:#93c5fd;flex:1;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;font-style:italic;}
-        .ag-level-sel{color:#52525b;font-size:10px;max-width:120px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;flex-shrink:0;}
-        #agent-debug{position:fixed;top:10px;right:10px;width:380px;max-height:60vh;background:rgba(15,15,30,.92);border:1px solid #3f3f46;border-radius:0;box-shadow:0 10px 40px rgba(0,0,0,.5);z-index:2147483644;display:flex;flex-direction:column;font:12px/1.5 'SF Mono',Consolas,monospace;backdrop-filter:blur(8px);color:#a1a1aa;}
-        #agent-debug-head{padding:8px 12px;border-bottom:1px solid #2e3047;display:flex;justify-content:space-between;align-items:center;color:#d4d4d8}
-        #agent-debug-body{flex:1;overflow-y:auto;padding:8px;display:flex;flex-direction:column;gap:4px}
-        #agent-debug-body::-webkit-scrollbar{width:4px}
-        #agent-debug-body::-webkit-scrollbar-thumb{background:#3f3f46;border-radius:0}
-        .ag-log{padding:4px 6px;border-radius:0;word-break:break-all;background:rgba(255,255,255,.03);border-left:3px solid transparent}
-        .ag-log-time{color:#52525b;margin-right:6px}
-        .ag-log-info{border-left-color:#818cf8;color:#c4b5fd}
-        .ag-log-warn{border-left-color:#facc15;color:#fde68a;background:rgba(250,204,21,.05)}
-        .ag-log-err{border-left-color:#f472b6;color:#fda4af;background:rgba(244,114,182,.05)}
-        .ag-log-ok{border-left-color:#86efac;color:#bbf7d0;background:rgba(134,239,172,.05)}
-        #agent-debug-foot{padding:6px 12px;border-top:1px solid #2e3047;text-align:right}
-        .ag-dbg-btn{background:#2e3047;border:1px solid #3f3f46;color:#a1a1aa;padding:3px 10px;border-radius:0;cursor:pointer;font-size:11px}
-        .ag-dbg-btn:hover{border-color:#818cf8;color:#818cf8}
-        #agent-auto-send-toggle{position:fixed;z-index:2147483640;display:flex;flex-direction:row;align-items:stretch;background:#1a1b2e;border:1px solid #3f3f46;pointer-events:auto;white-space:nowrap;user-select:none;opacity:0.85;transition:opacity .15s;}
-        #agent-auto-send-toggle:hover{opacity:1}
-        .ag-as-opts{display:flex;flex-direction:column;padding:4px 4px 4px 8px}
-        .ag-as-opt{font-size:10px;color:#52525b;cursor:pointer;padding:5px 2px;line-height:1.3;transition:color .15s;font-family:system-ui,sans-serif}
-        .ag-as-opt:hover{color:#a1a1aa}
-        .ag-as-opt.active{color:#818cf8}
-        .ag-as-rail{width:16px;position:relative;display:flex;justify-content:center;border-left:1px solid #2e3047;padding:4px 0}
-        .ag-as-rail::before{content:'';position:absolute;top:8px;bottom:8px;width:2px;background:#3f3f46}
-        .ag-as-thumb{position:absolute;left:50%;transform:translateX(-50%);width:10px;height:10px;background:#818cf8;transition:top .25s ease;z-index:1}
-        #ag-calibrate-bar{position:fixed;top:20px;left:50%;transform:translateX(-50%);background:#1a1b2e;color:#fde68a;border:1px solid #facc15;padding:14px 24px;z-index:2147483647;box-shadow:0 8px 32px rgba(0,0,0,.6);font:13px/1.5 system-ui,sans-serif;display:none;flex-direction:column;align-items:center;gap:10px;pointer-events:auto;width:min(600px,90vw)}
-        #ag-calibrate-bar b{color:#facc15}
-        #ag-calibrate-cards{position:fixed;top:100px;left:50%;transform:translateX(-50%);background:#1a1b2e;border:1px solid #2e3047;z-index:2147483647;box-shadow:0 8px 32px rgba(0,0,0,.6);width:min(220px,45vw);overflow-y:auto;overflow-x:hidden;padding:10px;cursor:move}
-        #ag-calibrate-cards::-webkit-scrollbar{width:4px}
-        #ag-calibrate-cards::-webkit-scrollbar-thumb{background:#3f3f46}
-        .ag-cal-item{display:flex;flex-direction:column;align-items:center;gap:6px;padding:6px;background:#232436;transition:.15s;width:100%;box-sizing:border-box;overflow:hidden;position:relative;z-index:0;border:1px solid transparent;min-height:0}
-        .ag-cal-item.selected-busy{background:rgba(244,114,182,.1);border-color:#f472b6}
-        .ag-cal-item.selected-idle{background:rgba(134,239,172,.1);border-color:#86efac}
-        .ag-cal-item.selected-sendable{background:rgba(129,140,248,.1);border-color:#818cf8}
-        .ag-cal-clone{width:100%;height:60px;max-height:60px;overflow:hidden;display:flex;align-items:center;justify-content:center;background:#0f0f23}
-        .ag-cal-actions{display:flex;flex-direction:column;gap:4px;width:100%;align-items:center}
-        .ag-cal-tag{font-size:10px;padding:2px 8px;border:1px solid #3f3f46;color:#71717a;cursor:pointer;background:none;white-space:nowrap;width:60%;text-align:center}
-        .ag-cal-tag:hover{border-color:#818cf8;color:#818cf8}
-        .ag-cal-tag.active-busy{border-color:#f472b6;color:#f472b6;background:rgba(244,114,182,.2)}
-        .ag-cal-tag.active-idle{border-color:#86efac;color:#86efac;background:rgba(134,239,172,.2)}
-        .ag-cal-tag.active-sendable{border-color:#818cf8;color:#818cf8;background:rgba(129,140,248,.2)}
+    #agent-panel{position:fixed;top:50%;left:50%;transform:translate(-50%,-50%);width:min(540px,92vw);max-height:82vh;overflow-y:auto;background:#0a0a0a;color:#d4d4d4;border:1px solid #2a2a2a;border-radius:0;box-shadow:0 24px 80px rgba(0,0,0,.55);z-index:2147483647;font:14px/1.5 system-ui,sans-serif}
+    #agent-panel *{box-sizing:border-box;margin:0;padding:0}
+    #agent-panel-head{display:flex;align-items:center;justify-content:space-between;padding:14px 20px;border-bottom:1px solid #2a2a2a}
+    #agent-panel-head b{font-size:15px;color:#facc15}
+    #agent-panel-close{background:none;border:none;color:#a0a0a0;font-size:20px;cursor:pointer;padding:2px 8px;border-radius:0;transition:.15s}
+    #agent-panel-close:hover{background:#2a2a2a;color:#ef4444}
+    #agent-panel-body{padding:20px}
+    .ag-sec{margin-bottom:18px}
+    .ag-sec-title{font-size:11px;font-weight:700;color:#a0a0a0;text-transform:uppercase;letter-spacing:.8px;margin-bottom:8px;display:flex;align-items:center;gap:6px}
+    .ag-sec-title::before{content:'';width:3px;height:13px;background:#facc15;border-radius:0}
+    .ag-field{margin-bottom:10px}
+    .ag-field label{display:block;font-size:12px;color:#d4d4d4;margin-bottom:4px}
+    .ag-row{display:flex;gap:6px;align-items:center}
+    .ag-inp{flex:1;min-width:0;background:#1a1a1a;border:1px solid #2a2a2a;color:#ffffff;padding:7px 10px;border-radius:0;font-size:12px;outline:none;transition:.15s;font-family:'SF Mono',Consolas,monospace}
+    .ag-inp:focus{border-color:#facc15}
+    .ag-btn{padding:7px 13px;border:none;border-radius:0;font-size:12px;font-weight:600;cursor:pointer;transition:.15s;white-space:nowrap}
+    .ag-btn-p{background:#facc15;color:#0a0a0a}.ag-btn-p:hover{background:#fde047}
+    .ag-btn-g{background:#1a1a1a;color:#d4d4d4;border:1px solid #2a2a2a}.ag-btn-g:hover{border-color:#facc15;color:#facc15}
+    .ag-wl-list{max-height:110px;overflow-y:auto;background:#1a1a1a;border-radius:0;padding:3px;margin-bottom:6px}
+    .ag-wl-item{display:flex;align-items:center;gap:6px;padding:5px 10px;border-radius:0;font-size:12px}
+    .ag-wl-item code{flex:1;min-width:0;color:#22c55e;word-break:break-all;font-family:'SF Mono',Consolas,monospace;font-size:11px}
+    .ag-wl-rm{background:none;border:none;color:#ef4444;cursor:pointer;font-size:14px;padding:0 4px;opacity:.5}.ag-wl-rm:hover{opacity:1}
+    .ag-match{font-size:11px;padding:3px 8px;border-radius:0;margin-top:3px}
+    .ag-m-ok{background:rgba(34,197,94,.12);color:#22c55e}
+    .ag-m-fail{background:rgba(239,68,68,.12);color:#ef4444}
+    .ag-m-none{background:rgba(160,160,160,.1);color:#a0a0a0}
+    .ag-foot{display:flex;justify-content:flex-end;gap:8px;padding-top:14px;border-top:1px solid #2a2a2a;margin-top:6px}
+    .ag-toggle{display:flex;align-items:center;gap:10px}
+    .ag-toggle input[type=checkbox]{width:16px;height:16px;accent-color:#facc15}
+    .ag-pos-group{display:flex;gap:0}
+    .ag-pos-btn{padding:4px 10px;background:#1a1a1a;border:1px solid #2a2a2a;color:#a0a0a0;font-size:12px;cursor:pointer;transition:.15s;border-radius:0}
+    .ag-pos-btn+.ag-pos-btn{border-left:none}
+    .ag-pos-btn.active{background:#facc15;color:#0a0a0a;border-color:#facc15}
+    .ag-pos-btn:hover:not(.active){border-color:#facc15;color:#facc15}
+    .ag-site-info{background:#1a1a1a;padding:10px 14px;margin-bottom:10px;border:1px solid #2a2a2a}
+    .ag-site-row{display:flex;align-items:center;gap:8px;margin-bottom:4px;font-size:12px}
+    .ag-site-row:last-child{margin-bottom:0}
+    .ag-site-label{color:#a0a0a0;min-width:56px;flex-shrink:0}
+    .ag-site-value{color:#d4d4d4;word-break:break-all}
+    .ag-site-badge{font-size:10px;padding:1px 6px;flex-shrink:0;border-radius:0}
+    .ag-badge-ok{background:rgba(34,197,94,.12);color:#22c55e}
+    .ag-badge-fail{background:rgba(239,68,68,.12);color:#ef4444}
+    .ag-site-actions{display:flex;gap:6px;margin-bottom:14px;flex-wrap:wrap}
+    .ag-hint{font-size:11px;color:#737373;margin-top:2px}
+    .ag-rule-list{max-height:220px;overflow-y:auto;background:#1a1a1a;border-radius:0;padding:6px;margin-bottom:6px;display:flex;flex-direction:column;gap:8px}
+    .ag-rule-item{background:#1a1a1a;border:1px solid #2a2a2a;padding:8px;border-radius:0}
+    .ag-rule-item .ag-inp{font-size:11px;padding:5px 8px}
+    #agent-pick-dim{position:fixed;inset:0;background:rgba(0,0,0,.28);z-index:2147483645;pointer-events:none}
+    #agent-pick-hl{position:fixed;border:2.5px solid #facc15;background:rgba(250,204,21,.08);border-radius:0;pointer-events:none;z-index:2147483646;transition:left .06s,top .06s,width .06s,height .06s;box-shadow:0 0 0 4000px rgba(0,0,0,.25);display:none}
+    #agent-pick-lock-hl{position:fixed;border:2.5px solid #ef4444;background:rgba(239,68,68,.06);border-radius:0;pointer-events:none;z-index:2147483646;transition:left .06s,top .06s,width .06s,height .06s;display:none}
+    #agent-pick-tip{position:fixed;background:#0a0a0a;color:#fef08a;border:1px solid #2a2a2a;padding:5px 10px;border-radius:0;font:11px/1.4 'SF Mono',Consolas,monospace;z-index:2147483647;pointer-events:none;max-width:560px;word-break:break-all;box-shadow:0 4px 16px rgba(0,0,0,.4);opacity:0;transition:opacity .08s;display:flex;flex-direction:column;gap:3px}
+    .ag-tip-sel{display:flex;align-items:center;gap:0;flex-wrap:wrap}
+    .ag-diag-line{display:flex;align-items:center;gap:4px;flex-wrap:wrap;font-size:10px;color:#a0a0a0;border-top:1px solid #2a2a2a;padding-top:3px}
+    .ag-diag-text{color:#22c55e;max-width:200px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+    .ag-diag-children{color:#d4d4d4}
+    .ag-diag-size{color:#737373}
+    .ag-diag-ok{color:#22c55e}
+    .ag-diag-warn{color:#facc15}
+    .ag-diag-err{color:#ef4444}
+    .ag-diag-shadow{color:#f97316;background:rgba(249,115,22,.15);padding:0 4px}
+    .ag-diag-scroll{color:#facc15;background:rgba(250,204,21,.1);padding:0 4px}
+    .ag-diag-sep{color:#2a2a2a;margin:0 1px}
+    #agent-pick-bar{position:fixed;top:14px;left:50%;transform:translateX(-50%);background:#0a0a0a;color:#d4d4d4;border:1px solid #facc15;padding:10px 28px;border-radius:0;font-size:14px;z-index:2147483647;box-shadow:0 6px 24px rgba(0,0,0,.5);pointer-events:none}
+    #agent-pick-level{color:#22c55e; margin-left: 8px; font-weight: bold;}
+    #ag-show-levels{pointer-events:auto;cursor:pointer;color:#ef4444;margin-right:8px;border-right:1px solid #2a2a2a;padding-right:8px;white-space:nowrap;flex-shrink:0;transition:color .1s}
+    #ag-show-levels:hover{color:#fca5a5}
+    .ag-level-panel{position:fixed;width:min(420px,85vw);max-height:340px;background:#0a0a0a;border:1px solid #ef4444;border-radius:0;box-shadow:0 8px 32px rgba(0,0,0,.55);z-index:2147483647;display:none;flex-direction:column;font:12px/1.5 'SF Mono',Consolas,monospace;color:#d4d4d4;}
+    .ag-level-head{display:flex;align-items:center;justify-content:space-between;padding:8px 12px;border-bottom:1px solid #2a2a2a;font-weight:600;color:#ef4444;flex-shrink:0;}
+    .ag-level-head button{background:none;border:none;color:#a0a0a0;cursor:pointer;font-size:16px;padding:0 4px;}
+    .ag-level-head button:hover{color:#ef4444}
+    .ag-level-body{flex:1;overflow-y:auto;padding:4px;}
+    .ag-level-body::-webkit-scrollbar{width:4px}
+    .ag-level-body::-webkit-scrollbar-thumb{background:#2a2a2a;border-radius:0}
+    .ag-level-item{display:flex;align-items:center;gap:6px;padding:6px 8px;cursor:pointer;border-left:2px solid transparent;transition:background .1s;}
+    .ag-level-item:hover{background:rgba(239,68,68,.1);border-left-color:#ef4444;}
+    .ag-level-target{background:rgba(239,68,68,.06);border-left-color:#ef4444;}
+    .ag-level-idx{color:#737373;font-size:10px;min-width:18px;text-align:right;flex-shrink:0;}
+    .ag-level-tag{color:#22c55e;font-weight:600;min-width:60px;flex-shrink:0;}
+    .ag-level-digest{color:#fde68a;flex:1;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;font-style:italic;}
+    .ag-level-sel{color:#737373;font-size:10px;max-width:120px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;flex-shrink:0;}
+    #agent-debug{position:fixed;top:10px;right:10px;width:380px;max-height:60vh;background:rgba(10,10,10,.92);border:1px solid #2a2a2a;border-radius:0;box-shadow:0 10px 40px rgba(0,0,0,.5);z-index:2147483644;display:flex;flex-direction:column;font:12px/1.5 'SF Mono',Consolas,monospace;backdrop-filter:blur(8px);color:#a0a0a0;}
+    #agent-debug-head{padding:8px 12px;border-bottom:1px solid #2a2a2a;display:flex;justify-content:space-between;align-items:center;color:#d4d4d4}
+    #agent-debug-body{flex:1;overflow-y:auto;padding:8px;display:flex;flex-direction:column;gap:4px}
+    #agent-debug-body::-webkit-scrollbar{width:4px}
+    #agent-debug-body::-webkit-scrollbar-thumb{background:#2a2a2a;border-radius:0}
+    .ag-log{padding:4px 6px;border-radius:0;word-break:break-all;background:rgba(255,255,255,.03);border-left:3px solid transparent}
+    .ag-log-time{color:#737373;margin-right:6px}
+    .ag-log-info{border-left-color:#facc15;color:#fef08a}
+    .ag-log-warn{border-left-color:#f97316;color:#fed7aa;background:rgba(249,115,22,.05)}
+    .ag-log-err{border-left-color:#ef4444;color:#fca5a5;background:rgba(239,68,68,.05)}
+    .ag-log-ok{border-left-color:#22c55e;color:#bbf7d0;background:rgba(34,197,94,.05)}
+    #agent-debug-foot{padding:6px 12px;border-top:1px solid #2a2a2a;text-align:right}
+    .ag-dbg-btn{background:#1a1a1a;border:1px solid #2a2a2a;color:#a0a0a0;padding:3px 10px;border-radius:0;cursor:pointer;font-size:11px}
+    .ag-dbg-btn:hover{border-color:#facc15;color:#facc15}
+    #agent-auto-send-toggle{position:fixed;z-index:2147483640;display:flex;flex-direction:row;align-items:stretch;background:#0a0a0a;border:1px solid #2a2a2a;pointer-events:auto;white-space:nowrap;user-select:none;opacity:0.85;transition:opacity .15s;}
+    #agent-auto-send-toggle:hover{opacity:1}
+    .ag-as-opts{display:flex;flex-direction:column;padding:4px 4px 4px 8px}
+    .ag-as-opt{font-size:10px;color:#737373;cursor:pointer;padding:5px 2px;line-height:1.3;transition:color .15s;font-family:system-ui,sans-serif}
+    .ag-as-opt:hover{color:#d4d4d4}
+    .ag-as-opt.active{color:#facc15}
+    .ag-as-rail{width:16px;position:relative;display:flex;justify-content:center;border-left:1px solid #2a2a2a;padding:4px 0}
+    .ag-as-rail::before{content:'';position:absolute;top:8px;bottom:8px;width:2px;background:#2a2a2a}
+    .ag-as-thumb{position:absolute;left:50%;transform:translateX(-50%);width:10px;height:10px;background:#facc15;transition:top .25s ease;z-index:1}
+    #ag-calibrate-bar{position:fixed;top:20px;left:50%;transform:translateX(-50%);background:#0a0a0a;color:#fed7aa;border:1px solid #facc15;padding:14px 24px;z-index:2147483647;box-shadow:0 8px 32px rgba(0,0,0,.6);font:13px/1.5 system-ui,sans-serif;display:none;flex-direction:column;align-items:center;gap:10px;pointer-events:auto;width:min(600px,90vw)}
+    #ag-calibrate-bar b{color:#facc15}
+    #ag-calibrate-cards{position:fixed;top:100px;left:50%;transform:translateX(-50%);background:#0a0a0a;border:1px solid #2a2a2a;z-index:2147483647;box-shadow:0 8px 32px rgba(0,0,0,.6);width:min(220px,45vw);overflow-y:auto;overflow-x:hidden;padding:10px;cursor:move}
+    #ag-calibrate-cards::-webkit-scrollbar{width:4px}
+    #ag-calibrate-cards::-webkit-scrollbar-thumb{background:#2a2a2a}
+    .ag-cal-item{display:flex;flex-direction:column;align-items:center;gap:6px;padding:6px;background:#1a1a1a;transition:.15s;width:100%;box-sizing:border-box;overflow:hidden;position:relative;z-index:0;border:1px solid transparent;min-height:0}
+    .ag-cal-item.selected-busy{background:rgba(239,68,68,.1);border-color:#ef4444}
+    .ag-cal-item.selected-idle{background:rgba(34,197,94,.1);border-color:#22c55e}
+    .ag-cal-item.selected-sendable{background:rgba(250,204,21,.1);border-color:#facc15}
+    .ag-cal-clone{width:100%;height:60px;max-height:60px;overflow:hidden;display:flex;align-items:center;justify-content:center;background:#0a0a0a}
+    .ag-cal-actions{display:flex;flex-direction:column;gap:4px;width:100%;align-items:center}
+    .ag-cal-tag{font-size:10px;padding:2px 8px;border:1px solid #2a2a2a;color:#a0a0a0;cursor:pointer;background:none;white-space:nowrap;width:60%;text-align:center}
+    .ag-cal-tag:hover{border-color:#facc15;color:#facc15}
+    .ag-cal-tag.active-busy{border-color:#ef4444;color:#ef4444;background:rgba(239,68,68,.2)}
+    .ag-cal-tag.active-idle{border-color:#22c55e;color:#22c55e;background:rgba(34,197,94,.2)}
+    .ag-cal-tag.active-sendable{border-color:#facc15;color:#facc15;background:rgba(250,204,21,.2)}
     `);
 
     /* ================================================================
      * 3. 调试日志系统
      * ================================================================ */
-
     let _debugPanel = null;
     let _debugBody = null;
 
@@ -321,14 +321,14 @@
         _debugPanel = document.createElement('div');
         _debugPanel.id = 'agent-debug';
         _debugPanel.innerHTML = `
-            <div id="agent-debug-head">
-                <span>🕵️ Agent 调试台</span>
-                <button class="ag-dbg-btn" id="ag-dbg-close">隐藏</button>
-            </div>
-            <div id="agent-debug-body"></div>
-            <div id="agent-debug-foot">
-                <button class="ag-dbg-btn" id="ag-dbg-clear">清空日志</button>
-            </div>`;
+    <div id="agent-debug-head">
+    <span>🕵️ Agent 调试台</span>
+    <button class="ag-dbg-btn" id="ag-dbg-close">隐藏</button>
+    </div>
+    <div id="agent-debug-body"></div>
+    <div id="agent-debug-foot">
+    <button class="ag-dbg-btn" id="ag-dbg-clear">清空日志</button>
+    </div>`;
         document.body.appendChild(_debugPanel);
         _debugBody = _debugPanel.querySelector('#agent-debug-body');
         _debugPanel.querySelector('#ag-dbg-close').onclick = () => _debugPanel.style.display = 'none';
@@ -350,7 +350,8 @@
         console.log(`[Agent-${type}] ${msg}`);
         if (!c.debugMode || !_debugBody || _debugPanel.style.display === 'none') return;
         const cls = type === 'INFO' ? 'ag-log-info' : type === 'WARN' ? 'ag-log-warn' : type === 'ERR' ? 'ag-log-err' : type === 'OK' ? 'ag-log-ok' : '';
-        const time = new Date().toLocaleTimeString('zh-CN', { hour12: false });
+        const now = new Date();
+        const time = now.toLocaleTimeString('zh-CN', { hour12: false }) + '.' + String(now.getMilliseconds()).padStart(3, '0');
         const div = document.createElement('div');
         div.className = `ag-log ${cls}`;
         div.innerHTML = `<span class="ag-log-time">${time}</span>${esc(_truncate(msg))}`;
@@ -361,13 +362,10 @@
     /* ================================================================
      * 4. 元素选择器
      * ================================================================ */
-
     const PICKER_IDS = new Set([
-        'agent-pick-dim', 'agent-pick-hl', 'agent-pick-lock-hl', 'agent-pick-tip',
-        'agent-pick-bar', 'agent-panel', 'agent-debug', 'agent-auto-send-toggle',
-        'ag-level-panel', 'ag-calibrate-bar'
+        'agent-pick-dim', 'agent-pick-hl', 'agent-pick-lock-hl', 'agent-pick-tip', 'agent-pick-bar',
+        'agent-panel', 'agent-debug', 'agent-auto-send-toggle', 'ag-level-panel', 'ag-calibrate-bar'
     ]);
-
     let _pickActive = false, _pickType = '';
     let _pickHL, _pickTip, _pickBar, _pickDim;
     let _pickLockHL = null;
@@ -560,9 +558,7 @@
     function _highlightEl(el, mouseX, mouseY) {
         const r = el.getBoundingClientRect();
         _pickHL.style.display = 'block';
-        Object.assign(_pickHL.style, {
-            left: (r.left-2)+'px', top: (r.top-2)+'px', width: (r.width+4)+'px', height: (r.height+4)+'px'
-        });
+        Object.assign(_pickHL.style, { left: (r.left-2)+'px', top: (r.top-2)+'px', width: (r.width+4)+'px', height: (r.height+4)+'px' });
         const sel = genSelector(el);
         const digest = _getElementDigest(el);
         const tag = el.tagName.toLowerCase();
@@ -582,9 +578,7 @@
         diagParts.push(`<span class="ag-diag-size">${w}×${h}</span>`);
         if (el.shadowRoot) diagParts.push(`<span class="ag-diag-shadow">ShadowDOM</span>`);
         const diagHtml = diagParts.length ? `<div class="ag-diag-line">${diagParts.join('<span class="ag-diag-sep">|</span>')}</div>` : '';
-        _pickTip.innerHTML = _lockedBaseEl ?
-            `<span class="ag-tip-sel"><span id="ag-show-levels">展开所有层级</span><span>${esc(sel)} ←${tag}${digestStr}</span></span>${diagHtml}` :
-            `<span class="ag-tip-sel"><span>${esc(sel)} ←${tag}${digestStr}</span></span>${diagHtml}`;
+        _pickTip.innerHTML = _lockedBaseEl ? `<span class="ag-tip-sel"><span id="ag-show-levels">展开所有层级</span><span>${esc(sel)} ←${tag}${digestStr}</span></span>${diagHtml}` : `<span class="ag-tip-sel"><span>${esc(sel)} ←${tag}${digestStr}</span></span>${diagHtml}`;
         _pickTip.style.opacity = '1';
         _pickTip.style.left = Math.min(mouseX + 14, innerWidth - 510) + 'px';
         _pickTip.style.top = (mouseY + 22) + 'px';
@@ -594,25 +588,17 @@
         if (!_pickLockHL || !_lockedBaseEl) return;
         const r = _lockedBaseEl.getBoundingClientRect();
         _pickLockHL.style.display = 'block';
-        Object.assign(_pickLockHL.style, {
-            left: (r.left-2)+'px', top: (r.top-2)+'px', width: (r.width+4)+'px', height: (r.height+4)+'px'
-        });
+        Object.assign(_pickLockHL.style, { left: (r.left-2)+'px', top: (r.top-2)+'px', width: (r.width+4)+'px', height: (r.height+4)+'px' });
     }
 
     function _syncHighlightPositions() {
         if (_pickHL && _pickedEl) {
             const r = _pickedEl.getBoundingClientRect();
-            Object.assign(_pickHL.style, {
-                left: (r.left - 2) + 'px', top: (r.top - 2) + 'px',
-                width: (r.width + 4) + 'px', height: (r.height + 4) + 'px'
-            });
+            Object.assign(_pickHL.style, { left: (r.left - 2) + 'px', top: (r.top - 2) + 'px', width: (r.width + 4) + 'px', height: (r.height + 4) + 'px' });
         }
         if (_pickLockHL && _lockedBaseEl) {
             const r = _lockedBaseEl.getBoundingClientRect();
-            Object.assign(_pickLockHL.style, {
-                left: (r.left - 2) + 'px', top: (r.top - 2) + 'px',
-                width: (r.width + 4) + 'px', height: (r.height + 4) + 'px'
-            });
+            Object.assign(_pickLockHL.style, { left: (r.left - 2) + 'px', top: (r.top - 2) + 'px', width: (r.width + 4) + 'px', height: (r.height + 4) + 'px' });
         }
     }
 
@@ -634,8 +620,7 @@
             chain.unshift(cur);
             cur = cur.parentElement;
         }
-        if (chain.length > 0 && chain[0] !== document.documentElement && chain[0].parentElement === document.documentElement)
-            chain.unshift(document.documentElement);
+        if (chain.length > 0 && chain[0] !== document.documentElement && chain[0].parentElement === document.documentElement) chain.unshift(document.documentElement);
         let html = '<div class="ag-level-head"><span>📐 层级结构 (点击选择)</span><button id="ag-level-close">✕</button></div><div class="ag-level-body">';
         chain.forEach((el, i) => {
             const sel = genSelector(el) || '(无法生成)';
@@ -825,7 +810,6 @@
     /* ================================================================
      * 5. 配置面板
      * ================================================================ */
-
     let _panel = null;
 
     function showPanel() {
@@ -855,25 +839,25 @@
             return;
         }
         list.innerHTML = rules.map((rule, idx) => `
-            <div class="ag-rule-item" data-idx="${idx}">
-                <div class="ag-row" style="margin-bottom:6px">
-                    <input class="ag-inp rule-find" placeholder="查找内容" value="${escAttr(rule.find || '')}" style="flex:1.2">
-                    <input class="ag-inp rule-replace" placeholder="替换为" value="${escAttr(rule.replace || '')}" style="flex:1">
-                </div>
-                <div class="ag-row" style="flex-wrap:wrap">
-                    <label class="ag-toggle" style="font-size:11px;margin:0;cursor:pointer">
-                        <input type="checkbox" class="rule-regex" ${rule.isRegex ? 'checked' : ''}> 正则
-                    </label>
-                    <label class="ag-toggle" style="font-size:11px;margin:0;cursor:pointer">
-                        <input type="checkbox" class="rule-unicode" ${rule.isUnicode ? 'checked' : ''}> Unicode
-                    </label>
-                    <label class="ag-toggle" style="font-size:11px;margin:0;cursor:pointer">
-                        <input type="checkbox" class="rule-enabled" ${rule.enabled !== false ? 'checked' : ''}> 启用
-                    </label>
-                    <button class="ag-btn ag-btn-g rule-del" style="padding:3px 8px;color:#f472b6;margin-left:auto">✕ 删除</button>
-                </div>
-            </div>
-        `).join('');
+    <div class="ag-rule-item" data-idx="${idx}">
+    <div class="ag-row" style="margin-bottom:6px">
+    <input class="ag-inp rule-find" placeholder="查找内容" value="${escAttr(rule.find || '')}" style="flex:1.2">
+    <input class="ag-inp rule-replace" placeholder="替换为" value="${escAttr(rule.replace || '')}" style="flex:1">
+    </div>
+    <div class="ag-row" style="flex-wrap:wrap">
+    <label class="ag-toggle" style="font-size:11px;margin:0;cursor:pointer">
+    <input type="checkbox" class="rule-regex" ${rule.isRegex ? 'checked' : ''}> 正则
+    </label>
+    <label class="ag-toggle" style="font-size:11px;margin:0;cursor:pointer">
+    <input type="checkbox" class="rule-unicode" ${rule.isUnicode ? 'checked' : ''}> Unicode
+    </label>
+    <label class="ag-toggle" style="font-size:11px;margin:0;cursor:pointer">
+    <input type="checkbox" class="rule-enabled" ${rule.enabled !== false ? 'checked' : ''}> 启用
+    </label>
+    <button class="ag-btn ag-btn-g rule-del" style="padding:3px 8px;color:#ef4444;margin-left:auto">✕ 删除</button>
+    </div>
+    </div>
+    `).join('');
     }
 
     function _collectRulesFromDOM() {
@@ -913,100 +897,110 @@
             if (hasSiteCfg) {
                 const siteActive = _editTarget === site;
                 actionsHtml += `<button class="ag-btn ${siteActive ? 'ag-btn-p' : 'ag-btn-g'}" id="ag-edit-site">编辑当前网站配置</button>`;
-                actionsHtml += `<button class="ag-btn ag-btn-g" id="ag-del-site" style="color:#f472b6">删除独立配置</button>`;
+                actionsHtml += `<button class="ag-btn ag-btn-g" id="ag-del-site" style="color:#ef4444">删除独立配置</button>`;
             } else {
                 actionsHtml += `<button class="ag-btn ag-btn-g" id="ag-create-site">为此网站创建独立配置</button>`;
             }
         }
         _panel.innerHTML = `
-            <div id="agent-panel-head"><b>${titleText}</b><button id="agent-panel-close">✕</button></div>
-            <div id="agent-panel-body">
-                <div class="ag-site-info">
-                    <div class="ag-site-row"><span class="ag-site-label">当前网站:</span><span class="ag-site-value">${esc(siteDisplay)}</span><span class="ag-site-badge ${badgeClass}">${badgeText}</span></div>
-                    <div class="ag-site-row"><span class="ag-site-label">当前使用:</span><span class="ag-site-value" style="color:#818cf8">${esc(sourceDisplay)}</span></div>
-                </div>
-                <div class="ag-site-actions">${actionsHtml}</div>
-                <div class="ag-sec"><div class="ag-sec-title">控制台</div><div class="ag-toggle"><input type="checkbox" id="ag-debug-toggle" ${store.debugMode ? 'checked' : ''} /><label for="ag-debug-toggle" style="cursor:pointer">启用调试模式 (右侧显示日志浮窗)</label></div></div>
-                <div class="ag-sec"><div class="ag-sec-title">网站白名单</div><div class="ag-wl-list" id="ag-wl-list">${store.whitelist.length ? store.whitelist.map((u, i) => `<div class="ag-wl-item"><code>${esc(u)}</code><button class="ag-wl-rm" data-i="${i}">✕</button></div>`).join('') : '<div style="padding:8px 10px;color:#52525b;font-size:12px">暂无</div>'}</div><div class="ag-row"><input class="ag-inp" id="ag-wl-new" placeholder="https://example.com/" /><button class="ag-btn ag-btn-g" id="ag-wl-add">添加</button></div></div>
-                <div class="ag-sec"><div class="ag-sec-title">本地 Agent 服务</div><div class="ag-field"><label>接收指令的 HTTP 地址</label><input class="ag-inp" id="ag-api" value="${esc(editCfg.apiUrl)}" /></div></div>
-                <div class="ag-sec">
-                    <div class="ag-sec-title">页面元素绑定</div>
-                    <div class="ag-field"><label>聊天记录容器</label><div class="ag-row"><input class="ag-inp" id="ag-s-chat" value="${esc(editCfg.selChatContainer)}" /><button class="ag-btn ag-btn-p" id="ag-pick-chat">🖱 选择</button></div><div id="ag-m-chat"></div></div>
-                    <div class="ag-field"><label>AI回答元素</label><div class="ag-row"><input class="ag-inp" id="ag-s-answer" value="${esc(editCfg.selAnswerItem)}" /><button class="ag-btn ag-btn-p" id="ag-pick-answer">🖱 选择</button></div><div id="ag-m-answer"></div><div class="ag-hint">用于从聊天容器中定位AI的回复，默认 .answer；如不匹配请用选择器选取</div></div>
-                    <div class="ag-field"><label>代码内容元素 (可选)</label><div class="ag-row"><input class="ag-inp" id="ag-s-code-content" value="${esc(editCfg.selCodeContentElement)}" placeholder="如：.code-text, pre code, .highlight" /><button class="ag-btn ag-btn-p" id="ag-pick-code-content">🖱 选择</button></div><div id="ag-m-code-content"></div><div class="ag-hint">如果LLM输出的代码块中有专门放置代码文本的元素，请选择它。留空则使用现有逻辑提取整个代码块区域。</div></div>
-                    <div class="ag-field"><label>输入框</label><div class="ag-row"><input class="ag-inp" id="ag-s-input" value="${esc(editCfg.selInputBox)}" /><button class="ag-btn ag-btn-p" id="ag-pick-input">🖱 选择</button></div><div id="ag-m-input"></div></div>
-                    <div class="ag-field">
-                        <label>发送按钮</label><div class="ag-row"><input class="ag-inp" id="ag-s-send" value="${esc(editCfg.selSendButton)}" /><button class="ag-btn ag-btn-p" id="ag-pick-send">🖱 选择</button></div><div id="ag-m-send"></div>
-                        <div class="ag-field" id="ag-calibrate-field" style="margin-top:6px; padding:8px; background:#232436; border:1px solid #2e3047; display:${editCfg.selSendButton ? 'block' : 'none'};">
-                            <div style="font-size:12px; color:#a1a1aa; margin-bottom:6px">捕获按钮的各种形态，手动标记【忙碌】(AI输出时)和【空闲】态。</div>
-                            <div class="ag-row"><div id="ag-calibrate-status" style="flex:1; font-size:11px; color:#52525b"> 忙碌:${(editCfg.sendBtnBusyFingerprints||[]).length}个 | 空闲:${(editCfg.sendBtnIdleFingerprints||[]).length}个 | 可发送:${(editCfg.sendBtnSendableFingerprints||[]).length}个 </div><button class="ag-btn ag-btn-p" id="ag-start-calibrate">${(editCfg.sendBtnBusyFingerprints||[]).length > 0 ? '重新校准' : '开始校准'}</button></div>
-                        </div>
-                    </div>
-                    <div class="ag-field" style="margin-top:12px;padding-top:10px;border-top:1px solid #2e3047">
-                        <label>输出完毕判断逻辑</label>
-                        <div class="ag-row" style="margin-bottom:6px">
-                            <input type="radio" name="verifyMode" id="ag-mode-single" value="single" ${editCfg.verifyMode !== 'double' ? 'checked' : ''} />
-                            <label for="ag-mode-single" style="font-size:12px;cursor:pointer;margin-right:12px">单验证 (脱离忙碌即放行)</label>
-                            <input type="radio" name="verifyMode" id="ag-mode-double" value="double" ${editCfg.verifyMode === 'double' ? 'checked' : ''} />
-                            <label for="ag-mode-double" style="font-size:12px;cursor:pointer">双验证 (需进入空闲态)</label>
-                        </div>
-                        <div class="ag-row">
-                            <label style="font-size:12px;color:#71717a;white-space:nowrap">放行前额外延时</label>
-                            <input class="ag-inp" id="ag-wait-delay" type="number" value="${editCfg.waitDelayAfterDone || 500}" style="width:80px" />
-                        </div>
-                    </div>
-                    <label>发送模式选择器</label>
-                    <div class="ag-toggle" style="margin-bottom:6px">
-                        <input type="checkbox" id="ag-show-toggle" ${editCfg.showAutoSendToggle ? 'checked' : ''} />
-                        <label for="ag-show-toggle" style="cursor:pointer">在发送按钮旁显示发送模式选择器</label>
-                    </div>
-                    <div class="ag-row">
-                        <label style="font-size:11px;color:#71717a;white-space:nowrap">位置</label>
-                        <div class="ag-pos-group">
-                            <button class="ag-pos-btn" data-pos="left">← 左</button>
-                            <button class="ag-pos-btn" data-pos="top">↑ 上</button>
-                            <button class="ag-pos-btn" data-pos="right">→ 右</button>
-                            <button class="ag-pos-btn" data-pos="bottom">↓ 下</button>
-                        </div>
-                    </div>
-                    <div class="ag-field" style="margin-top:8px">
-                        <label>发送前防抖延时</label>
-                        <div class="ag-row">
-                            <input class="ag-inp" id="ag-debounce-delay" type="number" value="${editCfg.sendDebounceDelay ?? 100}" style="width:80px" />
-                            <span style="font-size:11px;color:#71717a">检测到可发送状态后等待的毫秒数，0=不等待，默认100</span>
-                        </div>
-                    </div>
-                </div>
-                <div class="ag-sec" >
-                    <div class="ag-sec-title" >内容清理规则 </div >
-                    <div class="ag-field" >
-                        <label >忽略的class关键词 (逗号分隔) </label >
-                        <div class="ag-row" >
-                            <input class="ag-inp" id="ag-clean-keywords" value="${esc(editCfg.cleanIgnoreClassKeywords)}" />
-                            <button class="ag-btn ag-btn-p" id="ag-pick-clean-keyword" >🖱 选择 </button >
-                        </div >
-                        <div class="ag-hint" >包含这些关键词的class所在元素会被移除，支持用选择器直接抓取行号等干扰元素的class </div >
-                    </div >
-                    <div class="ag-toggle" style="margin-bottom:6px">
-                        <input type="checkbox" id="ag-clean-buttons" ${editCfg.cleanRemoveButtonLike !== false ? 'checked' : ''} />
-                        <label for="ag-clean-buttons" style="cursor:pointer">移除按钮/操作类元素 (copy/operate/action/toolbar)</label>
-                    </div>
-                    <div class="ag-toggle">
-                        <input type="checkbox" id="ag-clean-pre" ${editCfg.cleanRemovePre !== false ? 'checked' : ''} />
-                        <label for="ag-clean-pre" style="cursor:pointer">移除pre代码块 (除非含【CodeSTART】)</label>
-                    </div>
-                </div>
-                <div class="ag-sec">
-                    <div class="ag-sec-title">指令文本清洗规则</div>
-                    <div class="ag-hint" style="margin-bottom:6px">在指令发送给后端前，按顺序执行以下替换规则。开启 Unicode 可解析 \\uXXXX 或 U+XXXX。</div>
-                    <div class="ag-rule-list" id="ag-rule-list"></div>
-                    <div class="ag-row" style="margin-top:8px">
-                        <button class="ag-btn ag-btn-g" id="ag-add-rule">➕ 添加规则</button>
-                    </div>
-                </div>
-                <div class="ag-foot"><button class="ag-btn ag-btn-g" id="ag-cancel">取消</button><button class="ag-btn ag-btn-p" id="ag-save">${saveText}</button></div>
-            </div>
-        `;
+    <div id="agent-panel-head"><b>${titleText}</b><button id="agent-panel-close">✕</button></div>
+    <div id="agent-panel-body">
+    <div class="ag-site-info">
+    <div class="ag-site-row"><span class="ag-site-label">当前网站:</span><span class="ag-site-value">${esc(siteDisplay)}</span><span class="ag-site-badge ${badgeClass}">${badgeText}</span></div>
+    <div class="ag-site-row"><span class="ag-site-label">当前使用:</span><span class="ag-site-value" style="color:#818cf8">${esc(sourceDisplay)}</span></div>
+    </div>
+    <div class="ag-site-actions">${actionsHtml}</div>
+    <div class="ag-sec"><div class="ag-sec-title">控制台</div><div class="ag-toggle"><input type="checkbox" id="ag-debug-toggle" ${store.debugMode ? 'checked' : ''} /><label for="ag-debug-toggle" style="cursor:pointer">启用调试模式 (右侧显示日志浮窗)</label></div></div>
+    <div class="ag-sec"><div class="ag-sec-title">网站白名单</div><div class="ag-wl-list" id="ag-wl-list">${store.whitelist.length ? store.whitelist.map((u, i) => `<div class="ag-wl-item"><code>${esc(u)}</code><button class="ag-wl-rm" data-i="${i}">✕</button></div>`).join('') : '<div style="padding:8px 10px;color:#52525b;font-size:12px">暂无</div>'}</div><div class="ag-row"><input class="ag-inp" id="ag-wl-new" placeholder="https://example.com/" /><button class="ag-btn ag-btn-g" id="ag-wl-add">添加</button></div></div>
+    <div class="ag-sec"><div class="ag-sec-title">本地 Agent 服务</div><div class="ag-field"><label>接收指令的 HTTP 地址</label><input class="ag-inp" id="ag-api" value="${esc(editCfg.apiUrl)}" /></div></div>
+    <div class="ag-sec">
+    <div class="ag-sec-title">页面元素绑定</div>
+    <div class="ag-field"><label>聊天记录容器</label><div class="ag-row"><input class="ag-inp" id="ag-s-chat" value="${esc(editCfg.selChatContainer)}" /><button class="ag-btn ag-btn-p" id="ag-pick-chat">🖱 选择</button></div><div id="ag-m-chat"></div></div>
+    <div class="ag-field"><label>AI回答元素</label><div class="ag-row"><input class="ag-inp" id="ag-s-answer" value="${esc(editCfg.selAnswerItem)}" /><button class="ag-btn ag-btn-p" id="ag-pick-answer">🖱 选择</button></div><div id="ag-m-answer"></div><div class="ag-hint">用于从聊天容器中定位AI的回复，默认 .answer；如不匹配请用选择器选取</div></div>
+    <div class="ag-field"><label>代码内容元素 (可选)</label><div class="ag-row"><input class="ag-inp" id="ag-s-code-content" value="${esc(editCfg.selCodeContentElement)}" placeholder="如：.code-text, pre code, .highlight" /><button class="ag-btn ag-btn-p" id="ag-pick-code-content">🖱 选择</button></div><div id="ag-m-code-content"></div><div class="ag-hint">如果LLM输出的代码块中有专门放置代码文本的元素，请选择它。留空则使用现有逻辑提取整个代码块区域。</div>
+    <div class="ag-field" style="margin-top:8px">
+        <label>代码文本裁剪</label>
+        <div class="ag-row">
+            <input class="ag-inp" id="ag-trim-start" type="number" value="${editCfg.codeTrimStart || 0}" style="width:80px" />
+            <span style="font-size:11px;color:#a0a0a0;margin-right:12px">去掉开头字符数</span>
+            <input class="ag-inp" id="ag-trim-end" type="number" value="${editCfg.codeTrimEnd || 0}" style="width:80px" />
+            <span style="font-size:11px;color:#a0a0a0">去掉末尾字符数</span>
+        </div>
+    </div>
+    </div>
+    <div class="ag-field"><label>输入框</label><div class="ag-row"><input class="ag-inp" id="ag-s-input" value="${esc(editCfg.selInputBox)}" /><button class="ag-btn ag-btn-p" id="ag-pick-input">🖱 选择</button></div><div id="ag-m-input"></div></div>
+    <div class="ag-field">
+    <label>发送按钮</label><div class="ag-row"><input class="ag-inp" id="ag-s-send" value="${esc(editCfg.selSendButton)}" /><button class="ag-btn ag-btn-p" id="ag-pick-send">🖱 选择</button></div><div id="ag-m-send"></div>
+    <div class="ag-field" id="ag-calibrate-field" style="margin-top:6px; padding:8px; background:#232436; border:1px solid #2a2a2a; display:${editCfg.selSendButton ? 'block' : 'none'};">
+    <div style="font-size:12px; color:#a1a1aa; margin-bottom:6px">捕获按钮的各种形态，手动标记【忙碌】(AI输出时)和【空闲】态。</div>
+    <div class="ag-row"><div id="ag-calibrate-status" style="flex:1; font-size:11px; color:#52525b"> 忙碌:${(editCfg.sendBtnBusyFingerprints||[]).length}个 | 空闲:${(editCfg.sendBtnIdleFingerprints||[]).length}个 | 可发送:${(editCfg.sendBtnSendableFingerprints||[]).length}个 </div><button class="ag-btn ag-btn-p" id="ag-start-calibrate">${(editCfg.sendBtnBusyFingerprints||[]).length > 0 ? '重新校准' : '开始校准'}</button></div>
+    </div>
+    </div>
+    <div class="ag-field" style="margin-top:12px;padding-top:10px;border-top:1px solid #2a2a2a">
+    <label>输出完毕判断逻辑</label>
+    <div class="ag-row" style="margin-bottom:6px">
+    <input type="radio" name="verifyMode" id="ag-mode-single" value="single" ${editCfg.verifyMode !== 'double' ? 'checked' : ''} />
+    <label for="ag-mode-single" style="font-size:12px;cursor:pointer;margin-right:12px">单验证 (脱离忙碌即放行)</label>
+    <input type="radio" name="verifyMode" id="ag-mode-double" value="double" ${editCfg.verifyMode === 'double' ? 'checked' : ''} />
+    <label for="ag-mode-double" style="font-size:12px;cursor:pointer">双验证 (需进入空闲态)</label>
+    </div>
+    <div class="ag-row">
+    <label style="font-size:12px;color:#a0a0a0;white-space:nowrap">放行前额外延时</label>
+    <input class="ag-inp" id="ag-wait-delay" type="number" value="${editCfg.waitDelayAfterDone || 500}" style="width:80px" />
+    </div>
+    </div>
+    <label>发送模式选择器</label>
+    <div class="ag-toggle" style="margin-bottom:6px">
+    <input type="checkbox" id="ag-show-toggle" ${editCfg.showAutoSendToggle ? 'checked' : ''} />
+    <label for="ag-show-toggle" style="cursor:pointer">在发送按钮旁显示发送模式选择器</label>
+    </div>
+    <div class="ag-row">
+    <label style="font-size:11px;color:#a0a0a0;white-space:nowrap">位置</label>
+    <div class="ag-pos-group">
+    <button class="ag-pos-btn" data-pos="left">← 左</button>
+    <button class="ag-pos-btn" data-pos="top">↑ 上</button>
+    <button class="ag-pos-btn" data-pos="right">→ 右</button>
+    <button class="ag-pos-btn" data-pos="bottom">↓ 下</button>
+    </div>
+    </div>
+    <div class="ag-field" style="margin-top:8px">
+    <label>发送前防抖延时</label>
+    <div class="ag-row">
+    <input class="ag-inp" id="ag-debounce-delay" type="number" value="${editCfg.sendDebounceDelay ?? 100}" style="width:80px" />
+    <span style="font-size:11px;color:#a0a0a0">检测到可发送状态后等待的毫秒数，0=不等待，默认100</span>
+    </div>
+    </div>
+    </div>
+    <div class="ag-sec" >
+    <div class="ag-sec-title" >内容清理规则 </div >
+    <div class="ag-field" >
+    <label >忽略的class关键词 (逗号分隔) </label >
+    <div class="ag-row" >
+    <input class="ag-inp" id="ag-clean-keywords" value="${esc(editCfg.cleanIgnoreClassKeywords)}" />
+    <button class="ag-btn ag-btn-p" id="ag-pick-clean-keyword" >🖱 选择 </button >
+    </div >
+    <div class="ag-hint" >包含这些关键词的class所在元素会被移除，支持用选择器直接抓取行号等干扰元素的class </div >
+    </div >
+    <div class="ag-toggle" style="margin-bottom:6px">
+    <input type="checkbox" id="ag-clean-buttons" ${editCfg.cleanRemoveButtonLike !== false ? 'checked' : ''} />
+    <label for="ag-clean-buttons" style="cursor:pointer">移除按钮/操作类元素 (copy/operate/action/toolbar)</label>
+    </div>
+    <div class="ag-toggle">
+    <input type="checkbox" id="ag-clean-pre" ${editCfg.cleanRemovePre !== false ? 'checked' : ''} />
+    <label for="ag-clean-pre" style="cursor:pointer">移除pre代码块 (除非含【CodeSTART】)</label>
+    </div>
+    </div>
+    <div class="ag-sec">
+    <div class="ag-sec-title">指令文本清洗规则</div>
+    <div class="ag-hint" style="margin-bottom:6px">在指令发送给后端前，按顺序执行以下替换规则。开启 Unicode 可解析 \\uXXXX 或 U+XXXX。</div>
+    <div class="ag-rule-list" id="ag-rule-list"></div>
+    <div class="ag-row" style="margin-top:8px">
+    <button class="ag-btn ag-btn-g" id="ag-add-rule">➕ 添加规则</button>
+    </div>
+    </div>
+    <div class="ag-foot"><button class="ag-btn ag-btn-g" id="ag-cancel">取消</button><button class="ag-btn ag-btn-p" id="ag-save">${saveText}</button></div>
+    </div>
+    `;
         _panel.querySelector('#agent-panel-close').onclick = hidePanel;
         _panel.querySelector('#ag-cancel').onclick = hidePanel;
         _panel.querySelector('#ag-debug-toggle').onchange = (e) => {
@@ -1149,6 +1143,8 @@
             siteData.cleanRemoveButtonLike = _panel.querySelector('#ag-clean-buttons').checked;
             siteData.cleanRemovePre = _panel.querySelector('#ag-clean-pre').checked;
             siteData.textCleanRules = _collectRulesFromDOM();
+            siteData.codeTrimStart = parseInt(_panel.querySelector('#ag-trim-start').value) || 0;
+            siteData.codeTrimEnd = parseInt(_panel.querySelector('#ag-trim-end').value) || 0;
             if (_editTarget === 'defaults') {
                 s.defaults = siteData;
             } else {
@@ -1179,7 +1175,6 @@
     /* ================================================================
      * 6. Agent 核心逻辑
      * ================================================================ */
-
     let _clipboardMode = false;
     let _permissionEnabled = true;
     let _isProcessing = false;
@@ -1218,8 +1213,12 @@
                 }
                 _pollConfig();
             },
-            onerror() { setTimeout(_pollConfig, 5000); },
-            ontimeout() { _pollConfig(); }
+            onerror() {
+                setTimeout(_pollConfig, 5000);
+            },
+            ontimeout() {
+                _pollConfig();
+            }
         });
     }
 
@@ -1245,8 +1244,12 @@
                     }
                     resolve();
                 },
-                ontimeout() { resolve(); },
-                onerror() { resolve(); }
+                ontimeout() {
+                    resolve();
+                },
+                onerror() {
+                    resolve();
+                }
             });
         });
     }
@@ -1258,58 +1261,88 @@
     let _knownAnswers = [];
     let _noAnswerCount = 0;
 
-    function getCleanText(el, cfg) {
-        const clone = el.cloneNode(true);
-        if (cfg.selCodeContentElement) {
-            try {
-                const codeEls = clone.querySelectorAll(cfg.selCodeContentElement);
-                if (codeEls.length > 0) {
-                    codeEls.forEach(codeEl => {
-                        const preParent = codeEl.closest('pre');
-                        if (preParent && preParent.parentNode) {
-                            const textNode = document.createTextNode('\n' + codeEl.textContent + '\n');
-                            preParent.parentNode.replaceChild(textNode, preParent);
-                        } else if (codeEl.parentNode) {
-                            const textNode = document.createTextNode(codeEl.textContent);
-                            codeEl.parentNode.replaceChild(textNode, codeEl);
-                        }
-                    });
-                }
-            } catch(e) {
-                log('ERR', `代码内容元素选择器语法错误: ${e.message}`);
-            }
-        }
-        const ignoreKeywords = (cfg.cleanIgnoreClassKeywords || 'thinking,reasoning,probe,deepseek-reason')
-            .split(',').map(s => s.trim()).filter(s => s);
-        if (ignoreKeywords.length > 0) {
-            const sel = ignoreKeywords.map(k => `[class*="${CSS.escape(k)}"]`).join(', ');
-            try {
-                clone.querySelectorAll(sel).forEach(n => n.remove());
-            } catch(_) {}
-        }
-        clone.querySelectorAll('details').forEach(n => n.remove());
-        if (cfg.cleanRemoveButtonLike !== false) {
-            clone.querySelectorAll('button, [class*="copy"], [class*="operate"], [class*="action"], [class*="toolbar"]').forEach(n => n.remove());
-        }
-        if (cfg.cleanRemovePre !== false) {
-            clone.querySelectorAll('pre').forEach(n => {
-                if (clone.textContent.includes('\u3010CodeSTART\u3011')) return;
-                n.remove();
-            });
-        }
-        (function injectNewlines(node) {
-            for (let i = node.childNodes.length - 1; i >= 0; i--) {
-                const child = node.childNodes[i];
-                if (child.nodeType === 1) {
-                    if (/^(P|DIV|BR|LI|H[1-6]|PRE|BLOCKQUOTE|TR|HR|TABLE|UL|OL|SECTION|ARTICLE|HEADER|FOOTER|FIGURE|DD|DT|DL|MAIN|ASIDE|NAV|ADDRESS|FIELDSET|SUMMARY|FIGCAPTION|DIALOG|SEARCH)$/.test(child.tagName)) {
-                        node.insertBefore(document.createTextNode('\n'), child);
+function getCleanText(el, cfg) {
+    const clone = el.cloneNode(true);
+    // [新增] 代码块"账本"：按顺序存放每个代码内容元素的干净文本，DOM中用哨兵占位
+    // 核心思路：代码只从 codeEl.textContent 取（唯一干净来源），其余文本大劲清洗后重组
+    const codeBlocks = [];
+    if (cfg.selCodeContentElement) {
+        try {
+            const codeEls = clone.querySelectorAll(cfg.selCodeContentElement);
+            if (codeEls.length > 0) {
+                codeEls.forEach(codeEl => {
+                    const trimStart = parseInt(cfg.codeTrimStart) || 0;
+                    const trimEnd = parseInt(cfg.codeTrimEnd) || 0;
+                    let codeText = codeEl.textContent;
+                    if (trimStart > 0 || trimEnd > 0) {
+                        codeText = codeText.slice(trimStart, codeText.length - trimEnd);
                     }
-                    injectNewlines(child);
-                }
+                    // [新增] 整个代码块（pre包装或元素自身）替换为哨兵，walker不再踏入块内部
+                    // 注意：先判断 parentNode 再入账，防止嵌套选择器导致索引和哨兵错位
+                    const target = codeEl.closest('pre') || codeEl;
+                    if (target.parentNode) {
+                        const idx = codeBlocks.length;
+                        codeBlocks.push(codeText);
+                        target.parentNode.replaceChild(
+                            document.createTextNode('\u0000CODE' + idx + '\u0000'),
+                            target
+                        );
+                    }
+                });
             }
-        })(clone);
-        return clone.textContent;
+        } catch(e) {
+            log('ERR', `代码内容元素选择器语法错误: ${e.message}`);
+        }
     }
+    const ignoreKeywords = (cfg.cleanIgnoreClassKeywords || 'thinking,reasoning,probe,deepseek-reason')
+        .split(',').map(s => s.trim()).filter(s => s);
+    if (ignoreKeywords.length > 0) {
+        const sel = ignoreKeywords.map(k => `[class*="${CSS.escape(k)}"]`).join(', ');
+        try {
+            clone.querySelectorAll(sel).forEach(n => n.remove());
+        } catch(_) {}
+    }
+    clone.querySelectorAll('details').forEach(n => n.remove());
+    if (cfg.cleanRemoveButtonLike !== false) {
+        clone.querySelectorAll('button, [class*="copy"], [class*="operate"], [class*="action"], [class*="toolbar"]').forEach(n => n.remove());
+    }
+    if (cfg.cleanRemovePre !== false) {
+        clone.querySelectorAll('pre').forEach(n => {
+            if (clone.textContent.includes('\u3010CodeSTART\u3011')) return;
+            n.remove();
+        });
+    }
+    (function injectNewlines(node) {
+        for (let i = node.childNodes.length - 1; i >= 0; i--) {
+            const child = node.childNodes[i];
+            if (child.nodeType === 1) {
+                if (/^(P|DIV|BR|LI|H[1-6]|PRE|BLOCKQUOTE|TR|HR|TABLE|UL|OL|SECTION|ARTICLE|HEADER|FOOTER|FIGURE|DD|DT|DL|MAIN|ASIDE|NAV|ADDRESS|FIELDSET|SUMMARY|FIGCAPTION|DIALOG|SEARCH)$/.test(child.tagName)) {
+                    node.insertBefore(document.createTextNode('\n'), child);
+                }
+                injectNewlines(child);
+            }
+        }
+    })(clone);
+    const rawText = clone.textContent;
+    // [新增] 重组：有代码账本时按哨兵切分
+    // 非代码片段大劲清洗（命令/标记都有明确语法约束，不需要保留任何空白），代码片段从账本原样还原
+    if (codeBlocks.length > 0) {
+        const parts = rawText.split(/\u0000CODE(\d+)\u0000/);
+        // parts 结构: [文本0, '0', 文本1, '1', 文本2, ...] 偶数下标是文本，奇数下标是账本索引
+        let result = '';
+        for (let i = 0; i < parts.length; i++) {
+            if (i % 2 === 0) {
+                // [新增] 非代码片段：逐行trim+删空行，HTML缩进残留在这里被彻底清掉
+                result += parts[i].split('\n').map(l => l.trim()).filter(l => l.length > 0).join('\n');
+            } else {
+                // [新增] 代码片段：从账本还原，一个字符都不碰
+                result += '\n' + codeBlocks[parseInt(parts[i], 10)] + '\n';
+            }
+        }
+        return result;
+    }
+    return rawText;
+}
 
     function _getSendBtnFingerprint() {
         const c = cfgLoad();
@@ -1381,25 +1414,25 @@
                 const isSendable = selectedSendable.has(fp);
                 const cls = isBusy ? 'selected-busy' : (isIdle ? 'selected-idle' : (isSendable ? 'selected-sendable' : ''));
                 listHtml += `
-                    <div class="ag-cal-item ${cls}">
-                        <div class="ag-cal-clone" style="background:${snap.bg};color:${snap.color}">${snap.html}</div>
-                        <div class="ag-cal-actions">
-                            <button class="ag-cal-tag ${isBusy ? 'active-busy' : ''}" data-fp="${fp}" data-type="busy">忙碌</button>
-                            <button class="ag-cal-tag ${isIdle ? 'active-idle' : ''}" data-fp="${fp}" data-type="idle">空闲</button>
-                            <button class="ag-cal-tag ${isSendable ? 'active-sendable' : ''}" data-fp="${fp}" data-type="sendable">可发送</button>
-                        </div>
-                    </div>
-                `;
+    <div class="ag-cal-item ${cls}">
+    <div class="ag-cal-clone" style="background:${snap.bg};color:${snap.color}">${snap.html}</div>
+    <div class="ag-cal-actions">
+    <button class="ag-cal-tag ${isBusy ? 'active-busy' : ''}" data-fp="${fp}" data-type="busy">忙碌</button>
+    <button class="ag-cal-tag ${isIdle ? 'active-idle' : ''}" data-fp="${fp}" data-type="idle">空闲</button>
+    <button class="ag-cal-tag ${isSendable ? 'active-sendable' : ''}" data-fp="${fp}" data-type="sendable">可发送</button>
+    </div>
+    </div>
+    `;
             });
             cards.innerHTML = listHtml || '<div style="color:#52525b;font-size:12px;text-align:center;padding:16px 0">等待按钮状态变化...</div>';
             cards.style.display = 'flex';
             bar.innerHTML = `
-                <div style="font-size:13px;color:#d4d4d8;text-align:center">${msg}</div>
-                <div style="display:flex;gap:8px;align-items:center">
-                    <button class="ag-btn ag-btn-g" id="ag-cal-stop">取消</button>
-                    <button class="ag-btn ag-btn-p" id="ag-cal-finish" style="${canFinish ? '' : 'opacity:0.5;pointer-events:none'}">完成校准</button>
-                </div>
-            `;
+    <div style="font-size:13px;color:#d4d4d8;text-align:center">${msg}</div>
+    <div style="display:flex;gap:8px;align-items:center">
+    <button class="ag-btn ag-btn-g" id="ag-cal-stop">取消</button>
+    <button class="ag-btn ag-btn-p" id="ag-cal-finish" style="${canFinish ? '' : 'opacity:0.5;pointer-events:none'}">完成校准</button>
+    </div>
+    `;
             bar.style.display = 'flex';
             bar.querySelector('#ag-cal-stop').onclick = () => stopCalibration();
             if (canFinish) {
@@ -1803,7 +1836,9 @@
 
     function _initSSE() {
         if (_sseEventSource) {
-            try { _sseEventSource.abort(); } catch(e) {}
+            try {
+                _sseEventSource.abort();
+            } catch(e) {}
             _sseEventSource = null;
         }
         const c = cfgLoad();
@@ -1865,7 +1900,9 @@
         _renderTaskBlock();
         if (_taskList.length > 0 && _taskList.every(t => t.status === 'done')) {
             if (_sseEventSource) {
-                try { _sseEventSource.abort(); } catch(e) {}
+                try {
+                    _sseEventSource.abort();
+                } catch(e) {}
                 _sseEventSource = null;
             }
             _finalizeAndSend();
@@ -1993,8 +2030,7 @@
     function _trySendByEnter(input) {
         ['keydown', 'keypress', 'keyup'].forEach(evtType => {
             input.dispatchEvent(new KeyboardEvent(evtType, {
-                key: 'Enter', code: 'Enter', keyCode: 13, which: 13,
-                charCode: evtType === 'keypress' ? 13 : 0,
+                key: 'Enter', code: 'Enter', keyCode: 13, which: 13, charCode: evtType === 'keypress' ? 13 : 0,
                 bubbles: true, cancelable: true, composed: true
             }));
         });
@@ -2030,7 +2066,6 @@
     /* ================================================================
      * 6.5 发送模式选择器
      * ================================================================ */
-
     let _toggleEl = null;
     let _togglePosTimer = null;
 
@@ -2048,15 +2083,15 @@
         _toggleEl = document.createElement('div');
         _toggleEl.id = 'agent-auto-send-toggle';
         _toggleEl.innerHTML = `
-            <div class="ag-as-opts">
-                <div class="ag-as-opt ${mode === 'none' ? 'active' : ''}" data-mode="none">不自动发送</div>
-                <div class="ag-as-opt ${mode === 'click' ? 'active' : ''}" data-mode="click">点击按钮</div>
-                <div class="ag-as-opt ${mode === 'enter' ? 'active' : ''}" data-mode="enter">回车发送</div>
-            </div>
-            <div class="ag-as-rail">
-                <div class="ag-as-thumb"></div>
-            </div>
-        `;
+    <div class="ag-as-opts">
+    <div class="ag-as-opt ${mode === 'none' ? 'active' : ''}" data-mode="none">不自动发送</div>
+    <div class="ag-as-opt ${mode === 'click' ? 'active' : ''}" data-mode="click">点击按钮</div>
+    <div class="ag-as-opt ${mode === 'enter' ? 'active' : ''}" data-mode="enter">回车发送</div>
+    </div>
+    <div class="ag-as-rail">
+    <div class="ag-as-thumb"></div>
+    </div>
+    `;
         document.body.appendChild(_toggleEl);
         _toggleEl.querySelectorAll('.ag-as-opt').forEach(opt => {
             opt.onclick = (e) => {
@@ -2149,8 +2184,8 @@
     /* ================================================================
      * 7. 启动入口
      * ================================================================ */
-
     GM_registerMenuCommand('⚙️ Agent 配置面板', showPanel);
+
     if (cfgLoad().debugMode) setTimeout(initDebugUI, 500);
 
     async function initAgent() {
@@ -2257,4 +2292,5 @@
     function escAttr(s) {
         return String(s || '').replace(/&/g, '&amp;').replace(/"/g, '&quot;').replace(/'/g, '&#39;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
     }
-})();
+
+    })();

@@ -1,4 +1,4 @@
-"""PokerAgent - 本地接应服务 (SSE流式版) v28
+"""PokerAgent - 本地接应服务 (SSE流式版) v29
 启动方式： python agent_server.py
 默认监听：http://127.0.0.1:9966
 """
@@ -32,6 +32,8 @@ def get_temp_dir():
 HELP_FILE = os.path.join(WORK_DIR, 'commands.md')
 # [新增] 专属回收站目录
 TRASH_DIR = os.path.join(WORK_DIR, '.agent_trash')
+# 配置文件路径（固定在脚本所在目录，不随 WORK_DIR 变化）
+CONFIG_FILE = os.path.join(os.path.dirname(os.path.abspath(__file__)), 'agent_config.json')
 # 操作日志
 LOG_FILE = os.path.join(WORK_DIR, 'agent_log.txt')
 clipboard_mode = False
@@ -137,7 +139,49 @@ def smart_decode(b_str):
         return b_str.decode('utf-8')
     except UnicodeDecodeError:
         return b_str.decode(encoding, errors='replace')
+def save_config():
+    """将当前运行时配置持久化到 JSON 文件"""
+    config = {
+        'work_dir': WORK_DIR,
+        'clipboard_mode': clipboard_mode,
+        'exec_enabled': exec_enabled,
+        'permission_enabled': permission_mgr.enabled,
+        'always_allow': list(permission_mgr._always_allow),
+    }
+    try:
+        with open(CONFIG_FILE, 'w', encoding='utf-8') as f:
+            json.dump(config, f, ensure_ascii=False, indent=2)
+    except Exception as e:
+        print(f'[Agent] 配置保存失败: {e}')
+
+
+def load_config():
+    """启动时从 JSON 文件加载配置，文件不存在或损坏则静默使用默认值"""
+    global WORK_DIR, TRASH_DIR, clipboard_mode, exec_enabled
+    if not os.path.exists(CONFIG_FILE):
+        return
+    try:
+        with open(CONFIG_FILE, 'r', encoding='utf-8') as f:
+            config = json.load(f)
+        # 工作目录：仅在路径实际存在时才采用
+        if 'work_dir' in config and os.path.isdir(config['work_dir']):
+            WORK_DIR = config['work_dir']
+            TRASH_DIR = os.path.join(WORK_DIR, '.agent_trash')
+        if 'clipboard_mode' in config:
+            clipboard_mode = bool(config['clipboard_mode'])
+        if 'exec_enabled' in config:
+            exec_enabled = bool(config['exec_enabled'])
+        if 'permission_enabled' in config:
+            permission_mgr.enabled = bool(config['permission_enabled'])
+        if 'always_allow' in config:
+            permission_mgr._always_allow = set(config['always_allow'])
+        print(f'[Agent] 配置已加载: {CONFIG_FILE}')
+    except Exception as e:
+        print(f'[Agent] 配置加载失败，使用默认值: {e}')
+
+
 def _push_config():
+    save_config()  # 每次配置变更时持久化
     _config_changed.set()
 def _truncate(s, max_display=20000, keep_len=100):
     if len(s) > max_display:
@@ -210,12 +254,14 @@ class PermissionManager:
             if result == 'always':
                 with self._lock:
                     self._always_allow.add(fp_norm)
+                save_config()  # 新增始终允许条目后持久化
                 return True
             return bool(result)
         return False
     def reset_session(self):
         with self._lock:
             self._always_allow.clear()
+        save_config()  # 清除始终允许列表后持久化
 permission_mgr = PermissionManager()
 # [新增] 判断路径是否在回收站内
 def _is_trash_path(filepath):
@@ -1366,6 +1412,8 @@ KNOWN_CMDS = set(re.findall(r"cmd\s*==\s*'([^']+)'", _EXEC_SRC))
 # ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 # 启动后台 Worker 线程（移到顶层，确保任何启动方式都能跑）
 # ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+# 启动时加载持久化配置（必须在 permission_mgr 创建之后、worker 启动之前）
+load_config()
 worker_thread = threading.Thread(target=worker_loop, daemon=True)
 worker_thread.start()
 @app.route('/agent-stream')
@@ -1423,6 +1471,10 @@ def agent_exec():
             del _task_registry[tid]
     command_text = command_text.replace('\r\n', '\n').replace('\r', '\n')
     log_action('RECEIVED', command_text)
+
+    # [诊断] 打印原始接收内容的 repr，精确定位空白字符--------------------------------------------------------------------------------------------------------------------------------------------------
+    print(f'[DIAG] RAW RECEIVED repr:\n{repr(command_text[:500])}')
+
     lines = command_text.split('\n')
     i = 0
     task_ids = []
@@ -1465,6 +1517,9 @@ def agent_exec():
             # 遇到其他内容，认为多行指令内容结束
             else:
                 break
+        # [诊断] 打印提取出的每个 block 的 repr
+        for bi, bk in enumerate(blocks):
+            print(f'[DIAG] BLOCK[{bi}] repr: {repr(bk[:200])}')
         return blocks, peek
     while i < len(lines):
         line = lines[i].strip()
