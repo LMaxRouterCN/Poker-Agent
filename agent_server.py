@@ -1,4 +1,4 @@
-"""PokerAgent - 本地接应服务 (SSE流式版) v30
+"""PokerAgent - 本地接应服务 (SSE流式版) v31
 启动方式： python agent_server.py
 默认监听：http://127.0.0.1:9966
 """
@@ -70,7 +70,7 @@ _sse_lock = threading.Lock()  # 保护 sse_clients 的锁
 _task_registry = {}  # task_id -> {'status':..., 'logs':[...], 'result':...}
 _task_registry_lock = threading.Lock()
 def emit_task_event(evt):
-    """更新任务注册表并推送给所有已连接的 SSE 客户端"""
+    """更新任务注册表并推送给所有已连接的 SSE 客户端（SSE 侧自动剥离 ANSI 颜色码）"""
     task_id = evt.get('id')
     if task_id:
         with _task_registry_lock:
@@ -80,9 +80,14 @@ def emit_task_event(evt):
             if evt.get('type') == 'status':
                 entry['status'] = evt.get('status', entry['status'])
                 if 'result' in evt:
-                    entry['result'] = evt['result']
+                    entry['result'] = strip_ansi(evt['result'])  # [修改] 存储剥离
             elif evt.get('type') == 'log':
-                entry['logs'].append(evt.get('data', ''))
+                entry['logs'].append(strip_ansi(evt.get('data', '')))  # [修改] 存储剥离
+        # [修改] 推送前剥离 ANSI，前端/LLM 拿到干净文本
+        if evt.get('type') == 'log' and 'data' in evt:
+            evt = dict(evt, data=strip_ansi(evt['data']))
+        elif evt.get('type') == 'status' and 'result' in evt:
+            evt = dict(evt, result=strip_ansi(evt['result']))
         push_event(evt)
 def push_event(data_dict):
     """向所有连接的 SSE 客户端推送事件"""
@@ -155,6 +160,12 @@ def smart_decode(b_str):
         return b_str.decode('utf-8')
     except UnicodeDecodeError:
         return b_str.decode(encoding, errors='replace')
+
+# [新增] 剥离 ANSI 转义序列（PowerShell 7 默认输出颜色码，GUI/日志无法渲染）
+_ANSI_RE = re.compile(r'\x1b\[[0-9;]*[a-zA-Z]')
+def strip_ansi(s):
+    return _ANSI_RE.sub('', s)
+
 def save_config():
     """将当前运行时配置持久化到 JSON 文件"""
     config = {
@@ -1668,7 +1679,7 @@ if __name__ == '__main__':
     permission_mgr.set_callback(_default_permission_callback)
     _push_config()
     print(f'========================================')
-    print(f' 低配版Agent 本地服务已启动 (SSE流式版)')
+    print(f' PokerAgent 本地服务已启动 (SSE流式版)')
     print(f' 监听地址：http://127.0.0.1:9966')
     print(f' 工作目录：{WORK_DIR}')
     print(f' 帮助文档：{HELP_FILE}')
