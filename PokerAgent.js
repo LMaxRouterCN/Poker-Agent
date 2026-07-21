@@ -1,11 +1,12 @@
 // ==UserScript==
 // @name PokerAgent
 // @namespace http://tampermonkey.net/
-// @version 19
+// @version 21
 // @author LMaxRouterCN
 // @description PokerAgent的浏览器端核心脚本，提供元素选择、配置管理、调试日志等功能，支持多站点独立配置和自动发送功能。
 // @match *://*/*
 // @grant GM_registerMenuCommand
+// @grant GM_unregisterMenuCommand
 // @grant GM_xmlhttpRequest
 // @grant GM_getValue
 // @grant GM_setValue
@@ -184,6 +185,106 @@
     }
 
     const isWhitelisted = () => cfgLoad().whitelist.some(p => location.href.startsWith(p));
+
+    /* ================================================================
+     * 1.5 启用状态管理
+     * ================================================================ */
+    const ENABLE_MODE_KEY = 'pokeragent_enable_mode';   // 持久化: 'disabled' | 'always'
+    const PAGE_ENABLE_KEY = 'pokeragent_page_enables';  // 持久化: { [pageKey]: true }
+    let _sessionEnabled = false; // 纯内存，刷新即丢失
+
+    // 用 origin+pathname 标识"当前页面"（忽略query和hash）
+    function _getPageKey() {
+        return location.origin + location.pathname;
+    }
+
+    // 获取当前生效的启用状态
+    function _getEnableState() {
+        if (_sessionEnabled) return 'session';
+        const pageEnables = GM_getValue(PAGE_ENABLE_KEY, {});
+        if (pageEnables[_getPageKey()]) return 'page';
+        const globalMode = GM_getValue(ENABLE_MODE_KEY, 'disabled');
+        if (globalMode === 'always') return 'always';
+        return 'disabled';
+    }
+
+    // 设置启用状态（互斥，切换时清除其他状态）
+    function _setEnableState(state) {
+        _sessionEnabled = false;
+        GM_setValue(ENABLE_MODE_KEY, 'disabled');
+        const pageEnables = GM_getValue(PAGE_ENABLE_KEY, {});
+        delete pageEnables[_getPageKey()];
+        GM_setValue(PAGE_ENABLE_KEY, pageEnables);
+
+        switch (state) {
+            case 'always':
+                GM_setValue(ENABLE_MODE_KEY, 'always');
+                break;
+            case 'session':
+                _sessionEnabled = true;
+                break;
+            case 'page':
+                pageEnables[_getPageKey()] = true;
+                GM_setValue(PAGE_ENABLE_KEY, pageEnables);
+                break;
+            // 'disabled' 不需要额外操作
+        }
+    }
+
+    const ENABLE_LABELS = {
+        disabled: '不启用',
+        always: '默认启用',
+        session: '此次会话启用',
+        page: '当前页面启用'
+    };
+
+    // 停止agent所有活动
+    function _stopAgent() {
+        if (_pollTimer) { clearInterval(_pollTimer); _pollTimer = null; }
+        _destroyAutoSendToggle();
+        _isProcessing = false;
+        _cmdQueue = [];
+        _taskList = [];
+        if (_sseEventSource) {
+            try { _sseEventSource.abort(); } catch(e) {}
+            _sseEventSource = null;
+        }
+        log('INFO', '⏹ Agent 已停止');
+    }
+
+    // 平铺菜单ID数组，用于动态刷新标记
+    let _enableMenuIds = [];
+
+    function _registerEnableMenus() {
+        // 注销旧菜单项
+        _enableMenuIds.forEach(id => {
+            try { GM_unregisterMenuCommand(id); } catch(e) {}
+        });
+        _enableMenuIds = [];
+
+        const current = _getEnableState();
+        const modes = ['disabled', 'always', 'session', 'page'];
+        modes.forEach(mode => {
+            // 当前激活的模式前面打勾
+            const prefix = current === mode ? '✓ ' : '';
+            const id = GM_registerMenuCommand(`${prefix}${ENABLE_LABELS[mode]}`, () => _switchEnableState(mode));
+            _enableMenuIds.push(id);
+        });
+    }
+
+    function _switchEnableState(mode) {
+        const current = _getEnableState();
+        if (current === mode) return;
+        _setEnableState(mode);
+        log('INFO', `启用状态: ${ENABLE_LABELS[current]} → ${ENABLE_LABELS[mode]}`);
+
+        if (mode === 'disabled') {
+            _stopAgent();
+        } else {
+            initAgent();
+        }
+        _registerEnableMenus(); // 刷新✓标记
+    }
 
     /* ================================================================
      * 2. 样式注入
@@ -2184,9 +2285,17 @@ function getCleanText(el, cfg) {
     /* ================================================================
      * 7. 启动入口
      * ================================================================ */
+    // 注册菜单命令
     GM_registerMenuCommand('⚙️ Agent 配置面板', showPanel);
+    _registerEnableMenus();
 
-    if (cfgLoad().debugMode) setTimeout(initDebugUI, 500);
+    // 根据启用状态决定是否启动agent和调试台
+    if (_getEnableState() !== 'disabled') {
+        if (cfgLoad().debugMode) setTimeout(initDebugUI, 500);
+        const start = () => setTimeout(initAgent, 1500);
+        if (document.readyState === 'loading') document.addEventListener('DOMContentLoaded', start);
+        else start();
+    }
 
     async function initAgent() {
         if (_pollTimer) {
@@ -2275,12 +2384,6 @@ function getCleanText(el, cfg) {
                 console.error('[Agent-ERR] 轮询异常:', err);
             }
         }, 800);
-    }
-
-    if (isWhitelisted()) {
-        const start = () => setTimeout(initAgent, 1500);
-        if (document.readyState === 'loading') document.addEventListener('DOMContentLoaded', start);
-        else start();
     }
 
     function esc(s) {
