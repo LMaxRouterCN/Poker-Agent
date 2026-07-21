@@ -1,4 +1,4 @@
-"""PokerAgent - 本地接应服务 (SSE流式版) v29
+"""PokerAgent - 本地接应服务 (SSE流式版) v30
 启动方式： python agent_server.py
 默认监听：http://127.0.0.1:9966
 """
@@ -38,10 +38,26 @@ CONFIG_FILE = os.path.join(os.path.dirname(os.path.abspath(__file__)), 'agent_co
 LOG_FILE = os.path.join(WORK_DIR, 'agent_log.txt')
 clipboard_mode = False
 exec_enabled = True
+# [新增] Shell 类型：'powershell'（默认）或 'cmd'，可通过配置文件切换
+shell_type = 'powershell'
 _config_changed = threading.Event()
 # [修改] Windows 的 cmd 默认输出是 GBK，Linux/Mac 是 UTF-8
 encoding = 'gbk' if platform.system() == 'Windows' else 'utf-8'
 _SYS_ENCODING = locale.getpreferredencoding(False) or 'gbk'
+
+# [新增] 检测系统可用的 PowerShell：优先 pwsh (7+)，回退 powershell (5.x)
+def _detect_powershell():
+    if shutil.which('pwsh'):
+        return 'pwsh'
+    if shutil.which('powershell'):
+        print('[Agent] ⚠ 未检测到 PowerShell 7+ (pwsh)，已回退到 Windows PowerShell 5.x。'
+              '建议更新: https://github.com/PowerShell/PowerShell/releases')
+        return 'powershell'
+    print('[Agent] ⚠ 未检测到任何 PowerShell，exec 将回退到 cmd。')
+    return None
+
+_POWERSHELL_EXE = _detect_powershell()
+
 # ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 # 任务队列与 SSE 流式架构
 # ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
@@ -145,6 +161,7 @@ def save_config():
         'work_dir': WORK_DIR,
         'clipboard_mode': clipboard_mode,
         'exec_enabled': exec_enabled,
+        'shell_type': shell_type,  # [新增]
         'permission_enabled': permission_mgr.enabled,
         'always_allow': list(permission_mgr._always_allow),
     }
@@ -157,7 +174,7 @@ def save_config():
 
 def load_config():
     """启动时从 JSON 文件加载配置，文件不存在或损坏则静默使用默认值"""
-    global WORK_DIR, TRASH_DIR, clipboard_mode, exec_enabled
+    global WORK_DIR, TRASH_DIR, clipboard_mode, exec_enabled, shell_type
     if not os.path.exists(CONFIG_FILE):
         return
     try:
@@ -171,6 +188,8 @@ def load_config():
             clipboard_mode = bool(config['clipboard_mode'])
         if 'exec_enabled' in config:
             exec_enabled = bool(config['exec_enabled'])
+        if 'shell_type' in config and config['shell_type'] in ('powershell', 'cmd'):
+            shell_type = config['shell_type']
         if 'permission_enabled' in config:
             permission_mgr.enabled = bool(config['permission_enabled'])
         if 'always_allow' in config:
@@ -1287,10 +1306,21 @@ def execute_line_streaming(line, task_id):
                     return f'操作被拒绝：执行高危系统命令需用户确认。命令：{arg.strip()}'
         log_action('EXEC', arg.strip())
         try:
-            process = subprocess.Popen(
-                f'cmd /c {arg.strip()}', shell=True, stdout=subprocess.PIPE, stderr=subprocess.STDOUT,
-                cwd=W
-            )
+            # [修改] 根据 shell_type 配置选择 PowerShell 或 cmd
+            if shell_type == 'powershell' and _POWERSHELL_EXE:
+                # PowerShell：列表传参，不走 shell=True，避免二次解析
+                process = subprocess.Popen(
+                    [_POWERSHELL_EXE, '-NoProfile', '-NonInteractive', '-Command', arg.strip()],
+                    stdout=subprocess.PIPE, stderr=subprocess.STDOUT,
+                    cwd=W
+                )
+            else:
+                # cmd 回退
+                process = subprocess.Popen(
+                    f'cmd /c {arg.strip()}', shell=True,
+                    stdout=subprocess.PIPE, stderr=subprocess.STDOUT,
+                    cwd=W
+                )
             output_lines = []
             start_time = time.time()
             while True:
