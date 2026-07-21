@@ -53,6 +53,18 @@ FONT_TITLE = ('Microsoft YaHei UI', 14, 'bold')
 FONT_MONO = ('Consolas', 10)
 FONT_MONO_B = ('Consolas', 10, 'bold')
 
+# [新增] ANSI SGR 颜色码 → 十六进制（用于 GUI 渲染 exec 输出）
+_ANSI_FG = {
+    30: '#000000', 31: '#cd3131', 32: '#0dbc79', 33: '#e5e510',
+    34: '#2472c8', 35: '#bc3fbc', 36: '#11a8cd', 37: '#e5e5e5',
+    90: '#666666', 91: '#f14c4c', 92: '#23d18b', 93: '#f5f543',
+    94: '#3b8eea', 95: '#d670d6', 96: '#29b8db', 97: '#ffffff',
+}
+_ANSI_BG = {
+    40: '#000000', 41: '#cd3131', 42: '#0dbc79', 43: '#e5e510',
+    44: '#2472c8', 45: '#bc3fbc', 46: '#11a8cd', 47: '#e5e5e5',
+}
+
 # ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 # 日志桥接（stdout/stderr -> GUI 日志队列）
 # ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
@@ -120,6 +132,7 @@ class AgentGUI:
         
         self._cli_mode = False
         self._server = None
+        self._ansi_tags = set()  # [新增] ANSI 样式 tag 缓存，避免重复创建
         self._build_ui()
         
         agent_server.permission_mgr.set_callback(self._make_permission_callback())
@@ -494,6 +507,52 @@ class AgentGUI:
         self.log_text.see(tk.END)
         self.log_text.configure(state=tk.DISABLED)
 
+    # [新增] ANSI 颜色渲染：解析转义码，映射为 tkinter Text tag
+    def _append_ansi(self, text):
+        w = self.log_text
+        w.configure(state=tk.NORMAL)
+        # 按 ANSI SGR 序列切割文本
+        parts = re.split(r'(\x1b\[[0-9;]*m)', text)
+        fg = bg = None
+        bold = False
+        for part in parts:
+            if not part:
+                continue
+            m = re.match(r'\x1b\[([0-9;]*)m', part)
+            if m:
+                codes = [int(c) for c in m.group(1).split(';') if c] if m.group(1) else [0]
+                for code in codes:
+                    if code == 0:
+                        fg, bg, bold = None, None, False
+                    elif code == 1:
+                        bold = True
+                    elif code == 22:
+                        bold = False
+                    elif code == 39:
+                        fg = None
+                    elif code == 49:
+                        bg = None
+                    elif code in _ANSI_FG:
+                        fg = _ANSI_FG[code]
+                    elif code in _ANSI_BG:
+                        bg = _ANSI_BG[code]
+            else:
+                if fg or bg or bold:
+                    tag_key = f'ansi_{fg}_{bg}_{bold}'
+                    if tag_key not in self._ansi_tags:
+                        kw = {}
+                        if fg: kw['foreground'] = fg
+                        if bg: kw['background'] = bg
+                        if bold: kw['font'] = FONT_MONO_B
+                        w.tag_configure(tag_key, **kw)
+                        self._ansi_tags.add(tag_key)
+                    w.insert(tk.END, part, tag_key)
+                else:
+                    w.insert(tk.END, part, 'txt')
+        w.insert(tk.END, '\n')
+        w.see(tk.END)
+        w.configure(state=tk.DISABLED)
+
     def _append_parsed(self, line):
         """解析日志行，分色显示"""
         m = re.match(
@@ -618,7 +677,11 @@ class AgentGUI:
         result = agent_server.execute_line(cmd)
         if result:
             for rline in result.split('\n'):
-                self._append_raw(rline, 'txt')
+                # [修改] 含 ANSI 转义码时渲染颜色，否则普通显示
+                if '\x1b[' in rline:
+                    self._append_ansi(rline)
+                else:
+                    self._append_raw(rline, 'txt')
         else:
             self._append_raw("（空指令或注释）", 'warn')
 
