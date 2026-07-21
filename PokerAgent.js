@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name PokerAgent
 // @namespace http://tampermonkey.net/
-// @version 21
+// @version 23
 // @author LMaxRouterCN
 // @description PokerAgent的浏览器端核心脚本，提供元素选择、配置管理、调试日志等功能，支持多站点独立配置和自动发送功能。
 // @match *://*/*
@@ -190,19 +190,16 @@
      * 1.5 启用状态管理
      * ================================================================ */
     const ENABLE_MODE_KEY = 'pokeragent_enable_mode';   // 持久化: 'disabled' | 'always'
-    const PAGE_ENABLE_KEY = 'pokeragent_page_enables';  // 持久化: { [pageKey]: true }
-    let _sessionEnabled = false; // 纯内存，刷新即丢失
-
-    // 用 origin+pathname 标识"当前页面"（忽略query和hash）
-    function _getPageKey() {
-        return location.origin + location.pathname;
-    }
+    // 页面级状态存入 sessionStorage：每个标签页独立，刷新保留，关闭标签页即焚
+    const PAGE_SESSION_KEY = '__PokerAgent_PageEnabled__';
+    let _sessionEnabled = false; // 纯内存变量，刷新即丢失
+    let _pollConfigActive = false; // 配置轮询链的开关
 
     // 获取当前生效的启用状态
     function _getEnableState() {
         if (_sessionEnabled) return 'session';
-        const pageEnables = GM_getValue(PAGE_ENABLE_KEY, {});
-        if (pageEnables[_getPageKey()]) return 'page';
+        // 从 sessionStorage 读取当前标签页的启用标记
+        if (sessionStorage.getItem(PAGE_SESSION_KEY) === '1') return 'page';
         const globalMode = GM_getValue(ENABLE_MODE_KEY, 'disabled');
         if (globalMode === 'always') return 'always';
         return 'disabled';
@@ -212,9 +209,8 @@
     function _setEnableState(state) {
         _sessionEnabled = false;
         GM_setValue(ENABLE_MODE_KEY, 'disabled');
-        const pageEnables = GM_getValue(PAGE_ENABLE_KEY, {});
-        delete pageEnables[_getPageKey()];
-        GM_setValue(PAGE_ENABLE_KEY, pageEnables);
+        // 切换任何状态前，先清除当前标签页的旧标记
+        sessionStorage.removeItem(PAGE_SESSION_KEY);
 
         switch (state) {
             case 'always':
@@ -224,8 +220,8 @@
                 _sessionEnabled = true;
                 break;
             case 'page':
-                pageEnables[_getPageKey()] = true;
-                GM_setValue(PAGE_ENABLE_KEY, pageEnables);
+                // 写入 sessionStorage，实现"刷新后依然启用，关标签页自动失效"
+                sessionStorage.setItem(PAGE_SESSION_KEY, '1');
                 break;
             // 'disabled' 不需要额外操作
         }
@@ -240,6 +236,7 @@
 
     // 停止agent所有活动
     function _stopAgent() {
+        _pollConfigActive = false; // 切断配置轮询递归链
         if (_pollTimer) { clearInterval(_pollTimer); _pollTimer = null; }
         _destroyAutoSendToggle();
         _isProcessing = false;
@@ -280,10 +277,15 @@
 
         if (mode === 'disabled') {
             _stopAgent();
+            if (_debugPanel) _debugPanel.style.display = 'none';
         } else {
-            initAgent();
+            if (cfgLoad().debugMode) showDebug();
+            initAgent().catch(e => {
+                log('ERR', `热启动异常: ${e.message}`);
+                console.error('[Agent] initAgent failed:', e);
+            });
         }
-        _registerEnableMenus(); // 刷新✓标记
+        _registerEnableMenus();
     }
 
     /* ================================================================
@@ -1292,6 +1294,7 @@
     let _sseEventSource = null;
 
     function _pollConfig() {
+        if (!_pollConfigActive) return; // 链已断开，不再递归
         const c = cfgLoad();
         const pollUrl = c.apiUrl.replace('/agent-exec', '/agent-config-poll');
         GM_xmlhttpRequest({
@@ -1299,6 +1302,7 @@
             url: pollUrl,
             timeout: 30000,
             onload(r) {
+                if (!_pollConfigActive) return;
                 if (r.status === 200) {
                     try {
                         const data = JSON.parse(r.responseText);
@@ -1315,9 +1319,11 @@
                 _pollConfig();
             },
             onerror() {
+                if (!_pollConfigActive) return;
                 setTimeout(_pollConfig, 5000);
             },
             ontimeout() {
+                if (!_pollConfigActive) return;
                 _pollConfig();
             }
         });
@@ -1364,8 +1370,6 @@
 
 function getCleanText(el, cfg) {
     const clone = el.cloneNode(true);
-    // [新增] 代码块"账本"：按顺序存放每个代码内容元素的干净文本，DOM中用哨兵占位
-    // 核心思路：代码只从 codeEl.textContent 取（唯一干净来源），其余文本大劲清洗后重组
     const codeBlocks = [];
     if (cfg.selCodeContentElement) {
         try {
@@ -1378,8 +1382,6 @@ function getCleanText(el, cfg) {
                     if (trimStart > 0 || trimEnd > 0) {
                         codeText = codeText.slice(trimStart, codeText.length - trimEnd);
                     }
-                    // [新增] 整个代码块（pre包装或元素自身）替换为哨兵，walker不再踏入块内部
-                    // 注意：先判断 parentNode 再入账，防止嵌套选择器导致索引和哨兵错位
                     const target = codeEl.closest('pre') || codeEl;
                     if (target.parentNode) {
                         const idx = codeBlocks.length;
@@ -1425,18 +1427,13 @@ function getCleanText(el, cfg) {
         }
     })(clone);
     const rawText = clone.textContent;
-    // [新增] 重组：有代码账本时按哨兵切分
-    // 非代码片段大劲清洗（命令/标记都有明确语法约束，不需要保留任何空白），代码片段从账本原样还原
     if (codeBlocks.length > 0) {
         const parts = rawText.split(/\u0000CODE(\d+)\u0000/);
-        // parts 结构: [文本0, '0', 文本1, '1', 文本2, ...] 偶数下标是文本，奇数下标是账本索引
         let result = '';
         for (let i = 0; i < parts.length; i++) {
             if (i % 2 === 0) {
-                // [新增] 非代码片段：逐行trim+删空行，HTML缩进残留在这里被彻底清掉
                 result += parts[i].split('\n').map(l => l.trim()).filter(l => l.length > 0).join('\n');
             } else {
-                // [新增] 代码片段：从账本还原，一个字符都不碰
                 result += '\n' + codeBlocks[parseInt(parts[i], 10)] + '\n';
             }
         }
@@ -2298,24 +2295,49 @@ function getCleanText(el, cfg) {
     }
 
     async function initAgent() {
+        // 清理旧轮询（防止重复启动）
         if (_pollTimer) {
             clearInterval(_pollTimer);
             _pollTimer = null;
         }
-        await _syncInitialConfig();
+        _pollConfigActive = true;
+
+        try {
+            await _syncInitialConfig();
+        } catch(e) {
+            log('WARN', `初始配置同步失败(不影响运行): ${e.message}`);
+        }
+
         _pollConfig();
         _lastAnswerEl = null;
         _currentRoundSent.clear();
         _noAnswerCount = 0;
         _initAutoSendToggle();
+
         const c = cfgLoad();
         const selector = c.selChatContainer;
-        let currentContainer = document.querySelector(selector);
+
+        // 空选择器保护：不抛异常，等用户配置
+        if (!selector) {
+            log('WARN', '未配置聊天容器选择器，5秒后重试...');
+            setTimeout(initAgent, 5000);
+            return;
+        }
+
+        let currentContainer;
+        try {
+            currentContainer = document.querySelector(selector);
+        } catch(e) {
+            log('ERR', `容器选择器语法错误: "${selector}" - ${e.message}`);
+            return;
+        }
+
         if (!currentContainer) {
             log('WARN', `找不到容器 ${selector}，5秒后重试...`);
             setTimeout(initAgent, 5000);
             return;
         }
+
         const answerSel = c.selAnswerItem || '.answer';
         _knownAnswers = [...currentContainer.querySelectorAll(answerSel)];
         _lastAnswerEl = null;
