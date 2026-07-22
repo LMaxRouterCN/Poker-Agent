@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name PokerAgent
 // @namespace http://tampermonkey.net/
-// @version 23
+// @version 24
 // @author LMaxRouterCN
 // @description PokerAgent的浏览器端核心脚本，提供元素选择、配置管理、调试日志等功能，支持多站点独立配置和自动发送功能。
 // @match *://*/*
@@ -29,6 +29,7 @@
         selChatContainer: '',
         selInputBox: '',
         selSendButton: '',
+        selSendButtonContainer: '', // 发送按钮容器选择器(按钮元素会整体替换的网站用这个)
         selAnswerItem: '.answer',
         selCodeContentElement: '',
         cleanIgnoreClassKeywords: 'thinking,reasoning,probe,deepseek-reason',
@@ -102,6 +103,7 @@
                 if (cfg.autoSendByEnter !== undefined) delete cfg.autoSendByEnter;
                 if (!cfg.selAnswerItem) cfg.selAnswerItem = '.answer';
                 if (!cfg.selCodeContentElement) cfg.selCodeContentElement = '';
+                if (cfg.selSendButtonContainer === undefined) cfg.selSendButtonContainer = '';
                 if (cfg.cleanIgnoreClassKeywords === undefined) cfg.cleanIgnoreClassKeywords = 'thinking,reasoning,probe,deepseek-reason';
                 if (cfg.cleanRemoveButtonLike === undefined) cfg.cleanRemoveButtonLike = true;
                 if (cfg.cleanRemovePre === undefined) cfg.cleanRemovePre = true;
@@ -400,7 +402,7 @@
     #ag-calibrate-cards{position:fixed;top:100px;left:50%;transform:translateX(-50%);background:#0a0a0a;border:1px solid #2a2a2a;z-index:2147483647;box-shadow:0 8px 32px rgba(0,0,0,.6);width:min(220px,45vw);overflow-y:auto;overflow-x:hidden;padding:10px;cursor:move}
     #ag-calibrate-cards::-webkit-scrollbar{width:4px}
     #ag-calibrate-cards::-webkit-scrollbar-thumb{background:#2a2a2a}
-    .ag-cal-item{display:flex;flex-direction:column;align-items:center;gap:6px;padding:6px;background:#1a1a1a;transition:.15s;width:100%;box-sizing:border-box;overflow:hidden;position:relative;z-index:0;border:1px solid transparent;min-height:0}
+    .ag-cal-item{display:flex;flex-direction:column;align-items:center;gap:6px;padding:6px;background:#1a1a1a;transition:.15s;width:100%;box-sizing:border-box;overflow:hidden;position:relative;z-index:0;border:1px solid transparent;min-height:0;flex-shrink:0}
     .ag-cal-item.selected-busy{background:rgba(239,68,68,.1);border-color:#ef4444}
     .ag-cal-item.selected-idle{background:rgba(34,197,94,.1);border-color:#22c55e}
     .ag-cal-item.selected-sendable{background:rgba(250,204,21,.1);border-color:#facc15}
@@ -481,6 +483,7 @@
         chat: '聊天记录容器',
         input: '输入框',
         send: '发送按钮',
+        'send-container': '发送按钮容器', // 容器模式
         answer: 'AI回答元素',
         'clean-class': '清理元素Class',
         'code-content': '代码内容元素'
@@ -880,6 +883,7 @@
         if (_pickType === 'chat') c.selChatContainer = sel;
         if (_pickType === 'input') c.selInputBox = sel;
         if (_pickType === 'send') c.selSendButton = sel;
+        if (_pickType === 'send-container') c.selSendButtonContainer = sel;
         if (_pickType === 'answer') c.selAnswerItem = sel;
         if (_pickType === 'code-content') c.selCodeContentElement = sel;
         cfgSaveRuntime(c);
@@ -1034,7 +1038,13 @@
     <div class="ag-field"><label>输入框</label><div class="ag-row"><input class="ag-inp" id="ag-s-input" value="${esc(editCfg.selInputBox)}" /><button class="ag-btn ag-btn-p" id="ag-pick-input">🖱 选择</button></div><div id="ag-m-input"></div></div>
     <div class="ag-field">
     <label>发送按钮</label><div class="ag-row"><input class="ag-inp" id="ag-s-send" value="${esc(editCfg.selSendButton)}" /><button class="ag-btn ag-btn-p" id="ag-pick-send">🖱 选择</button></div><div id="ag-m-send"></div>
-    <div class="ag-field" id="ag-calibrate-field" style="margin-top:6px; padding:8px; background:#232436; border:1px solid #2a2a2a; display:${editCfg.selSendButton ? 'block' : 'none'};">
+    <div class="ag-field" style="margin-top:6px">
+    <label>发送按钮容器 (可选)</label>
+    <div class="ag-row"><input class="ag-inp" id="ag-s-send-container" value="${esc(editCfg.selSendButtonContainer)}" /><button class="ag-btn ag-btn-p" id="ag-pick-send-container">🖱 选择</button></div>
+    <div id="ag-m-send-container"></div>
+    <div class="ag-hint">如果网站在不同状态下会完全替换按钮元素（而非修改属性），请选择按钮的父容器。填写后指纹基于容器内容生成，selSendButton 仍可用于容器内精确定位点击目标。</div>
+    </div>
+    <div class="ag-field" id="ag-calibrate-field" style="margin-top:6px; padding:8px; background:#232436; border:1px solid #2a2a2a; display:${(editCfg.selSendButton || editCfg.selSendButtonContainer) ? 'block' : 'none'};">
     <div style="font-size:12px; color:#a1a1aa; margin-bottom:6px">捕获按钮的各种形态，手动标记【忙碌】(AI输出时)和【空闲】态。</div>
     <div class="ag-row"><div id="ag-calibrate-status" style="flex:1; font-size:11px; color:#52525b"> 忙碌:${(editCfg.sendBtnBusyFingerprints||[]).length}个 | 空闲:${(editCfg.sendBtnIdleFingerprints||[]).length}个 | 可发送:${(editCfg.sendBtnSendableFingerprints||[]).length}个 </div><button class="ag-btn ag-btn-p" id="ag-start-calibrate">${(editCfg.sendBtnBusyFingerprints||[]).length > 0 ? '重新校准' : '开始校准'}</button></div>
     </div>
@@ -1179,11 +1189,13 @@
         _panel.querySelector('#ag-pick-code-content').onclick = () => pickerEnter('code-content');
         _panel.querySelector('#ag-pick-input').onclick = () => pickerEnter('input');
         _panel.querySelector('#ag-pick-send').onclick = () => pickerEnter('send');
+        _panel.querySelector('#ag-pick-send-container').onclick = () => pickerEnter('send-container');
         _panel.querySelector('#ag-pick-clean-keyword').onclick = () => pickerEnter('clean-class');
-        if (editCfg.selSendButton) {
+        // 容器或按钮任一配置了就可以校准
+        if (editCfg.selSendButton || editCfg.selSendButtonContainer) {
             _panel.querySelector('#ag-start-calibrate').onclick = () => {
-                if (!editCfg.selSendButton) {
-                    alert('请先选择发送按钮');
+                if (!editCfg.selSendButton && !editCfg.selSendButtonContainer) {
+                    alert('请先选择发送按钮或容器');
                     return;
                 }
                 _startCalibration();
@@ -1197,12 +1209,16 @@
                 btn.classList.add('active');
             };
         });
-        ['chat', 'input', 'send', 'answer', 'code-content'].forEach(t => {
-            const key = t === 'chat' ? 'selChatContainer' : t === 'input' ? 'selInputBox' : t === 'send' ? 'selSendButton' : t === 'answer' ? 'selAnswerItem' : 'selCodeContentElement';
+        // 遍历所有选择器字段，绑定输入事件和匹配提示
+        ['chat', 'input', 'send', 'send-container', 'answer', 'code-content'].forEach(t => {
+            const key = t === 'chat' ? 'selChatContainer' : t === 'input' ? 'selInputBox' : t === 'send' ? 'selSendButton' : t === 'send-container' ? 'selSendButtonContainer' : t === 'answer' ? 'selAnswerItem' : 'selCodeContentElement';
             _panel.querySelector(`#ag-s-${t}`).addEventListener('input', function () {
                 _showMatch(this.value.trim(), `ag-m-${t}`);
-                if (t === 'send') {
-                    _panel.querySelector('#ag-calibrate-field').style.display = this.value.trim() ? 'block' : 'none';
+                // 按钮或容器任一有值就显示校准区域
+                if (t === 'send' || t === 'send-container') {
+                    const sendVal = _panel.querySelector('#ag-s-send').value.trim();
+                    const containerVal = _panel.querySelector('#ag-s-send-container').value.trim();
+                    _panel.querySelector('#ag-calibrate-field').style.display = (sendVal || containerVal) ? 'block' : 'none';
                 }
             });
             _showMatch(editCfg[key], `ag-m-${t}`);
@@ -1232,6 +1248,7 @@
             siteData.selCodeContentElement = _panel.querySelector('#ag-s-code-content').value.trim();
             siteData.selInputBox = _panel.querySelector('#ag-s-input').value.trim();
             siteData.selSendButton = _panel.querySelector('#ag-s-send').value.trim();
+            siteData.selSendButtonContainer = _panel.querySelector('#ag-s-send-container').value.trim();
             siteData.showAutoSendToggle = _panel.querySelector('#ag-show-toggle').checked;
             const activePos = _panel.querySelector('.ag-pos-btn.active');
             siteData.autoSendTogglePos = activePos ? activePos.dataset.pos : 'right';
@@ -1442,8 +1459,32 @@ function getCleanText(el, cfg) {
     return rawText;
 }
 
+    // 获取发送按钮指纹：容器模式基于子元素结构，普通模式基于按钮自身属性
     function _getSendBtnFingerprint() {
         const c = cfgLoad();
+
+        // 容器模式：指纹基于容器内子元素的结构，按钮整体替换也能感知
+        if (c.selSendButtonContainer) {
+            const container = document.querySelector(c.selSendButtonContainer);
+            if (!container) return 'CONTAINER_MISSING';
+            const parts = [];
+            for (const child of container.children) {
+                const tag = child.tagName;
+                // 过滤纯哈希class，避免每次构建指纹都变
+                const cls = (typeof child.className === 'string' ? child.className : '')
+                    .split(/\s+/)
+                    .filter(c => c && !_isPureHashClass(c))
+                    .join('.');
+                const text = child.textContent.replace(/\s+/g, ' ').trim().slice(0, 40);
+                const disabled = child.disabled ? '1' : '0';
+                const ariaDisabled = child.getAttribute('aria-disabled') || '';
+                const ariaLabel = child.getAttribute('aria-label') || '';
+                parts.push(`${tag}[${cls}][${text}][d:${disabled}][ad:${ariaDisabled}][al:${ariaLabel}]`);
+            }
+            return `C:${parts.join('|')}`;
+        }
+
+        // 普通模式：直接指纹按钮元素自身
         if (!c.selSendButton) return null;
         const el = document.querySelector(c.selSendButton);
         if (!el) return 'ELEMENT_MISSING';
@@ -1579,9 +1620,24 @@ function getCleanText(el, cfg) {
         renderBar('👇 请在下方正常聊天，脚本会自动捕获按钮的不同状态。<br><b style="color:#f472b6">【忙碌】=停止生成 | 【空闲】=AI说完 | 【可发送】=可以发送消息</b>');
         checkInterval = setInterval(() => {
             const fp = _getSendBtnFingerprint();
-            if (!fp || fp === 'ELEMENT_MISSING') return;
+            if (!fp) return;
+            // 元素/容器不存在也作为可捕获状态（按钮被整体替换时会出现）
+            if (fp === 'ELEMENT_MISSING' || fp === 'CONTAINER_MISSING') {
+                if (!capturedMap.has(fp)) {
+                    capturedMap.set(fp, {
+                        html: `<span style="color:#ef4444;font-size:12px">⚠ 元素不存在 (${fp === 'CONTAINER_MISSING' ? '容器' : '按钮'})</span>`,
+                        bg: '#1a1a1a',
+                        color: '#ef4444'
+                    });
+                    log('INFO', `捕获状态: ${fp} (#${capturedMap.size})`);
+                    renderBar('👇 继续操作，或标记已捕获的状态后点击完成。<br><b style="color:#f472b6">【忙碌】=停止生成 | 【空闲】=AI说完 | 【可发送】=可以发送消息</b>');
+                }
+                return;
+            }
             if (!capturedMap.has(fp)) {
-                const el = document.querySelector(c.selSendButton);
+                // 容器模式取容器元素做预览，否则取按钮元素
+                const targetSel = c.selSendButtonContainer || c.selSendButton;
+                const el = document.querySelector(targetSel);
                 if (!el) return;
                 const cs = getComputedStyle(el);
                 let inner = el.innerHTML.replace(/<(style|script|link)[\s\S]*?<\/\1>/gi, '');
@@ -1604,7 +1660,7 @@ function getCleanText(el, cfg) {
             log('INFO', '👀 监听发送按钮状态...');
             const checkPhase1 = () => {
                 const fp = _getSendBtnFingerprint();
-                if (fp === null || fp === 'ELEMENT_MISSING' || !busyList.includes(fp)) {
+                if (fp === null || fp === 'ELEMENT_MISSING' || fp === 'CONTAINER_MISSING' || !busyList.includes(fp)) {
                     log('INFO', '🟢 脱离忙碌态');
                     startPhase2();
                 } else {
@@ -2060,8 +2116,38 @@ function getCleanText(el, cfg) {
         _checkAndDispatch();
     }
 
+    // 点击发送：容器模式在容器内查找按钮，普通模式直接点击
     function _trySendByClick() {
         const c = cfgLoad();
+
+        // 容器模式：在容器内定位可点击元素
+        if (c.selSendButtonContainer) {
+            const container = document.querySelector(c.selSendButtonContainer);
+            if (!container) {
+                log('ERR', '找不到发送按钮容器');
+                return false;
+            }
+            // 优先用 selSendButton 在容器内精确定位
+            if (c.selSendButton) {
+                const btn = container.querySelector(c.selSendButton);
+                if (btn) {
+                    btn.click();
+                    log('INFO', '👆 点击发送按钮(容器内精确定位)');
+                    return true;
+                }
+            }
+            // 回退：自动查找容器内第一个按钮类元素
+            const clickable = container.querySelector('button, [role="button"], a[href], input[type="submit"]');
+            if (clickable) {
+                clickable.click();
+                log('INFO', '👆 点击发送按钮(容器内自动查找)');
+                return true;
+            }
+            log('ERR', '容器内未找到可点击元素');
+            return false;
+        }
+
+        // 普通模式
         if (!c.selSendButton) {
             log('WARN', '未配置发送按钮选择器，无法点击发送');
             return false;
@@ -2176,7 +2262,8 @@ function getCleanText(el, cfg) {
             console.error('[Agent] cfgLoad异常:', e);
             return;
         }
-        if (!c.showAutoSendToggle || !c.selSendButton) return;
+        // 容器或按钮任一配置了就显示toggle
+        if (!c.showAutoSendToggle || (!c.selSendButton && !c.selSendButtonContainer)) return;
         const mode = c.autoSendMode || 'click';
         _toggleEl = document.createElement('div');
         _toggleEl.id = 'agent-auto-send-toggle';
@@ -2234,7 +2321,9 @@ function getCleanText(el, cfg) {
     function _updateTogglePosition() {
         if (!_toggleEl) return;
         const c = cfgLoad();
-        const btn = document.querySelector(c.selSendButton);
+        // 容器模式优先用容器定位，否则用按钮
+        const targetSel = c.selSendButtonContainer || c.selSendButton;
+        const btn = document.querySelector(targetSel);
         if (!btn) return;
         const br = btn.getBoundingClientRect();
         if (br.width === 0 && br.height === 0) return;
