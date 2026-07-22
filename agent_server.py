@@ -485,6 +485,54 @@ def execute_line_streaming(line, task_id):
             if not cmd_detail:
                 return f'指令 "{cmd_name}" 的帮助信息为空。'
             return cmd_detail
+            # [新增] start 指令：返回后端运行时环境和设置，供 LLM 初始化上下文
+    elif cmd == 'start':
+        # 现用现查 PowerShell 版本（pwsh 7+ 支持 --version，5.x 不支持需走 -Command）
+        if _POWERSHELL_EXE == 'pwsh':
+            _ps_cmd = 'pwsh --version'
+            try:
+                _ps_ver = subprocess.run(
+                    ['pwsh', '--version'],
+                    capture_output=True, text=True, timeout=5
+                ).stdout.strip()
+            except Exception:
+                _ps_ver = 'pwsh (版本获取失败)'
+        elif _POWERSHELL_EXE == 'powershell':
+            _ps_cmd = 'powershell -NoProfile -NonInteractive -Command $PSVersionTable.PSVersion.ToString()'
+            try:
+                _raw = subprocess.run(
+                    ['powershell', '-NoProfile', '-NonInteractive', '-Command',
+                     '$PSVersionTable.PSVersion.ToString()'],
+                    capture_output=True, text=True, timeout=5
+                ).stdout.strip()
+                _ps_ver = f'Windows PowerShell {_raw}'
+            except Exception:
+                _ps_ver = 'powershell (版本获取失败)'
+        else:
+            _ps_cmd = 'pwsh --version'
+            _ps_ver = '未检测到 PowerShell'
+
+        # Python 版本（platform 模块直接取，无需起子进程）
+        _py_ver = f'Python {platform.python_version()}'
+
+        # 拼接返回：中文标签 + JSON 键值 + 底部实际命令及输出
+        _lines = [
+            '{',
+            f' 工作目录 "work_dir": "{WORK_DIR}",',
+            f' 剪贴板读取模式 "clipboard_mode": {str(clipboard_mode).lower()},',
+            f' 系统命令执行 "exec_enabled": {str(exec_enabled).lower()},',
+            f' 终端类型 "shell_type": "{shell_type}",',
+            f' 目录限制 "permission_enabled": {str(permission_mgr.enabled).lower()},',
+            f' 始终允许列表 "always_allow_count": {len(permission_mgr._always_allow)},',
+            f' 系统 "platform": "{platform.system()}"',
+            '',
+            f'>{_ps_cmd}',
+            _ps_ver,
+            '>python --version',
+            _py_ver,
+            '}',
+        ]
+        return '\n'.join(_lines)
     elif cmd == 'count':
         if not arg.strip():
             return '错误：缺少文件路径。发送 @@help count 获取指令详细用法'
