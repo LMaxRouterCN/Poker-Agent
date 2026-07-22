@@ -1,4 +1,4 @@
-"""PokerAgent - 本地接应服务 (SSE流式版) v31
+"""PokerAgent - 本地接应服务 (SSE流式版) v32
 启动方式： python agent_server.py
 默认监听：http://127.0.0.1:9966
 """
@@ -62,6 +62,16 @@ _POWERSHELL_EXE = _detect_powershell()
 # 任务队列与 SSE 流式架构
 # ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 task_queue = queue.Queue()
+
+# [新增] 任务控制共享状态（GUI 按钮 → Worker 线程）
+_current_process = None            # 当前正在执行的子进程引用（exec/run）
+_current_process_lock = threading.Lock()
+_pause_event = threading.Event()   # set=运行中, clear=暂停
+_pause_event.set()                 # 初始为运行状态
+_kill_mode = None                  # None / 'discard' / 'done'
+_kill_mode_lock = threading.Lock()
+_current_task_id = None            # 当前正在执行的任务ID
+
 sse_clients = []  # 存放所有连接的 SSE 客户端队列
 _sse_lock = threading.Lock()  # 保护 sse_clients 的锁
 # ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
@@ -96,18 +106,60 @@ def push_event(data_dict):
         clients = list(sse_clients)  # 拷贝一份再遍历，避免竞态
         for q in clients:
             q.put(msg)
+
+# [新增] 任务控制接口（供 GUI 调用）
+def request_kill(mode):
+    """请求终止当前任务。mode: 'discard'=丢弃结果 / 'done'=返回已有输出"""
+    global _kill_mode
+    if _current_task_id is None:
+        return False  # 没有正在执行的任务，忽略
+    with _kill_mode_lock:
+        _kill_mode = mode
+    # 直接 kill 当前子进程，解除 readline 阻塞
+    with _current_process_lock:
+        proc = _current_process
+    if proc and proc.poll() is None:
+        try:
+            if platform.system() == 'Windows':
+                subprocess.run(f'taskkill /F /T /PID {proc.pid}', shell=True,
+                               stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+            else:
+                proc.kill()
+        except Exception:
+            pass
+    return True
+
+def request_pause():
+    """暂停任务队列（当前任务继续执行完，不再取新任务）"""
+    _pause_event.clear()
+
+def request_resume():
+    """恢复任务队列"""
+    _pause_event.set()
+
 def worker_loop():
     """后台 Worker 线程：严格串行执行任务"""
+    global _current_task_id, _kill_mode
     import datetime
     print(f'[{datetime.datetime.now().strftime("%H:%M:%S")}] 🔧 Worker 线程已启动，等待任务...')
     while True:
         try:
-            task = task_queue.get()
+            # [新增] 暂停检查：暂停时阻塞，恢复后继续
+            _pause_event.wait()
+
+            # [修改] 带超时的 get，确保暂停信号能及时生效（不会卡在无限阻塞的 get 上）
+            try:
+                task = task_queue.get(timeout=0.5)
+            except queue.Empty:
+                continue  # 超时回循环顶部，重新检查暂停状态
+
             if task is None:
                 print('[Worker] 收到退出信号，线程结束')
                 break
             task_id = task['id']
             cmd_str = task['cmd']
+            _current_task_id = task_id  # [新增] 记录当前任务
+
             print(f'[{datetime.datetime.now().strftime("%H:%M:%S")}] ⚙️ Worker 取出任务 {task_id[:8]}: {cmd_str}')
             emit_task_event({'id': task_id, 'type': 'status', 'status': 'running'})
             try:
@@ -117,15 +169,34 @@ def worker_loop():
                 print(f'[Worker] ❌ 执行异常: {e}')
                 traceback.print_exc()
                 result = f'执行异常：{e}'
-            # [修改] 多行回执时，标题行与内容分行显示，避免挤成一坨
-            _result_str = str(result)
+
+            # [新增] 检查终止模式并重置
+            with _kill_mode_lock:
+                mode = _kill_mode
+                _kill_mode = None
+            _current_task_id = None
+
+            _result_str = str(result) if result is not None else ''
             _ts = datetime.datetime.now().strftime("%H:%M:%S")
-            if '\n' in _result_str:
-                print(f'[{_ts}] ✅ 任务 {task_id[:8]} 完成:')
-                print(_result_str)
+
+            if mode == 'discard':
+                # [新增] 丢弃：不 emit done，任务静默消失
+                print(f'[{_ts}] ⛔ 任务 {task_id[:8]} 已终止并丢弃')
+            elif mode == 'done':
+                # [新增] 终止但返回已有输出
+                print(f'[{_ts}] ⛔ 任务 {task_id[:8]} 已终止，返回已有输出:')
+                if _result_str:
+                    print(_result_str)
+                emit_task_event({'id': task_id, 'type': 'status', 'status': 'done', 'result': result})
             else:
-                print(f'[{_ts}] ✅ 任务 {task_id[:8]} 完成: {_result_str}')
-            emit_task_event({'id': task_id, 'type': 'status', 'status': 'done', 'result': result})
+                # 正常完成（多行回执分行显示）
+                if '\n' in _result_str:
+                    print(f'[{_ts}] ✅ 任务 {task_id[:8]} 完成:')
+                    print(_result_str)
+                else:
+                    print(f'[{_ts}] ✅ 任务 {task_id[:8]} 完成: {_result_str}')
+                emit_task_event({'id': task_id, 'type': 'status', 'status': 'done', 'result': result})
+
         except Exception as e:
             print(f'[Worker] 致命错误: {e}')
 def smart_read(filepath):
@@ -400,6 +471,7 @@ def execute_line(line):
     return execute_line_streaming(line, 'cli-manual')
 def execute_line_streaming(line, task_id):
     """统一执行核心：支持实时推送 exec/run 的日志"""
+    global _current_process
     line = line.strip()
     if not line or line.startswith('#'):
         return None
@@ -1380,6 +1452,11 @@ def execute_line_streaming(line, task_id):
                     stdout=subprocess.PIPE, stderr=subprocess.STDOUT,
                     cwd=W
                 )
+
+            # [新增] 注册当前子进程，供 GUI 侧终止
+            with _current_process_lock:
+                _current_process = process
+
             output_lines = []
             start_time = time.time()
             while True:
@@ -1399,6 +1476,11 @@ def execute_line_streaming(line, task_id):
                         process.wait()
                     return '错误：命令执行超时（3600秒限制），进程树已强杀。'
             process.wait()
+
+            # [新增] 清理子进程引用
+            with _current_process_lock:
+                _current_process = None
+
             output = '\n'.join(output_lines).strip()
             if not output:
                 output = '（命令已执行，无输出）'
@@ -1423,6 +1505,11 @@ def execute_line_streaming(line, task_id):
                 ['python', script], stdout=subprocess.PIPE, stderr=subprocess.STDOUT,
                 cwd=W
             )
+
+            # [新增] 注册当前子进程，供 GUI 侧终止
+            with _current_process_lock:
+                _current_process = process
+
             output_lines = []
             start_time = time.time()
             while True:
@@ -1438,6 +1525,11 @@ def execute_line_streaming(line, task_id):
                     process.wait()
                     return '命令执行超时（限制:60秒）,命令可能仍在运行中,只是60秒内没有执行完成,具体情况请求助管理员。'
             process.wait()
+
+            # [新增] 清理子进程引用
+            with _current_process_lock:
+                _current_process = None
+
             output = '\n'.join(output_lines).strip()
             if not output:
                 output = '（脚本已执行，无输出）'
