@@ -213,14 +213,9 @@ def load_config():
 def _push_config():
     save_config()  # 每次配置变更时持久化
     _config_changed.set()
-def _truncate(s, max_display=20000, keep_len=100):
-    if len(s) > max_display:
-        return s[:keep_len] + f"... (共 {len(s)} 字符)"
-    return s
 def log_action(action, detail=''):
     import datetime
     timestamp = datetime.datetime.now().strftime('%Y-%m-%d %H:%M:%S')
-    detail = _truncate(detail)
     line = f'[{timestamp}] {action}'
     if detail:
         line += f' | {detail}'
@@ -784,10 +779,10 @@ def execute_line_streaming(line, task_id):
                             f_proc = re.sub(r'\s+', ' ', file_lines[best_pos + j].strip()).lower()
                             o_proc = re.sub(r'\s+', ' ', old_lines[j].strip()).lower()
                             if o_proc == f_proc:
-                                diag.append(f' ✓ {repr(o_proc[:120])}')
+                                diag.append(f' ✓ {repr(o_proc[:120])}{"（仅前120字符）" if len(o_proc) > 120 else ""}')
                             else:
-                                diag.append(f' ✗ 旧: {repr(o_proc[:120])}')
-                                diag.append(f' ✗ 文: {repr(f_proc[:120])}')
+                                diag.append(f' ✗ 旧: {repr(o_proc[:120])}{"（仅前120字符）" if len(o_proc) > 120 else ""}')
+                                diag.append(f' ✗ 文: {repr(f_proc[:120])}{"（仅前120字符）" if len(o_proc) > 120 else ""}')
                     return '\n'.join(diag)
                 # 非全量替换时，仅保留第一个匹配
                 if not replace_all and len(matches) > 1:
@@ -922,7 +917,7 @@ def execute_line_streaming(line, task_id):
                 regex = re.compile(pattern, flags_re)
                 matches = list(regex.finditer(content))
                 if not matches:
-                    return f'未找到要删除的文本：{delete_text[:50]}'
+                    return f'未找到要删除的文本：{delete_text[:50]}（前50字符）'
                 new_content = content
                 count = 0
                 for match in reversed(matches):
@@ -1118,8 +1113,6 @@ def execute_line_streaming(line, task_id):
                 else:
                     content_str = ''.join(lines)
                     log_action('READ', filepath)
-                    if len(content_str) > 5000:
-                        return f'{content_str[:5000]}\n\n...（文件过长，仅显示前 5000 字符，共 {len(content_str)} 字符）'
                     return content_str if content_str else '（文件为空）'
             except FileNotFoundError:
                 return f'错误：文件不存在：{filepath}'
@@ -1402,8 +1395,6 @@ def execute_line_streaming(line, task_id):
             output = '\n'.join(output_lines).strip()
             if not output:
                 output = '（命令已执行，无输出）'
-            if len(output) > 8000:
-                output = output[:8000] + f'\n\n...（输出过长，仅显示前 8000 字符,若需要全部输出请求助管理员）'
             return output
         except Exception as e:
             return f'执行失败：{e}'
@@ -1443,8 +1434,6 @@ def execute_line_streaming(line, task_id):
             output = '\n'.join(output_lines).strip()
             if not output:
                 output = '（脚本已执行，无输出）'
-            if len(output) > 8000:
-                output = output[:8000] + '\n\n...（输出过长，仅显示前 8000 字符）'
             return output
         except Exception as e:
             return f'运行失败：{e}'
@@ -1468,8 +1457,6 @@ def execute_line_streaming(line, task_id):
                         body = raw_bytes.decode('utf-8')
                     except UnicodeDecodeError:
                         body = raw_bytes.decode('gbk', errors='replace')
-                if len(body) > 8000:
-                    body = body[:8000] + '\n\n...（内容过长，仅显示前 8000 字符）'
                 log_action('GET', url)
                 return body
         except urllib.error.HTTPError as e:
@@ -1560,10 +1547,6 @@ def agent_exec():
             del _task_registry[tid]
     command_text = command_text.replace('\r\n', '\n').replace('\r', '\n')
     log_action('RECEIVED', command_text)
-
-    # [诊断] 打印原始接收内容的 repr，精确定位空白字符--------------------------------------------------------------------------------------------------------------------------------------------------
-    print(f'[DIAG] RAW RECEIVED repr:\n{repr(command_text[:500])}')
-
     lines = command_text.split('\n')
     i = 0
     task_ids = []
@@ -1606,9 +1589,6 @@ def agent_exec():
             # 遇到其他内容，认为多行指令内容结束
             else:
                 break
-        # [诊断] 打印提取出的每个 block 的 repr
-        for bi, bk in enumerate(blocks):
-            print(f'[DIAG] BLOCK[{bi}] repr: {repr(bk[:200])}')
         return blocks, peek
     while i < len(lines):
         line = lines[i].strip()
