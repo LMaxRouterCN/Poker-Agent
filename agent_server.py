@@ -518,13 +518,13 @@ def execute_line_streaming(line, task_id):
         # 拼接返回：中文标签 + JSON 键值 + 底部实际命令及输出
         _lines = [
             '{',
-            f' 工作目录 "work_dir": "{WORK_DIR}",',
+            f' 当前工作目录 "work_dir": "{WORK_DIR}",',
             f' 剪贴板读取模式 "clipboard_mode": {str(clipboard_mode).lower()},',
-            f' 系统命令执行 "exec_enabled": {str(exec_enabled).lower()},',
+            f' 系统命令执行开关 "exec_enabled": {str(exec_enabled).lower()},',
             f' 终端类型 "shell_type": "{shell_type}",',
-            f' 目录限制 "permission_enabled": {str(permission_mgr.enabled).lower()},',
-            f' 始终允许列表 "always_allow_count": {len(permission_mgr._always_allow)},',
-            f' 系统 "platform": "{platform.system()}"',
+            f' 目录权限限制开关 "permission_enabled": {str(permission_mgr.enabled).lower()},',
+            f' 始终允许列表条目数 "always_allow_count": {len(permission_mgr._always_allow)},',
+            f' 操作系统 "platform": "{platform.system()}"',
             '',
             f'>{_ps_cmd}',
             _ps_ver,

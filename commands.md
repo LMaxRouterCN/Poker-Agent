@@ -22,6 +22,8 @@
 【cmd】@@help fast【/cmd】
 【cmd】@@help replace【/cmd】
 【cmd】@@help exec【/cmd】
+#### start
+作用：初始化，返回后端运行时环境和设置信息 - 输入信息：无参数 - 返回信息：工作目录、各项配置开关、PowerShell 版本、Python 版本、操作系统等
 #### count
 作用：统计文件的行数、字数和字符数 - 输入信息：文件路径 - 返回信息：行数、字数、字符数统计结果
 #### find
@@ -197,7 +199,6 @@
 
 ---
 
-## 系统指令
 ### @@help [参数]
 智能帮助查询系统。根据不同的参数，提供不同粒度的帮助信息，方便快速查阅。
 **无参数或 `all`**：
@@ -212,10 +213,20 @@
 【cmd】@@help fast【/cmd】
 【cmd】@@help replace【/cmd】
 【cmd】@@help exec【/cmd】
-
----
-
-## 精确内容操作
+### start
+返回后端当前的运行时环境和设置信息。无需任何参数。建议在首次接入时调用一次以获取环境上下文。
+返回内容包括：
+- 当前工作目录（work_dir）
+- 剪贴板读取模式（clipboard_mode）
+- 系统命令执行开关（exec_enabled）
+- 终端类型（shell_type：powershell 或 cmd）
+- 目录权限限制开关（permission_enabled）
+- 始终允许列表条目数（always_allow_count）
+- 操作系统（platform）
+- PowerShell 版本
+- Python 版本
+示例：
+【cmd】start【/cmd】
 ### count <文件路径>
 统计文件的行数、字数（中英文混合精确统计）和字符数。
 示例：
@@ -345,8 +356,9 @@ print("插入的内容")
 示例：
 【cmd】tail log.txt 50【/cmd】
 【cmd】tail "my log.txt" 50【/cmd】
+
 ---
-## 文件操作
+
 ### create <文件路径> [内容]
 创建一个新文件并写入内容。文件路径写在指令同行，多行内容必须使用 【CodeSTART】 和 【/CodeEND】 标签包裹
 格式：
@@ -433,8 +445,9 @@ Hello World!
 示例：
 【cmd】move old.txt new.txt【/cmd】
 【cmd】move "old file.txt" "new file.txt"【/cmd】
+
 ---
-## 目录操作
+
 ### list <目录路径>
 列出目录下的文件和子目录。不传路径时列出当前工作目录。
 示例：
@@ -447,8 +460,9 @@ Hello World!
 示例：
 【cmd】mkdir src/modules【/cmd】
 【cmd】mkdir "my modules/src"【/cmd】
+
 ---
-## 系统命令
+
 ### exec <系统命令>
 执行系统命令，返回输出。
 **终端类型：** exec 使用的系统终端由后端配置决定，回退链为：
@@ -478,8 +492,9 @@ Hello World!
 示例：
 【cmd】run script.py【/cmd】
 【cmd】run "my script.py"【/cmd】
+
 ---
-## 网络操作
+
 ### get <URL>
 发送 HTTP GET 请求，返回响应内容。
 示例：
@@ -489,5 +504,5 @@ Hello World!
 示例：
 【cmd】download https://example.com/img.png images/img.png【/cmd】
 【cmd】download https://example.com/img.png "my images/img.png"【/cmd】
----
 
+---
