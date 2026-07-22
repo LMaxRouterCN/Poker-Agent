@@ -65,6 +65,14 @@ _ANSI_BG = {
     44: '#2472c8', 45: '#bc3fbc', 46: '#11a8cd', 47: '#e5e5e5',
 }
 
+# [新增] 颜色线性插值，用于按钮渐隐动画
+def _lerp_color(c1, c2, t):
+    """t=0 返回 c1，t=1 返回 c2"""
+    r = int(int(c1[1:3], 16) + (int(c2[1:3], 16) - int(c1[1:3], 16)) * t)
+    g = int(int(c1[3:5], 16) + (int(c2[3:5], 16) - int(c1[3:5], 16)) * t)
+    b = int(int(c1[5:7], 16) + (int(c2[5:7], 16) - int(c1[5:7], 16)) * t)
+    return f'#{r:02x}{g:02x}{b:02x}'
+
 # ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 # 日志桥接（stdout/stderr -> GUI 日志队列）
 # ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
@@ -133,6 +141,10 @@ class AgentGUI:
         self._cli_mode = False
         self._server = None
         self._ansi_tags = set()  # [新增] ANSI 样式 tag 缓存，避免重复创建
+        # [新增] 面板宽度（从配置恢复，默认220）
+        self._left_width = gui_cfg.get('left_panel_width', 220) if gui_cfg else 220
+        self._right_width = gui_cfg.get('right_panel_width', 220) if gui_cfg else 220
+        self._fade_jobs = {}  # [新增] 渐隐动画任务追踪，防止同一控件动画叠加
         self._build_ui()
         
         agent_server.permission_mgr.set_callback(self._make_permission_callback())
@@ -302,8 +314,12 @@ class AgentGUI:
             return None
 
     def _save_gui_config(self):
-        """关闭窗口时保存窗口位置/大小"""
-        config = {'window_geometry': self.root.geometry()}
+        """关闭窗口时保存窗口位置/大小及面板宽度"""
+        config = {
+            'window_geometry': self.root.geometry(),
+            'left_panel_width': self._left_width,    # [新增]
+            'right_panel_width': self._right_width,  # [新增]
+        }
         try:
             with open(GUI_CONFIG_FILE, 'w', encoding='utf-8') as f:
                 json.dump(config, f, ensure_ascii=False, indent=2)
@@ -333,16 +349,33 @@ class AgentGUI:
     # ========== UI 构建方法 ==========
     def _build_ui(self):
         self._build_status_bar()
-        
-        self.left = tk.Frame(self.root, bg=PANEL, width=220)
+
+        # [修改] 三栏布局：左控制面板 | 中间日志区 | 右操作面板
+        self.left = tk.Frame(self.root, bg=PANEL, width=self._left_width)
         self.left.pack(side=tk.LEFT, fill=tk.Y)
         self.left.pack_propagate(False)
 
-        self.right = tk.Frame(self.root, bg=BG)
-        self.right.pack(side=tk.LEFT, fill=tk.BOTH, expand=True)
+        # [新增] 左侧拖拽条
+        self.left_grip = tk.Frame(self.root, bg=BORDER, width=3, cursor='sb_h_double_arrow')
+        self.left_grip.pack(side=tk.LEFT, fill=tk.Y)
+
+        # [修改] 原 self.right → self.center
+        self.center = tk.Frame(self.root, bg=BG)
+        self.center.pack(side=tk.LEFT, fill=tk.BOTH, expand=True)
+
+        # [新增] 右侧拖拽条
+        self.right_grip = tk.Frame(self.root, bg=BORDER, width=3, cursor='sb_h_double_arrow')
+        self.right_grip.pack(side=tk.LEFT, fill=tk.Y)
+
+        # [新增] 右侧操作面板
+        self.right_panel = tk.Frame(self.root, bg=PANEL, width=self._right_width)
+        self.right_panel.pack(side=tk.LEFT, fill=tk.Y)
+        self.right_panel.pack_propagate(False)
 
         self._build_left()
-        self._build_right()
+        self._build_center()       # [修改] 原 _build_right
+        self._build_right_panel()  # [新增]
+        self._bind_grips()         # [新增]
 
     def _build_status_bar(self):
         bar = tk.Frame(self.root, bg=HEADER, height=26)
@@ -433,8 +466,9 @@ class AgentGUI:
             font=FONT_UI, command=self._toggle_shell
         ).pack(side=tk.LEFT, padx=(10, 0))
 
-    def _build_right(self):
-        f = self.right
+    # [修改] 原 _build_right → _build_center
+    def _build_center(self):
+        f = self.center  # [修改] 原 self.right
 
         # 头部标题栏
         hdr = tk.Frame(f, bg=BG, height=38)
@@ -478,6 +512,133 @@ class AgentGUI:
         self.cli_entry = tk.Entry(self.cli_frame, bg=HEADER, fg=TXT, font=FONT_MONO, bd=0, insertbackground=TXT, highlightthickness=0, highlightcolor=BLUE)
         self.cli_entry.pack(side=tk.LEFT, fill=tk.X, expand=True, padx=(0, 8), pady=7)
         self.cli_entry.bind('<Return>', self._on_cli_enter)
+
+    # [新增] 右侧操作面板
+    def _build_right_panel(self):
+        f = self.right_panel
+
+        # 顶部红色强调线（区别于左侧黄色）
+        tk.Frame(f, bg=RED, height=2).pack(fill=tk.X)
+
+        tk.Label(f, text="⚡ 任务控制", bg=PANEL, fg=TXT, font=FONT_TITLE).pack(anchor='w', padx=16, pady=(18, 4))
+        self._sep(f)
+
+        # 终止当前任务并丢弃（自复位：按下触发+变红，松开渐隐）
+        self.btn_kill_discard = self._make_momentary_btn(
+            f, "⛔ 终止当前任务\n并丢弃", self._on_kill_discard
+        )
+        self.btn_kill_discard.pack(fill=tk.X, padx=12, pady=4)
+
+        # 终止当前任务并返回done（自复位）
+        self.btn_kill_done = self._make_momentary_btn(
+            f, "⛔ 终止当前任务\n并返回 done", self._on_kill_done
+        )
+        self.btn_kill_done.pack(fill=tk.X, padx=12, pady=4)
+
+        self._sep(f)
+
+        # 暂停任务队列（自锁：点击切换，锁定时红色）
+        self.btn_pause = self._make_toggle_btn(
+            f, "⏸ 暂停任务队列", self._on_pause_on, self._on_pause_off
+        )
+        self.btn_pause.pack(fill=tk.X, padx=12, pady=4)
+
+    # [新增] 面板宽度拖拽调节
+    def _bind_grips(self):
+        self.left_grip.bind('<B1-Motion>', self._on_left_grip_drag)
+        self.right_grip.bind('<B1-Motion>', self._on_right_grip_drag)
+
+    def _on_left_grip_drag(self, event):
+        # 鼠标屏幕x - 窗口左边缘 = 面板新宽度
+        new_w = event.x_root - self.root.winfo_rootx()
+        new_w = max(160, min(new_w, 400))  # 限制 160~400
+        self.left.configure(width=new_w)
+        self._left_width = new_w
+
+    def _on_right_grip_drag(self, event):
+        # 窗口右边缘 - 鼠标屏幕x - grip宽度 = 面板新宽度
+        win_right = self.root.winfo_rootx() + self.root.winfo_width()
+        new_w = win_right - event.x_root - 3
+        new_w = max(160, min(new_w, 400))
+        self.right_panel.configure(width=new_w)
+        self._right_width = new_w
+
+    # [新增] 自复位按钮：按下瞬间变红并触发回调，松开后红色渐隐
+    def _make_momentary_btn(self, parent, text, command):
+        btn = tk.Button(
+            parent, text=text,
+            bg=BTN, fg=TXT, activebackground=RED, activeforeground=TXT,
+            font=FONT_UI, bd=0, padx=12, pady=10, cursor='hand2',
+            justify='center',
+        )
+        btn.bind('<ButtonPress-1>', lambda e, b=btn, c=command: self._on_momentary_press(b, c))
+        btn.bind('<ButtonRelease-1>', lambda e, b=btn: self._on_momentary_release(b))
+        return btn
+
+    def _on_momentary_press(self, btn, command):
+        btn.configure(bg=RED)  # 按下立即变红
+        command()              # 触发回调
+
+    def _on_momentary_release(self, btn):
+        self._fade_bg(btn, RED, BTN)  # 松开后红色渐隐
+
+    # [新增] 自锁按钮：点击切换锁定/解锁，锁定时背景红色
+    def _make_toggle_btn(self, parent, text, cmd_on, cmd_off):
+        btn = tk.Button(
+            parent, text=text,
+            bg=BTN, fg=TXT, activebackground=BTN_H, activeforeground=TXT,
+            font=FONT_UI, bd=0, padx=12, pady=10, cursor='hand2',
+        )
+        btn._locked = False  # 附加锁定状态
+        btn.bind('<Button-1>', lambda e, b=btn, on=cmd_on, off=cmd_off: self._on_toggle_click(b, on, off))
+        return btn
+
+    def _on_toggle_click(self, btn, cmd_on, cmd_off):
+        btn._locked = not btn._locked
+        if btn._locked:
+            btn.configure(bg=RED)
+            cmd_on()
+        else:
+            cmd_off()
+            self._fade_bg(btn, RED, BTN)  # 解锁时红色渐隐
+
+    # [新增] 背景色渐隐动画（from_color → to_color，默认300ms / 10帧）
+    def _fade_bg(self, widget, from_color, to_color, duration_ms=300, steps=10):
+        key = id(widget)
+        # 取消此控件上一次未完成的渐隐，防止动画叠加
+        if key in self._fade_jobs:
+            for j in self._fade_jobs[key]:
+                self.root.after_cancel(j)
+        jobs = []
+        interval = max(1, duration_ms // steps)
+        for i in range(steps + 1):
+            t = i / steps
+            c = _lerp_color(from_color, to_color, t)
+            jobs.append(self.root.after(i * interval, lambda c=c, w=widget: w.configure(bg=c)))
+        self._fade_jobs[key] = jobs
+        # 动画结束后清理追踪记录
+        self.root.after(duration_ms + 50, lambda k=key: self._fade_jobs.pop(k, None))
+
+    # [修改] 任务控制回调 → 接入后端
+    def _on_kill_discard(self):
+        if agent_server.request_kill('discard'):
+            print('[Agent] ⛔ 已请求终止当前任务并丢弃')
+        else:
+            print('[Agent] ⛔ 当前没有正在执行的任务')
+
+    def _on_kill_done(self):
+        if agent_server.request_kill('done'):
+            print('[Agent] ⛔ 已请求终止当前任务并返回已有输出')
+        else:
+            print('[Agent] ⛔ 当前没有正在执行的任务')
+
+    def _on_pause_on(self):
+        agent_server.request_pause()
+        print('[Agent] ⏸ 任务队列已暂停')
+
+    def _on_pause_off(self):
+        agent_server.request_resume()
+        print('[Agent] ▶ 任务队列已恢复')
 
     # ──────── UI 辅助 ────────
     def _sep(self, parent):
