@@ -596,7 +596,7 @@ class AgentGUI:
 
         # 错误堆栈
         low = line.lower()
-        if 'traceback' in low or line.startswith('  File ') or line.startswith(' '):
+        if 'traceback' in low or line.startswith('  File '):
             self._append_raw(line, 'err')
             return
 

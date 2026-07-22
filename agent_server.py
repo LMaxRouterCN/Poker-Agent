@@ -117,7 +117,14 @@ def worker_loop():
                 print(f'[Worker] ❌ 执行异常: {e}')
                 traceback.print_exc()
                 result = f'执行异常：{e}'
-            print(f'[{datetime.datetime.now().strftime("%H:%M:%S")}] ✅ 任务 {task_id[:8]} 完成: {str(result)}')
+            # [修改] 多行回执时，标题行与内容分行显示，避免挤成一坨
+            _result_str = str(result)
+            _ts = datetime.datetime.now().strftime("%H:%M:%S")
+            if '\n' in _result_str:
+                print(f'[{_ts}] ✅ 任务 {task_id[:8]} 完成:')
+                print(_result_str)
+            else:
+                print(f'[{_ts}] ✅ 任务 {task_id[:8]} 完成: {_result_str}')
             emit_task_event({'id': task_id, 'type': 'status', 'status': 'done', 'result': result})
         except Exception as e:
             print(f'[Worker] 致命错误: {e}')
