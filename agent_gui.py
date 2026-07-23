@@ -1,6 +1,6 @@
 """PokerAgent - GUI 控制台
 用法：python agent_gui.py（不要和 agent_server.py 同时运行）
-依赖：flask, flask-cors, werkzeug（与 agent_server.py 相同）
+依赖：flask, flask-cors, werkzeug, numpy, sounddevice（与 agent_server.py 相同）
 """
 import tkinter as tk
 from tkinter import filedialog, messagebox
@@ -34,7 +34,7 @@ logging.getLogger('werkzeug').setLevel(logging.ERROR)
 BG = '#0a0a0a'
 PANEL = '#1a1a1a'
 HEADER = '#1a1a1a'
-BTN = '#1a1a1a'
+BTN = '#222222'   # [修改] 原 #1a1a1a，比面板亮一档，让按钮可辨识
 BTN_H = '#2a2a2a'
 BORDER = '#2a2a2a'
 TXT = '#d4d4d4'
@@ -72,6 +72,93 @@ def _lerp_color(c1, c2, t):
     g = int(int(c1[3:5], 16) + (int(c2[3:5], 16) - int(c1[3:5], 16)) * t)
     b = int(int(c1[5:7], 16) + (int(c2[5:7], 16) - int(c1[5:7], 16)) * t)
     return f'#{r:02x}{g:02x}{b:02x}'
+
+# [新增] 常驻低延迟音频流 + 多路混音点击音效
+# 按钮点击时只做一个 queue.put(1)，播放在音频回调里完成，UI 零阻塞
+class ClickPlayer:
+    def __init__(self, samplerate=18000, blocksize=128, max_voices=32):
+        import numpy as np
+        import sounddevice as sd
+        self._np = np
+        self.samplerate = samplerate
+        self.max_voices = max_voices
+
+        # 预生成咔哒声（白噪声 + 指数衰减，12ms）
+        n = int(samplerate * 0.012)
+        t = np.arange(n, dtype=np.float32) / samplerate
+        rng = np.random.default_rng(0)
+        click = rng.standard_normal(n).astype(np.float32)
+        click *= np.exp(-t * 450).astype(np.float32)
+        peak = np.max(np.abs(click))
+        if peak > 0:
+            click /= peak
+        click *= 0.45  # 单路音量，防多路叠加爆音
+        self.click = click
+
+        # 触发队列：UI 线程只往这里放事件
+        self.trigger_queue = queue.SimpleQueue()
+
+        # 每个 voice 的播放位置和激活状态
+        self.pos = np.zeros(max_voices, dtype=np.int32)
+        self.active = np.zeros(max_voices, dtype=bool)
+        self.next_voice = 0
+
+        # 常驻音频流
+        self.stream = sd.OutputStream(
+            samplerate=samplerate, channels=2, dtype='float32',
+            blocksize=blocksize, latency='low',
+            callback=self._audio_callback,
+        )
+        self.stream.start()
+
+    def trigger(self):
+        """按钮按下时调用，极轻量"""
+        self.trigger_queue.put(1)
+
+    def _audio_callback(self, outdata, frames, time_info, status):
+        np = self._np
+        # 消费本次音频块期间的所有触发，分配 voice
+        while True:
+            try:
+                self.trigger_queue.get_nowait()
+            except queue.Empty:
+                break
+            v = self.next_voice
+            self.next_voice = (self.next_voice + 1) % self.max_voices
+            self.pos[v] = 0       # 抢断最旧的 voice，不排队
+            self.active[v] = True
+
+        mix = np.zeros(frames, dtype=np.float32)
+        click = self.click
+        click_len = len(click)
+
+        # 混合所有正在播放的 voice
+        for v in range(self.max_voices):
+            if not self.active[v]:
+                continue
+            p = int(self.pos[v])
+            remaining = click_len - p
+            if remaining <= 0:
+                self.active[v] = False
+                continue
+            take = min(frames, remaining)
+            mix[:take] += click[p:p + take]
+            p += take
+            if p >= click_len:
+                self.active[v] = False
+            self.pos[v] = p
+
+        np.clip(mix, -0.99, 0.99, out=mix)  # 限幅防爆音
+        outdata[:, 0] = mix
+        outdata[:, 1] = mix
+
+    def stop(self):
+        """关闭音频流"""
+        try:
+            self.stream.stop()
+            self.stream.close()
+        except Exception:
+            pass
 
 # ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 # 日志桥接（stdout/stderr -> GUI 日志队列）
@@ -145,6 +232,11 @@ class AgentGUI:
         self._left_width = gui_cfg.get('left_panel_width', 220) if gui_cfg else 220
         self._right_width = gui_cfg.get('right_panel_width', 220) if gui_cfg else 220
         self._fade_jobs = {}  # [新增] 渐隐动画任务追踪，防止同一控件动画叠加
+        # [新增] 初始化点击音效播放器（常驻音频流）
+        try:
+            self._click_player = ClickPlayer()
+        except Exception:
+            self._click_player = None  # 没有音频设备或依赖缺失时静默降级
         self._build_ui()
         
         agent_server.permission_mgr.set_callback(self._make_permission_callback())
@@ -342,6 +434,9 @@ class AgentGUI:
         self._save_gui_config()  # [新增] 关闭时持久化窗口位置/大小
         if self._server:
             self._server.shutdown()
+        # [新增] 关闭音频流
+        if self._click_player:
+            self._click_player.stop()
         sys.stdout = self._orig_stdout
         sys.stderr = self._orig_stderr
         self.root.destroy()
@@ -424,7 +519,7 @@ class AgentGUI:
         self.chk_perm = tk.Checkbutton(
             f, text="启用目录限制", variable=self.var_perm,
             bg=PANEL, fg=TXT, selectcolor=BTN, activebackground=PANEL, activeforeground=TXT,
-            font=FONT_UI, command=self._toggle_permission
+            font=FONT_UI, command=self._wrap_cmd(self._toggle_permission)  # [修改] 包一层音效
         )
         self.chk_perm.pack(anchor='w', padx=20)
         self._btn(f, "清除始终允许列表", self._clear_always_allow).pack(fill=tk.X, padx=12, pady=2)
@@ -438,7 +533,7 @@ class AgentGUI:
         self.chk_clipboard = tk.Checkbutton(
             f, text="读取文件时使用剪贴板API", variable=self.var_clipboard,
             bg=PANEL, fg=TXT, selectcolor=BTN, activebackground=PANEL, activeforeground=TXT,
-            font=FONT_UI, command=self._toggle_clipboard
+            font=FONT_UI, command=self._wrap_cmd(self._toggle_clipboard)  # [修改] 包一层音效
         )
         self.chk_clipboard.pack(anchor='w', padx=20)
         
@@ -446,7 +541,7 @@ class AgentGUI:
         self.chk_exec = tk.Checkbutton(
             f, text="允许执行系统命令", variable=self.var_exec,
             bg=PANEL, fg=TXT, selectcolor=BTN, activebackground=PANEL, activeforeground=TXT,
-            font=FONT_UI, command=self._toggle_exec
+            font=FONT_UI, command=self._wrap_cmd(self._toggle_exec)  # [修改] 包一层音效
         )
         self.chk_exec.pack(anchor='w', padx=20)
 
@@ -458,12 +553,12 @@ class AgentGUI:
         tk.Radiobutton(
             shell_frame, text="PowerShell", variable=self.var_shell, value='powershell',
             bg=PANEL, fg=TXT, selectcolor=BTN, activebackground=PANEL, activeforeground=TXT,
-            font=FONT_UI, command=self._toggle_shell
+            font=FONT_UI, command=self._wrap_cmd(self._toggle_shell)  # [修改] 包一层音效
         ).pack(side=tk.LEFT)
         tk.Radiobutton(
             shell_frame, text="CMD", variable=self.var_shell, value='cmd',
             bg=PANEL, fg=TXT, selectcolor=BTN, activebackground=PANEL, activeforeground=TXT,
-            font=FONT_UI, command=self._toggle_shell
+            font=FONT_UI, command=self._wrap_cmd(self._toggle_shell)  # [修改] 包一层音效
         ).pack(side=tk.LEFT, padx=(10, 0))
 
     # [修改] 原 _build_right → _build_center
@@ -576,6 +671,7 @@ class AgentGUI:
         return btn
 
     def _on_momentary_press(self, btn, command):
+        self._play_click()     # [新增]
         btn.configure(bg=RED)  # 按下立即变红
         command()              # 触发回调
 
@@ -594,6 +690,7 @@ class AgentGUI:
         return btn
 
     def _on_toggle_click(self, btn, cmd_on, cmd_off):
+        self._play_click()     # [新增]
         btn._locked = not btn._locked
         if btn._locked:
             btn.configure(bg=RED)
@@ -618,6 +715,15 @@ class AgentGUI:
         self._fade_jobs[key] = jobs
         # 动画结束后清理追踪记录
         self.root.after(duration_ms + 50, lambda k=key: self._fade_jobs.pop(k, None))
+
+    # [修改] 触发 ClickPlayer，UI 线程只做一个 queue.put
+    def _play_click(self):
+        if self._click_player:
+            self._click_player.trigger()
+
+    # [新增] 包装回调：执行前先播放点击音效
+    def _wrap_cmd(self, fn):
+        return lambda: (self._play_click(), fn())
 
     # [修改] 任务控制回调 → 接入后端
     def _on_kill_discard(self):
@@ -651,7 +757,8 @@ class AgentGUI:
         btn_fg = DISABLED_FG if disabled else fg
 
         btn = tk.Button(
-            parent, text=text, command=command,
+            parent, text=text,
+            command=self._wrap_cmd(command) if not disabled else command,  # [修改] 包一层音效
             bg=BTN, fg=btn_fg, activebackground=BTN_H, activeforeground=btn_fg,
             font=('Microsoft YaHei UI', 10, weight),
             bd=0, padx=12, pady=8, anchor='w', cursor=cursor, state=state,
