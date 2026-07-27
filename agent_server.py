@@ -1,4 +1,4 @@
-"""PokerAgent - 本地接应服务 (SSE流式版) v32
+"""PokerAgent - 本地接应服务 (SSE流式版) v34
 启动方式： python agent_server.py
 默认监听：http://127.0.0.1:9966
 """
@@ -13,7 +13,6 @@ import inspect
 import threading
 import base64
 import difflib  # 用于 -s 模式的模糊匹配策略
-import fnmatch  # 用于 find 指令按文件名通配符递归搜索
 import shutil  # 用于移动文件/目录到回收站
 import time  # 用于回收站时间戳记录
 import locale  # 获取系统默认编码
@@ -72,6 +71,18 @@ _kill_mode = None                  # None / 'discard' / 'done'
 _kill_mode_lock = threading.Lock()
 _current_task_id = None            # 当前正在执行的任务ID
 
+# [新增] 全局中断信号：request_kill 时 set，worker 取新任务前 clear
+_abort_event = threading.Event()
+
+# [新增] 任务中断异常：在任何检查点命中时抛出，worker_loop 统一捕获
+class TaskAborted(Exception):
+    pass
+
+def _check_abort():
+    """检查中断信号，命中则抛出 TaskAborted（在耗时操作间调用）"""
+    if _abort_event.is_set():
+        raise TaskAborted()
+
 sse_clients = []  # 存放所有连接的 SSE 客户端队列
 _sse_lock = threading.Lock()  # 保护 sse_clients 的锁
 # ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
@@ -115,7 +126,9 @@ def request_kill(mode):
         return False  # 没有正在执行的任务，忽略
     with _kill_mode_lock:
         _kill_mode = mode
-    # 直接 kill 当前子进程，解除 readline 阻塞
+    # [修改] 先 set 中断信号，让所有纯 Python 循环立即抛出 TaskAborted
+    _abort_event.set()
+    # 再 kill 子进程 + 关闭管道，解除 readline 阻塞
     with _current_process_lock:
         proc = _current_process
     if proc and proc.poll() is None:
@@ -125,6 +138,12 @@ def request_kill(mode):
                                stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
             else:
                 proc.kill()
+        except Exception:
+            pass
+        # [新增] 主动关闭 stdout 管道，确保 readline 立即返回 EOF
+        try:
+            if proc.stdout:
+                proc.stdout.close()
         except Exception:
             pass
     return True
@@ -158,12 +177,17 @@ def worker_loop():
                 break
             task_id = task['id']
             cmd_str = task['cmd']
+            _abort_event.clear()       # [新增] 新任务开始前清除中断信号
             _current_task_id = task_id  # [新增] 记录当前任务
 
             print(f'[{datetime.datetime.now().strftime("%H:%M:%S")}] ⚙️ Worker 取出任务 {task_id[:8]}: {cmd_str}')
             emit_task_event({'id': task_id, 'type': 'status', 'status': 'running'})
             try:
                 result = execute_line_streaming(cmd_str, task_id)
+            except TaskAborted:
+                # [新增] 任务被用户手动中断
+                result = None
+                print(f'[Worker] ⛔ 任务 {task_id[:8]} 被用户手动中断')
             except Exception as e:
                 import traceback
                 print(f'[Worker] ❌ 执行异常: {e}')
@@ -180,14 +204,18 @@ def worker_loop():
             _ts = datetime.datetime.now().strftime("%H:%M:%S")
 
             if mode == 'discard':
-                # [新增] 丢弃：不 emit done，任务静默消失
+                # [修改] 丢弃：emit killed 状态让前端知道任务已终止
                 print(f'[{_ts}] ⛔ 任务 {task_id[:8]} 已终止并丢弃')
+                emit_task_event({'id': task_id, 'type': 'status', 'status': 'killed',
+                                 'result': '当前任务已被用户手动终止（结果已丢弃）'})
             elif mode == 'done':
-                # [新增] 终止但返回已有输出
+                # [修改] 终止但返回已有输出，前面加提示
                 print(f'[{_ts}] ⛔ 任务 {task_id[:8]} 已终止，返回已有输出:')
+                _notice = '当前任务已被用户手动终止。以下为终止前的已有输出：\n'
+                _final = _notice + _result_str if _result_str else _notice + '（无输出）'
                 if _result_str:
                     print(_result_str)
-                emit_task_event({'id': task_id, 'type': 'status', 'status': 'done', 'result': result})
+                emit_task_event({'id': task_id, 'type': 'status', 'status': 'done', 'result': _final})
             else:
                 # 正常完成（多行回执分行显示）
                 if '\n' in _result_str:
@@ -201,6 +229,7 @@ def worker_loop():
             print(f'[Worker] 致命错误: {e}')
 def smart_read(filepath):
     """智能读取：优先 UTF-8 (含BOM)，失败回退系统默认编码(如 GBK)，保底 latin-1"""
+    _check_abort()  # [新增] 读取前检查中断（覆盖所有调用 smart_read 的指令）
     try:
         with open(filepath, 'r', encoding='utf-8-sig') as f:
             return f.read(), 'utf-8-sig'
@@ -472,6 +501,7 @@ def execute_line(line):
 def execute_line_streaming(line, task_id):
     """统一执行核心：支持实时推送 exec/run 的日志"""
     global _current_process
+    _check_abort()  # [新增] 入口处检查：若中断信号已激活则拒绝执行
     line = line.strip()
     if not line or line.startswith('#'):
         return None
@@ -671,6 +701,8 @@ def execute_line_streaming(line, task_id):
                 results = []
                 # 遍历文件行，寻找连续匹配的块
                 for i in range(len(file_lines) - num_search + 1):
+                    if i % 500 == 0:
+                        _check_abort()  # [新增] 每 500 行检查一次
                     matched_all = True
                     for j in range(num_search):
                         file_line = file_lines[i + j]
@@ -744,6 +776,7 @@ def execute_line_streaming(line, task_id):
                         return f'错误：无效的正则表达式 - {filename_pattern} ({e})'
                 results = []
                 for root, dirs, files in os.walk(filepath):
+                    _check_abort()  # [新增] 每个目录检查一次
                     for fname in files:
                         if use_regex:
                             m = pattern.search(fname) if partial else pattern.fullmatch(fname)
@@ -830,6 +863,7 @@ def execute_line_streaming(line, task_id):
                 file_lines = content.split('\n')
                 old_lines = old_text.split('\n')
                 # 调用通用匹配方法
+                _check_abort()  # [新增] 匹配前检查中断
                 matches = _match_text_block(
                     file_lines, old_lines,
                     ignore_case=ignore_case,
@@ -1010,62 +1044,185 @@ def execute_line_streaming(line, task_id):
             except Exception as e:
                 return f'删除文本失败：{e}'
     elif cmd == 'grep':
+        # [重构] 标准化 grep：正则匹配 + 标准选项集
+        # 用法: grep [选项] "模式" <路径>
+        #       grep [选项] -e "模式1" -e "模式2" <路径>
+        # 选项: -i 忽略大小写 | -v 反向匹配 | -c 仅计数 | -l 仅文件名
+        #       -w 全词匹配 | -r 递归目录 | -s 忽略行首缩进
+        #       -e 多模式(可多次) | --include 文件名正则过滤 | --exclude 文件名正则排除
         tokens = parse_args_with_quotes(arg)
         if not tokens:
             return '错误：缺少参数。发送 @@help grep 获取指令详细用法'
-        opts = [t for t in tokens if t.startswith('-')]
-        non_opts = [t for t in tokens if not t.startswith('-')]
-        strip_indent = '-s' in opts
-        if len(non_opts) < 2:
-            return '错误：缺少参数。发送 @@help grep 获取指令详细用法'
-        keyword = non_opts[0]
-        target_str = non_opts[-1]
-        if not target_str:
-            return '错误：缺少文件路径。发送 @@help grep 获取指令详细用法'
-        kw_list = [k.strip() for k in keyword.split('|') if k.strip()]
-        if not kw_list:
-            return '错误：关键词为空。'
-        cmp_kws = kw_list if len(kw_list) == 1 else kw_list
+
+        # ── 解析选项与参数 ──
+        flag_set = set()           # 单字符标志集合（支持 -ivr 合并写法）
+        patterns = []              # -e 显式指定的模式列表
+        include_pattern = None     # --include 文件名过滤正则（字符串）
+        exclude_pattern = None     # --exclude 文件名排除正则（字符串）
+        non_opts = []              # 非选项参数（模式 / 路径）
+
+        ti = 0
+        while ti < len(tokens):
+            t = tokens[ti]
+            if t == '-e' and ti + 1 < len(tokens):
+                patterns.append(tokens[ti + 1])  # -e 后紧跟一个模式
+                ti += 2
+            elif t == '--include' and ti + 1 < len(tokens):
+                include_pattern = tokens[ti + 1]
+                ti += 2
+            elif t == '--exclude' and ti + 1 < len(tokens):
+                exclude_pattern = tokens[ti + 1]
+                ti += 2
+            elif t.startswith('--'):
+                return f'错误：未知选项 {t}。发送 @@help grep 获取指令详细用法'
+            elif t.startswith('-') and len(t) > 1:
+                # 合并短选项拆解：-ivr → {'i','v','r'}
+                for ch in t[1:]:
+                    flag_set.add(ch)
+                ti += 1
+            else:
+                non_opts.append(t)
+                ti += 1
+
+        # ── 标志提取 ──
+        ignore_case  = 'i' in flag_set   # 忽略大小写
+        invert_match = 'v' in flag_set   # 反向匹配（输出不匹配的行）
+        count_only   = 'c' in flag_set   # 仅输出匹配行数
+        files_only   = 'l' in flag_set   # 仅输出含匹配的文件名
+        whole_word   = 'w' in flag_set   # 全词匹配（自动包 \b）
+        recursive    = 'r' in flag_set   # 递归搜索目录
+        strip_indent = 's' in flag_set   # 匹配前去除行首空白（保留原有功能）
+
+        # ── 确定模式与路径 ──
+        if patterns:
+            # 有 -e：所有 non_opts 视为路径（本工具取第一个）
+            if not non_opts:
+                return '错误：缺少搜索路径。发送 @@help grep 获取指令详细用法'
+            target_str = non_opts[0]
+        else:
+            # 无 -e：第一个 non_opt 是模式，第二个是路径
+            if len(non_opts) < 2:
+                return '错误：缺少模式或路径。发送 @@help grep 获取指令详细用法'
+            patterns = [non_opts[0]]
+            target_str = non_opts[1]
+
+        if not patterns or all(not p for p in patterns):
+            return '错误：搜索模式为空。'
+
         target = safe_path(W, target_str)
         err = _check_permission('grep', target)
         if err:
             return err
+
+        # ── 编译内容搜索正则 ──
+        re_flags = re.IGNORECASE if ignore_case else 0
+        compiled = []
+        for p in patterns:
+            expr = rf'\b(?:{p})\b' if whole_word else p  # -w 自动包裹词边界
+            try:
+                compiled.append(re.compile(expr, re_flags))
+            except re.error as e:
+                return f'错误：无效的正则表达式 — {p} ({e})'
+
+        # ── 编译文件名过滤正则（--include / --exclude）──
+        include_re = None
+        exclude_re = None
+        if include_pattern:
+            try:
+                include_re = re.compile(include_pattern, re.IGNORECASE)
+            except re.error as e:
+                return f'错误：--include 无效的正则表达式 — {include_pattern} ({e})'
+        if exclude_pattern:
+            try:
+                exclude_re = re.compile(exclude_pattern, re.IGNORECASE)
+            except re.error as e:
+                return f'错误：--exclude 无效的正则表达式 — {exclude_pattern} ({e})'
+
+        def _file_allowed(fname):
+            """根据 --include / --exclude 正则判断文件是否参与搜索"""
+            if include_re and not include_re.search(fname):
+                return False
+            if exclude_re and exclude_re.search(fname):
+                return False
+            return True
+
+        # ── 单文件搜索核心 ──
+        def _grep_file(fpath):
+            """搜索单个文件，返回 (匹配行数, 格式化结果行列表)"""
+            try:
+                content, _ = smart_read(fpath)
+            except TaskAborted:
+                raise  # 不吞中断信号
+            except Exception:
+                return 0, []  # 二进制/不可读文件静默跳过
+            file_lines = content.splitlines()
+            hit_count = 0
+            out_lines = []
+            for idx, line in enumerate(file_lines, 1):
+                if idx % 500 == 0:
+                    _check_abort()  # 每 500 行检查一次中断
+                check = line.lstrip() if strip_indent else line
+                matched = any(pat.search(check) for pat in compiled)
+                if invert_match:
+                    matched = not matched
+                if matched:
+                    hit_count += 1
+                    # -c / -l 模式不需要逐行内容
+                    if not count_only and not files_only:
+                        out_lines.append(f'{idx}:{line.rstrip()}')
+            return hit_count, out_lines
+
+        # ── 执行搜索 ──
         try:
             if os.path.isfile(target):
-                content, _ = smart_read(target)
-                lines = content.splitlines(True)
-                results = []
-                for idx, line in enumerate(lines, 1):
-                    check = line.lstrip() if strip_indent else line
-                    matched = any(kw in check for kw in cmp_kws)
-                    if matched:
-                        hit = [kw for kw in cmp_kws if kw in check]
-                        results.append(f' 行 {idx}: {line.rstrip()} ← {hit}')
-                if results:
-                    output = [f'{target}:']
-                    output.extend(results)
-                    return '\n'.join(output)
+                hit_count, out_lines = _grep_file(target)
+                if count_only:
+                    return f'{target}:{hit_count}'
+                if files_only:
+                    return target if hit_count > 0 else f'{target}: 无匹配'
+                if out_lines:
+                    return f'{target}:\n' + '\n'.join(out_lines)
                 return f'{target}: 无匹配'
+
             elif os.path.isdir(target):
-                output = []
+                # 目录必须显式 -r，避免误将"未递归"当作"无匹配"
+                if not recursive:
+                    return f'错误："{target_str}" 是目录而非文件，发送 @@help grep 获取指令详细用法'
+
+                total_hits = 0
+                all_out = []
+                matched_files = []  # [(路径, 命中数), ...]
+
                 for root, dirs, files in os.walk(target):
-                    for fname in files:
+                    _check_abort()  # 每个目录检查一次中断
+                    for fname in sorted(files):
+                        if not _file_allowed(fname):
+                            continue
                         fpath = os.path.join(root, fname)
-                        try:
-                            content, _ = smart_read(fpath)
-                            for idx, line in enumerate(content.splitlines(True), 1):
-                                check = line.lstrip() if strip_indent else line
-                                matched = any(kw in check for kw in cmp_kws)
-                                if matched:
-                                    hit = [kw for kw in cmp_kws if kw in check]
-                                    output.append(f'{fpath}:{idx}: {line.rstrip()} ← {hit}')
-                        except:
-                            pass
-                if output:
-                    return '\n'.join(output)
-                return f'在目录 {target} 中未找到匹配。'
+                        mc, rl = _grep_file(fpath)
+                        if mc > 0:
+                            total_hits += mc
+                            matched_files.append((fpath, mc))
+                            if not count_only and not files_only:
+                                for rl_line in rl:
+                                    all_out.append(f'{fpath}:{rl_line}')
+
+                if count_only:
+                    if matched_files:
+                        return '\n'.join(f'{fp}:{cnt}' for fp, cnt in matched_files)
+                    return f'在目录 {target} 中无匹配。'
+                if files_only:
+                    if matched_files:
+                        return '\n'.join(fp for fp, _ in matched_files)
+                    return f'在目录 {target} 中无匹配。'
+                if all_out:
+                    return '\n'.join(all_out)
+                return f'在目录 {target} 中无匹配。'
+
             else:
-                return f'错误：路径不存在 {target}'
+                return f'错误：路径不存在 — {target}'
+        except TaskAborted:
+            raise  # 中断信号透传给 worker_loop 处理
         except Exception as e:
             return f'搜索失败：{e}'
     elif cmd == 'head':
@@ -1457,24 +1614,61 @@ def execute_line_streaming(line, task_id):
             with _current_process_lock:
                 _current_process = process
 
+            # [v34] 后台读取线程 + 队列，解决 daemon 持有管道导致 readline 永不返回 EOF 的问题
+            _read_q = queue.Queue()
+
+            def _reader():
+                try:
+                    while True:
+                        line_bytes = process.stdout.readline()
+                        if not line_bytes:
+                            break
+                        _read_q.put(line_bytes)
+                except (ValueError, OSError):
+                    pass  # stdout 被关闭（终止时）
+                finally:
+                    _read_q.put(None)  # EOF 哨兵
+
+            reader_thread = threading.Thread(target=_reader, daemon=True)
+            reader_thread.start()
+
             output_lines = []
             start_time = time.time()
+            timed_out = False
+            draining = False  # [v34] 进程退出后的管道排空阶段
             while True:
-                line_bytes = process.stdout.readline()
-                if not line_bytes and process.poll() is not None:
-                    break
-                if line_bytes:
-                    line_out = smart_decode(line_bytes).rstrip()
-                    output_lines.append(line_out)
-                    emit_task_event({'id': task_id, 'type': 'log', 'data': line_out})
-                if time.time() - start_time > 3600:
-                    if platform.system() == 'Windows':
-                        # 杀掉整个进程树 ( /T )，强制 ( /F )
-                        subprocess.run(f'taskkill /F /T /PID {process.pid}', shell=True, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
-                    else:
-                        process.kill()
-                        process.wait()
-                    return '错误：命令执行超时（3600秒限制），进程树已强杀。'
+                try:
+                    # drain 阶段用较长超时等最后一批数据；正常阶段 50ms 检查中断
+                    item = _read_q.get(timeout=0.3 if draining else 0.05)
+                except queue.Empty:
+                    if draining:
+                        break  # 管道已排空，正常结束
+                    _check_abort()
+                    if time.time() - start_time > 3600:
+                        timed_out = True
+                        break
+                    # 主进程已退出 → 进入 drain 模式，等读取线程把缓冲区剩余数据吐完
+                    if process.poll() is not None:
+                        draining = True
+                    continue
+
+                if item is None:
+                    break  # EOF 哨兵：管道彻底关闭（正常情况，daemon 没持有管道）
+
+                line_out = smart_decode(item).rstrip()
+                output_lines.append(line_out)
+                emit_task_event({'id': task_id, 'type': 'log', 'data': line_out})
+                _check_abort()
+
+            if timed_out:
+                if platform.system() == 'Windows':
+                    # 杀掉整个进程树 ( /T )，强制 ( /F )
+                    subprocess.run(f'taskkill /F /T /PID {process.pid}', shell=True, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+                else:
+                    process.kill()
+                    process.wait()
+                return '错误：命令执行超时（3600秒限制），进程树已强杀。'
+
             process.wait()
 
             # [新增] 清理子进程引用
@@ -1510,20 +1704,55 @@ def execute_line_streaming(line, task_id):
             with _current_process_lock:
                 _current_process = process
 
+            # [v34] 后台读取线程 + 队列，解决 daemon 持有管道导致 readline 永不返回 EOF 的问题
+            _read_q = queue.Queue()
+
+            def _reader():
+                try:
+                    while True:
+                        line_bytes = process.stdout.readline()
+                        if not line_bytes:
+                            break
+                        _read_q.put(line_bytes)
+                except (ValueError, OSError):
+                    pass  # stdout 被关闭（终止时）
+                finally:
+                    _read_q.put(None)  # EOF 哨兵
+
+            reader_thread = threading.Thread(target=_reader, daemon=True)
+            reader_thread.start()
+
             output_lines = []
             start_time = time.time()
+            timed_out = False
+            draining = False  # [v34] 进程退出后的管道排空阶段
             while True:
-                line_bytes = process.stdout.readline()
-                if not line_bytes and process.poll() is not None:
+                try:
+                    item = _read_q.get(timeout=0.3 if draining else 0.05)
+                except queue.Empty:
+                    if draining:
+                        break
+                    _check_abort()
+                    if time.time() - start_time > 60:
+                        timed_out = True
+                        break
+                    if process.poll() is not None:
+                        draining = True
+                    continue
+
+                if item is None:
                     break
-                if line_bytes:
-                    line_out = smart_decode(line_bytes).rstrip()
-                    output_lines.append(line_out)
-                    emit_task_event({'id': task_id, 'type': 'log', 'data': line_out})
-                if time.time() - start_time > 60:
-                    process.kill()
-                    process.wait()
-                    return '命令执行超时（限制:60秒）,命令可能仍在运行中,只是60秒内没有执行完成,具体情况请求助管理员。'
+
+                line_out = smart_decode(item).rstrip()
+                output_lines.append(line_out)
+                emit_task_event({'id': task_id, 'type': 'log', 'data': line_out})
+                _check_abort()
+
+            if timed_out:
+                process.kill()
+                process.wait()
+                return '命令执行超时（限制:60秒）,命令可能仍在运行中,只是60秒内没有执行完成,具体情况请求助管理员。'
+
             process.wait()
 
             # [新增] 清理子进程引用
