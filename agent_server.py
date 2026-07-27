@@ -1,4 +1,4 @@
-"""PokerAgent - 本地接应服务 (SSE流式版) v34
+"""PokerAgent - 本地接应服务 (SSE流式版) v35
 启动方式： python agent_server.py
 默认监听：http://127.0.0.1:9966
 """
@@ -118,6 +118,23 @@ def push_event(data_dict):
         for q in clients:
             q.put(msg)
 
+# [新增] 暴力终止子进程树（跨平台，供 request_kill 和超时逻辑复用）
+def _kill_process_tree(proc):
+    """kill → taskkill 双保险，确保进程树死透"""
+    if proc is None or proc.poll() is not None:
+        return
+    try:
+        proc.kill()  # 先 Python 层 kill
+    except Exception:
+        pass
+    if platform.system() == 'Windows':
+        try:
+            # /F 强制 /T 杀整棵树（含 daemon 子进程）
+            subprocess.run(f'taskkill /F /T /PID {proc.pid}', shell=True,
+                           stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+        except Exception:
+            pass
+
 # [新增] 任务控制接口（供 GUI 调用）
 def request_kill(mode):
     """请求终止当前任务。mode: 'discard'=丢弃结果 / 'done'=返回已有输出"""
@@ -126,21 +143,14 @@ def request_kill(mode):
         return False  # 没有正在执行的任务，忽略
     with _kill_mode_lock:
         _kill_mode = mode
-    # [修改] 先 set 中断信号，让所有纯 Python 循环立即抛出 TaskAborted
+    # 先 set 中断信号，让所有纯 Python 循环立即抛出 TaskAborted
     _abort_event.set()
-    # 再 kill 子进程 + 关闭管道，解除 readline 阻塞
+    # 再暴力杀子进程 + 关闭管道，解除读取线程的 readline 阻塞
     with _current_process_lock:
         proc = _current_process
-    if proc and proc.poll() is None:
-        try:
-            if platform.system() == 'Windows':
-                subprocess.run(f'taskkill /F /T /PID {proc.pid}', shell=True,
-                               stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
-            else:
-                proc.kill()
-        except Exception:
-            pass
-        # [新增] 主动关闭 stdout 管道，确保 readline 立即返回 EOF
+    if proc:
+        _kill_process_tree(proc)  # [修改] 用统一的暴力杀进程函数
+        # 主动关闭 stdout 管道，让读取线程的 readline 立即收到异常/EOF
         try:
             if proc.stdout:
                 proc.stdout.close()
@@ -1614,28 +1624,30 @@ def execute_line_streaming(line, task_id):
             with _current_process_lock:
                 _current_process = process
 
-            # [v34] 后台读取线程 + 队列，解决 daemon 持有管道导致 readline 永不返回 EOF 的问题
+            output_lines = []
+            start_time = time.time()
+
+            # [重构] 读取线程 + Queue：readline 阻塞不再卡死中断响应
             _read_q = queue.Queue()
 
             def _reader():
+                """daemon 线程：专门 readline，读到就往 queue 塞"""
                 try:
                     while True:
                         line_bytes = process.stdout.readline()
                         if not line_bytes:
                             break
                         _read_q.put(line_bytes)
-                except (ValueError, OSError):
-                    pass  # stdout 被关闭（终止时）
+                except (OSError, ValueError):
+                    pass  # 管道被外部关闭时静默退出
                 finally:
-                    _read_q.put(None)  # EOF 哨兵
+                    _read_q.put(None)  # EOF 哨兵：通知主循环"没有更多数据了"
 
             reader_thread = threading.Thread(target=_reader, daemon=True)
             reader_thread.start()
 
-            output_lines = []
-            start_time = time.time()
             timed_out = False
-            draining = False  # [v34] 进程退出后的管道排空阶段
+            draining = False  # [新增] 进程退出后的管道排空阶段
             while True:
                 try:
                     # drain 阶段用较长超时等最后一批数据；正常阶段 50ms 检查中断
@@ -1661,17 +1673,14 @@ def execute_line_streaming(line, task_id):
                 _check_abort()
 
             if timed_out:
-                if platform.system() == 'Windows':
-                    # 杀掉整个进程树 ( /T )，强制 ( /F )
-                    subprocess.run(f'taskkill /F /T /PID {process.pid}', shell=True, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
-                else:
-                    process.kill()
-                    process.wait()
+                _kill_process_tree(process)  # [修改] 用统一函数杀进程树
+                with _current_process_lock:
+                    _current_process = None
                 return '错误：命令执行超时（3600秒限制），进程树已强杀。'
 
             process.wait()
 
-            # [新增] 清理子进程引用
+            # 清理子进程引用
             with _current_process_lock:
                 _current_process = None
 
@@ -1679,6 +1688,8 @@ def execute_line_streaming(line, task_id):
             if not output:
                 output = '（命令已执行，无输出）'
             return output
+        except TaskAborted:
+            raise  # 中断信号透传给 worker_loop
         except Exception as e:
             return f'执行失败：{e}'
     elif cmd == 'run':
@@ -1704,7 +1715,10 @@ def execute_line_streaming(line, task_id):
             with _current_process_lock:
                 _current_process = process
 
-            # [v34] 后台读取线程 + 队列，解决 daemon 持有管道导致 readline 永不返回 EOF 的问题
+            output_lines = []
+            start_time = time.time()
+
+            # [重构] 读取线程 + Queue（与 exec 相同模式）
             _read_q = queue.Queue()
 
             def _reader():
@@ -1714,18 +1728,16 @@ def execute_line_streaming(line, task_id):
                         if not line_bytes:
                             break
                         _read_q.put(line_bytes)
-                except (ValueError, OSError):
-                    pass  # stdout 被关闭（终止时）
+                except (OSError, ValueError):
+                    pass
                 finally:
-                    _read_q.put(None)  # EOF 哨兵
+                    _read_q.put(None)
 
             reader_thread = threading.Thread(target=_reader, daemon=True)
             reader_thread.start()
 
-            output_lines = []
-            start_time = time.time()
             timed_out = False
-            draining = False  # [v34] 进程退出后的管道排空阶段
+            draining = False  # [新增] 进程退出后的管道排空阶段
             while True:
                 try:
                     item = _read_q.get(timeout=0.3 if draining else 0.05)
@@ -1749,13 +1761,13 @@ def execute_line_streaming(line, task_id):
                 _check_abort()
 
             if timed_out:
-                process.kill()
-                process.wait()
+                _kill_process_tree(process)
+                with _current_process_lock:
+                    _current_process = None
                 return '命令执行超时（限制:60秒）,命令可能仍在运行中,只是60秒内没有执行完成,具体情况请求助管理员。'
 
             process.wait()
 
-            # [新增] 清理子进程引用
             with _current_process_lock:
                 _current_process = None
 
@@ -1763,6 +1775,8 @@ def execute_line_streaming(line, task_id):
             if not output:
                 output = '（脚本已执行，无输出）'
             return output
+        except TaskAborted:
+            raise  # 中断信号透传给 worker_loop
         except Exception as e:
             return f'运行失败：{e}'
     elif cmd == 'get':
