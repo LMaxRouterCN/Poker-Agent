@@ -823,6 +823,10 @@ class AgentGUI:
 
     def _append_parsed(self, line):
         """解析日志行，分色显示"""
+        # [新增] 含 ANSI SGR 转义码时走颜色渲染，不再进入后续正则匹配
+        if '\x1b[' in line:
+            self._append_ansi(line)
+            return
         m = re.match(
             r'^(\[\d{4}-\d{2}-\d{2} \d{2}:\d{2}:\d{2}\])\s+(\S+)(?:\s*\|\s*(.*))?$',
             line
