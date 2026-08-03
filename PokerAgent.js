@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name PokerAgent
 // @namespace http://tampermonkey.net/
-// @version 24
+// @version 29
 // @author LMaxRouterCN
 // @description PokerAgent的浏览器端核心脚本，提供元素选择、配置管理、调试日志等功能，支持多站点独立配置和自动发送功能。
 // @match *://*/*
@@ -483,7 +483,7 @@
         chat: '聊天记录容器',
         input: '输入框',
         send: '发送按钮',
-        'send-container': '发送按钮容器', // 容器模式
+        'send-container': '发送按钮容器',
         answer: 'AI回答元素',
         'clean-class': '清理元素Class',
         'code-content': '代码内容元素'
@@ -1301,6 +1301,8 @@
     let _cmdQueue = [];
     let _sendPromiseChain = Promise.resolve();
     let _isCalibrating = false;
+    let _dispatchRetryCount = 0; // 当前连续失败次数
+    const MAX_DISPATCH_RETRIES = 3; // 最大重试次数，超过则放弃
 
     // ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
     // 流式任务状态机
@@ -1380,10 +1382,12 @@
 
     let _pollTimer = null;
     let _lastAnswerEl = null;
+    let _lastAnswerCount = 0; // 用回答数量判断是否为新一轮，而非元素引用
     const _currentRoundSent = new Set();
     let _heartbeatCounter = 0;
     let _knownAnswers = [];
     let _noAnswerCount = 0;
+    let _lastScannedLen = 0; // 上次扫描时的文本长度，用于判断AI是否还在输出
 
 function getCleanText(el, cfg) {
     const clone = el.cloneNode(true);
@@ -1741,7 +1745,14 @@ function getCleanText(el, cfg) {
             _isProcessing = false;
             return;
         }
-        const batch = _cmdQueue.join('\n');
+        // 队列去重：用去空白后的key比较，防止同一指令因空白差异被重复发送
+        const _seen = new Set();
+        const batch = _cmdQueue.filter(cmd => {
+            const k = cmd.replace(/\s+/g, '');
+            if (_seen.has(k)) return false;
+            _seen.add(k);
+            return true;
+        }).join('\n');
         _cmdQueue = [];
         _dispatch(batch);
     }
@@ -1799,6 +1810,7 @@ function getCleanText(el, cfg) {
             data: JSON.stringify({ command: cmdBatch }),
             onload: (r) => {
                 if (r.status === 200) {
+                    _dispatchRetryCount = 0; // 成功一次就归零
                     try {
                         const data = JSON.parse(r.responseText);
                         if (data.type === 'task_batch' && data.task_ids) {
@@ -1813,13 +1825,36 @@ function getCleanText(el, cfg) {
                     }
                 }
                 log('ERR', `HTTP ${r.status} 或响应格式错误`);
-                _isProcessing = false;
-                _checkAndDispatch();
+                _dispatchRetryCount++;
+                if (_dispatchRetryCount >= MAX_DISPATCH_RETRIES) {
+                    log('ERR', `连续失败${MAX_DISPATCH_RETRIES}次，放弃发送`);
+                    _dispatchRetryCount = 0;
+                    _isProcessing = false;
+                    _checkAndDispatch();
+                } else {
+                    const delay = 3000 * Math.pow(2, _dispatchRetryCount - 1);
+                    log('WARN', `${delay / 1000}秒后第${_dispatchRetryCount + 1}次重试...`);
+                    _cmdQueue.unshift(cmdBatch);
+                    _isProcessing = false;
+                    setTimeout(() => _checkAndDispatch(), delay);
+                }
             },
             onerror() {
-                log('ERR', '无法连接本地服务');
-                _isProcessing = false;
-                _checkAndDispatch();
+                _dispatchRetryCount++;
+                if (_dispatchRetryCount >= MAX_DISPATCH_RETRIES) {
+                    // 超过重试上限，放弃本次发送，清空队列继续运行
+                    log('ERR', `无法连接本地服务，已重试${MAX_DISPATCH_RETRIES}次，放弃发送`);
+                    _dispatchRetryCount = 0;
+                    _isProcessing = false;
+                    _checkAndDispatch();
+                } else {
+                    // 指数退避：3s → 6s → 12s
+                    const delay = 3000 * Math.pow(2, _dispatchRetryCount - 1);
+                    log('WARN', `无法连接本地服务，${delay / 1000}秒后第${_dispatchRetryCount + 1}次重试...`);
+                    _cmdQueue.unshift(cmdBatch);
+                    _isProcessing = false;
+                    setTimeout(() => _checkAndDispatch(), delay);
+                }
             }
         });
     }
@@ -2399,7 +2434,9 @@ function getCleanText(el, cfg) {
 
         _pollConfig();
         _lastAnswerEl = null;
+        _lastAnswerCount = 0;
         _currentRoundSent.clear();
+        _lastScannedLen = 0;
         _noAnswerCount = 0;
         _initAutoSendToggle();
 
@@ -2430,7 +2467,9 @@ function getCleanText(el, cfg) {
         const answerSel = c.selAnswerItem || '.answer';
         _knownAnswers = [...currentContainer.querySelectorAll(answerSel)];
         _lastAnswerEl = null;
+        _lastAnswerCount = _knownAnswers.length;
         _currentRoundSent.clear();
+        _lastScannedLen = 0;
         log('OK', `✅ 监听已启动！回答元素选择器: "${answerSel}"`);
         _pollTimer = setInterval(() => {
             try {
@@ -2441,7 +2480,9 @@ function getCleanText(el, cfg) {
                     log('WARN', '🚨 检测到聊天容器被替换，重置状态...');
                     currentContainer = freshContainer;
                     _lastAnswerEl = null;
+                    _lastAnswerCount = 0;
                     _currentRoundSent.clear();
+                    _lastScannedLen = 0;
                     _cmdQueue = [];
                     _sendPromiseChain = Promise.resolve();
                     _isProcessing = false;
@@ -2464,7 +2505,9 @@ function getCleanText(el, cfg) {
                 }
                 if (_knownAnswers.length > 0 && !_knownAnswers.some(el => new Set(answers).has(el))) {
                     _lastAnswerEl = null;
+                    _lastAnswerCount = 0;
                     _currentRoundSent.clear();
+                    _lastScannedLen = 0;
                     _cmdQueue = [];
                     _sendPromiseChain = Promise.resolve();
                     _isProcessing = false;
@@ -2474,19 +2517,36 @@ function getCleanText(el, cfg) {
                 if (_heartbeatCounter % 20 === 0) log('INFO', `💓 心跳 | 队列${_cmdQueue.length}条 | 锁定:${_isProcessing} | 回答:${answers.length}个`);
                 if (answers.length === 0) return;
                 const lastAnswer = answers[answers.length - 1];
-                if (lastAnswer !== _lastAnswerEl) {
+                // 只有回答数量变化（新消息/对话清空）才视为新一轮，清除去重集
+                // 元素引用变化但数量不变 = 框架re-render，不清除，防止重复捕获
+                if (answers.length !== _lastAnswerCount) {
+                    _lastAnswerCount = answers.length;
                     _lastAnswerEl = lastAnswer;
                     _currentRoundSent.clear();
+                    _lastScannedLen = 0; // 新一轮，重新允许扫描
+                } else if (lastAnswer !== _lastAnswerEl) {
+                    // 仅更新引用，不清去重集
+                    _lastAnswerEl = lastAnswer;
                 }
+
+                // 文本没有增长 = AI没有新输出，跳过提取，防止DOM异步变化导致重复捕获
+                const rawLen = lastAnswer.textContent.length;
+                if (rawLen <= _lastScannedLen && _currentRoundSent.size > 0) {
+                    return; // 本轮已扫过，不再重复提取
+                }
+                _lastScannedLen = rawLen;
+
                 const re = /【cmd】([\s\S]*?)【\/cmd】/g;
                 const text = getCleanText(lastAnswer, c);
                 re.lastIndex = 0;
                 let m;
                 while ((m = re.exec(text)) !== null) {
                     const cmdStr = m[1].trim();
-                    const normKey = m[0].replace(/[ \t]+/g, ' ').replace(/ *\n */g, '\n');
-                    if (_currentRoundSent.has(normKey)) continue;
-                    _currentRoundSent.add(normKey);
+                    // 去重key去除全部空白，彻底免疫getCleanText的输出抖动
+                    // 仅用于去重判定，不影响实际入队的cmdStr原文
+                    const cmdKey = cmdStr.replace(/\s+/g, '');
+                    if (_currentRoundSent.has(cmdKey)) continue;
+                    _currentRoundSent.add(cmdKey);
                     _cmdQueue.push(cmdStr);
                     log('OK', `🎉 捕获指令入队: ${cmdStr.substring(0, 60)}...`);
                     if (!_isProcessing) _checkAndDispatch();
@@ -2507,4 +2567,4 @@ function getCleanText(el, cfg) {
         return String(s || '').replace(/&/g, '&amp;').replace(/"/g, '&quot;').replace(/'/g, '&#39;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
     }
 
-    })();
+})();
