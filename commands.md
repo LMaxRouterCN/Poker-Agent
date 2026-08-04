@@ -1,9 +1,4 @@
 # Agent 指令列表
-用法：在【cmd】和【/cmd】标签之间编写指令，多条指令按顺序执行。
-一对cmd标签中可以有多行的单行指令,以换行分隔
-一对cmd标签中只能有一个多行指令
-## 通用规则
-- **路径包含空格**：如果文件或目录路径中包含空格，必须使用双引号 `""` 将路径包裹起来，例如 `read "11111.md" 10-20`。不加引号时，空格会被视为参数分隔符。
 
 ---
 
@@ -18,10 +13,10 @@
 显示指定指令的详细用法说明。适合想深入了解某个指令如何使用的场景。
 示例：
 【cmd】@@help【/cmd】
-【cmd】@@help all【/cmd】
-【cmd】@@help fast【/cmd】
-【cmd】@@help replace【/cmd】
-【cmd】@@help exec【/cmd】
+【cmd】@@help `all`【/cmd】
+【cmd】@@help `fast`【/cmd】
+【cmd】@@help `replace`【/cmd】
+【cmd】@@help `exec`【/cmd】
 #### start
 作用：初始化，返回后端运行时环境和设置信息 - 输入信息：无参数 - 返回信息：工作目录、各项配置开关、PowerShell 版本、Python 版本、操作系统等
 #### count
@@ -67,7 +62,7 @@
 #### download
 作用：下载文件到本地 - 输入信息：URL 保存路径 - 返回信息：操作结果
 
-**如果不清楚用法请发送【cmd】@@help [指令名]【/cmd】获取用法,或者寻求管理员**
+**如果不清楚用法请发送【cmd】@@help `[指令名]`【/cmd】获取用法,或者寻求管理员**
 
 ## 系统命令快捷参考（exec 指令）
 请尽量使用专用指令,如果专用指令出现问题,或者无对应的专用指令,或者为了效率,可以使用 exec 指令.
@@ -116,19 +111,28 @@
 
 ## 注意事项
 - **此文件是存在换行的,如果你在看到这个文件内容时没有换行证明有些信息在传输过程中丢失了,立刻停止所有动作并告知用户**
-- 小改动时不要频繁用create指令,很慢而且很消耗上下文窗口,小改动时使用replace或insert指令
-- 写入多行内容时，必须在外层使用 【CodeSTART】 和 【/CodeEND】 包裹，内侧用 ``` 包裹代码使其变为代码块。
-- 替换整个文件内容时用create覆写,而不是replace
-- 如果要写入的内容本身包含三个反引号，请用 TICK3 代替避免在浏览器处理文本后打乱排版格式（后端会自动还原）。
+- 小改动时不要频繁用create指令,很慢而且很消耗上下文窗口,小改动时使用replace或insert指令,当改动大到替换整个文件内容时再用create覆写,而不是replace
 - 代码块内的一切内容都会原封不动写入文件，包括空行、空格、特殊符号。
 - replace 指令中，请用**两个独立的代码块**分别提供旧文本和新文本（按出现顺序区分）。
 - 危险操作（delete、exec）会记录日志。
 - 如果此文档中指令说明更新的不及时，你可以读取此项目下根目录的`agent_server.py`源文件以确定某个指令在代码中的实现方式。
-- 【CodeSTART】 和 【/CodeEND】的作用就是标记代码块的起始和结束,所以在指令中每个代码块都必须用【CodeSTART】 和 【/CodeEND】包裹,【CodeSTART】 和 【/CodeEND】必须和代码块同时存在,如果没有代码块就不要用【CodeSTART】 和 【/CodeEND】
 - 如果你不知道要修改的文件的内容,就不要操作文件,不要猜测,先read要修改的文件
+
+
+## PokerAgent独特的指令格式规定
+
+在【cmd】和【/cmd】标签之间编写指令，多条指令按顺序执行。
+- 一对cmd标签中可以有多行的单行指令,以换行分隔
+- 一对cmd标签中只能有一个多行指令
+
+1. 如果文件或目录路径中包含空格，必须使用双引号 "" 将路径包裹起来，例如 read `"11111.md"` `10-20`.不加引号时，空格会被视为参数分隔符.
+2. 如果要写入的内容本身包含三个反引号，请用 TICK3 代替避免在浏览器处理文本后打乱排版格式（后端会自动还原）.
+3. 【CodeSTART】和【/CodeEND】的作用就是标记代码块的起始和结束,所以在指令中每个markdown代码块都必须用【CodeSTART】和【/CodeEND】包裹,【CodeSTART】和【/CodeEND】必须和代码块同时存在,如果没有代码块就不要用【CodeSTART】和【/CodeEND】.
+4. 指令中指令的传入参数需要用"`"包裹,在这边并没有严格的格式规定,可以是【cmd】read `"11111.md"` `10-20`【/cmd】分开包裹,也可以【cmd】read `"11111.md" 10-20`【/cmd】.
+
 - 任何情况下,指令内用于包裹代码的```的同一行都不能出现任何标识代码块的编程语言标签
     >写:
-    >【cmd】create hello.txt
+    >【cmd】create `hello.txt`
     >【CodeSTART】
     >```
     >something
@@ -136,7 +140,7 @@
     >【/CodeEND】
     >【/cmd】
     >不要写:
-    >【cmd】create hello.txt
+    >【cmd】create `hello.txt`
     >【CodeSTART】
     >```java
     >something
@@ -147,7 +151,7 @@
     >
     >**正确示例:**
     >好的,我会帮你写一段说明文本,介绍使用三联反引号创建代码块的方式.
-    >【cmd】create code_blocks.md
+    >【cmd】create `code_blocks.md`
     >【CodeSTART】
     >```
     >Yes, you can use TICK3 to create code blocks, like this:
@@ -160,7 +164,7 @@
     >
     >**完全错误示例:**
     >好的,我会帮你写一段说明文本,介绍使用```创建代码块的方式.
-    >【cmd】create code_blocks.md
+    >【cmd】create `code_blocks.md`
     >【CodeSTART】
     >TICK3
     >Yes, you can use ``` to create code blocks, like this:
@@ -171,11 +175,15 @@
     >【/CodeEND】
     >【/cmd】
 
-
+---
 
 # 已安装的CLI扩展程序 - 对应的起始指令
-1. OpenCLI - 【cmd】exec opencli list【/cmd】
 
+>此部分由用户编写.
+
+1. OpenCLI - 【cmd】exec `opencli list`【/cmd】
+
+---
 
 # 紧急告示栏
 
@@ -209,10 +217,10 @@
 显示指定指令的详细用法说明。适合想深入了解某个指令如何使用的场景。
 示例：
 【cmd】@@help【/cmd】
-【cmd】@@help all【/cmd】
-【cmd】@@help fast【/cmd】
-【cmd】@@help replace【/cmd】
-【cmd】@@help exec【/cmd】
+【cmd】@@help `all`【/cmd】
+【cmd】@@help `fast`【/cmd】
+【cmd】@@help `replace`【/cmd】
+【cmd】@@help `exec`【/cmd】
 ### start
 返回后端当前的运行时环境和设置信息。无需任何参数。建议在首次接入时调用一次以获取环境上下文。
 返回内容包括：
@@ -230,8 +238,8 @@
 ### count <文件路径>
 统计文件的行数、字数（中英文混合精确统计）和字符数。
 示例：
-【cmd】count main.py【/cmd】
-【cmd】count "my file.txt"【/cmd】
+【cmd】count `main.py`【/cmd】
+【cmd】count `"my file.txt"`【/cmd】
 ### find <文件或目录路径> [选项] <查找内容或文件名>
 智能查找指令，根据是否有代码块自动切换两种模式。
 选项：
@@ -242,7 +250,7 @@
 **模式一：文件内容查找（使用【CodeSTART】标签时触发）**
 路径必须是文件。支持单行或多行连续匹配。
 示例 (全匹配单行)：
-【cmd】find main.py 
+【cmd】find `main.py`
 【CodeSTART】
 ```
 def main():
@@ -250,7 +258,7 @@ def main():
 【/CodeEND】
 【/cmd】
 示例 (正则部分匹配)：
-【cmd】find main.py -r -p
+【cmd】find `main.py` `-r` `-p`
 【CodeSTART】
 ```
 import .* from .*
@@ -261,23 +269,23 @@ import .* from .*
 路径必须是目录。递归向下搜索匹配的文件名。
 选项同上。若需使用通配符（如 *.txt），请开启 -r 使用正则（如 .*\.txt）。
 示例 (全匹配文件名)：
-【cmd】find ./ main.py【/cmd】
+【cmd】find `./` `main.py`【/cmd】
 示例 (正则部分匹配查找日志文件)：
-【cmd】find "D:\projects\" -r -p .*\.log【/cmd】
+【cmd】find `"D:\projects\"` `-r` `-p` `.*\.log`【/cmd】
 ### deleteline <文件路径> [选项]
 删除文件内的某一行或几行，或删除匹配的文本。
 **行号模式**：使用 `-l` 选项指定行号或范围。
 示例：
-【cmd】deleteline test.txt -l 5【/cmd】
-【cmd】deleteline "test file.txt" -l 5-10【/cmd】
+【cmd】deleteline `test.txt` `-l` `5`【/cmd】
+【cmd】deleteline `"test file.txt"` `-l` `5-10`【/cmd】
 **文本模式**：不使用 `-l` 选项，指定要删除的文本。
 支持选项
 - `-i`（忽略大小写）
 - `-w`（全词匹配）
 - `-a`（删除所有匹配）
 示例：
-【cmd】deleteline test.txt -i -w hello【/cmd】
-【cmd】deleteline test.txt -a
+【cmd】deleteline `test.txt` `-i` `-w` `hello`【/cmd】
+【cmd】deleteline `test.txt` `-a`
 【CodeSTART】
 ```
 hello world
@@ -298,7 +306,7 @@ hello world
 - **取消自动降级**：如果不加任何修饰参数，就是纯精确匹配。加上某个参数后，严格按该模式匹配，找不到就报错并返回最接近的诊断信息，不会自动尝试其他模式。
 **内容匹配模式**（默认）：用两个独立的代码块分别提供旧文本和新文本，第一个代码块是旧文本，第二个是新文本。
 示例（组合匹配：忽略缩进 + 忽略大小写）：
-【cmd】replace config.json -s -i
+【cmd】replace `config.json` `-s` `-i`
 【CodeSTART】
 ```
 "debug": false
@@ -312,7 +320,7 @@ hello world
 【/cmd】
 **行号模式**（-l）：直接指定要替换的行范围，只提供新文本。
 示例：
-【cmd】replace "config file.json" -l 10-15
+【cmd】replace `"config file.json"` `-l` `10-15`
 【CodeSTART】
 ```
 // 新的代码
@@ -324,7 +332,7 @@ hello world
 ### insert <文件路径> -after/-before <行号或文本>
 在指定位置插入内容。可以指定行号，也可以指定一段目标文本。
 示例（在第10行后插入）：
-【cmd】insert main.py -after 10
+【cmd】insert `main.py` `-after` `10`
 【CodeSTART】
 ```
 print("插入的内容")
@@ -332,7 +340,7 @@ print("插入的内容")
 【/CodeEND】
 【/cmd】
 示例（在目标文本前插入）：
-【cmd】insert "main file.py" -before "def main():"
+【cmd】insert `"main file.py"` `-before` `"def main():"`
 【CodeSTART】
 ```
 # 这是新插入的注释
@@ -359,11 +367,11 @@ print("插入的内容")
 - -c 模式：`文件路径:匹配数`
 - -l 模式：每行一个文件路径
 示例：
-【cmd】grep "def\s+\w+" main.py【/cmd】
-【cmd】grep -ir "todo|fixme" src【/cmd】
-【cmd】grep -r --include "\.py$" "import\s+os" .【/cmd】
-【cmd】grep -c "error" app.log【/cmd】
-【cmd】grep -e "foo" -e "bar" config.txt【/cmd】
+【cmd】grep `"def\s+\w+"` `main.py`【/cmd】
+【cmd】grep `-ir` `"todo|fixme"` `src`【/cmd】
+【cmd】grep `-r` `--include` `"\.py$"` `"import\s+os"` `.`【/cmd】
+【cmd】grep `-c` `"error"` `app.log`【/cmd】
+【cmd】grep `-e` `"foo"` `-e` `"bar"` `config.txt`【/cmd】
 
 ---
 
@@ -378,7 +386,7 @@ print("插入的内容")
 【/CodeEND】
 【/cmd】
 示例：
-【cmd】create hello.txt
+【cmd】create `hello.txt`
 【CodeSTART】
 ```
 Hello World!
@@ -391,7 +399,7 @@ Hello World!
 - 如果内容只有单行且不含特殊字符，也可以简写为：
 【cmd】create <文件路径> <单行内容>【/cmd】
 - 简写模式下，如果路径含空格，需用引号将路径包裹，剩余部分为内容：
-【cmd】create "hello world.txt" Hello【/cmd】
+【cmd】create `"hello world.txt"` `Hello`【/cmd】
 ### read <文件路径> [起始行]-[结束行]
 读取文件内容并返回。支持指定行号范围，指定范围时回执会自动附带行号。
 - 不传行号：返回完整内容。
@@ -399,10 +407,10 @@ Hello World!
 - `read <路径> 10-` 或 `read <路径> 10`：从第 10 行读到文件末尾。
 - **如果路径包含空格，必须用双引号包裹**。
 示例：
-【cmd】read notes.txt【/cmd】
-【cmd】read "11111.md"【/cmd】
-【cmd】read "11111.md" 10-20【/cmd】
-【cmd】read main.py 50-【/cmd】
+【cmd】read `notes.txt`【/cmd】
+【cmd】read `"11111.md"`【/cmd】
+【cmd】read `"11111.md"` `10-20`【/cmd】
+【cmd】read `main.py` `50-`【/cmd】
 有的api/网页渠道会限制单次返回的字符数量,程序没有做保护,需要用户自己处理.
 如果处于剪贴板读取模式会使用服务商提供的API上传整个文件,无感字数限制(但文本会被压缩,具体压缩措施取决于服务商,通常会失去其中所有的换行),单次对话最多获取的文件数量通常也会被限制,建议一次最多读取5个文件。
 ### append <文件路径> [内容]
@@ -418,42 +426,42 @@ Hello World!
 简写：
 【cmd】append <文件路径> <单行内容>【/cmd】
 - 简写模式下，如果路径含空格，需用引号将路径包裹，剩余部分为内容：
-【cmd】append "my notes.txt" 新增的一行【/cmd】
+【cmd】append `"my notes.txt"` `新增的一行`【/cmd】
 ### delete <文件或目录路径>
 删除指定文件或目录。**此操作不会永久删除，而是将目标移动到工作目录下的专属回收站（`.agent_trash`）中，可以通过 `restore` 指令恢复。**
 - 严格限制：指令格式必须为 `delete "路径"` 或 `delete 路径`，**不允许携带任何额外参数**（如 `-f` 等，否则直接拒绝）。`防止你手滑`
 - 安全机制：拒绝删除工作目录本身；拒绝直接操作专属回收站。
 - 目录支持：支持直接删除目录及其内部所有文件。
 示例：
-【cmd】delete temp.txt【/cmd】
-【cmd】delete "temp file.txt"【/cmd】
-【cmd】delete src/modules【/cmd】
+【cmd】delete `temp.txt`【/cmd】
+【cmd】delete `"temp file.txt"`【/cmd】
+【cmd】delete `src/modules`【/cmd】
 ### restore <恢复模式>
 从专属回收站（`.agent_trash`）恢复被 `delete` 指令删除的文件或目录至其原始路径。
 **支持三种恢复模式：**
 1. **恢复最近删除**：使用关键字 `最近`。
    示例：
-   【cmd】restore 最近【/cmd】
+   【cmd】restore `最近`【/cmd】
 2. **按原文件/目录名恢复**：直接提供被删除时的名称。如果回收站中存在同名但不同路径的历史记录，系统将拒绝直接恢复并列出冲突项，要求使用完整路径模式。
    示例：
-   【cmd】restore "config.json"【/cmd】
+   【cmd】restore `"config.json"`【/cmd】
 3. **按完整路径精确恢复**：使用 `--path` 参数指定原始绝对路径（支持带斜杠的目录格式）。这是最精确的全自动恢复方式。
    示例：
-   【cmd】restore --path "D:\projects\src\utils.py"【/cmd】
-   【cmd】restore --path "D:\projects\src\my_dir\"【/cmd】
+   【cmd】restore `--path` `"D:\projects\src\utils.py"`【/cmd】
+   【cmd】restore `--path` `"D:\projects\src\my_dir\"`【/cmd】
 **注意事项：**
 - 如果原路径当前已存在同名文件/目录，为防止覆盖，恢复操作将被中止。
 - 恢复成功后，会自动清理回收站中对应的空目录层级。
 ### copy <源路径> <目标路径>
 复制文件。
 示例：
-【cmd】copy notes.txt backup.txt【/cmd】
-【cmd】copy "my notes.txt" "my backup.txt"【/cmd】
+【cmd】copy `notes.txt` `backup.txt`【/cmd】
+【cmd】copy `"my notes.txt"` `"my backup.txt"`【/cmd】
 ### move <源路径> <目标路径>
 移动或重命名文件。
 示例：
-【cmd】move old.txt new.txt【/cmd】
-【cmd】move "old file.txt" "new file.txt"【/cmd】
+【cmd】move `old.txt` `new.txt`【/cmd】
+【cmd】move `"old file.txt"` `"new file.txt"`【/cmd】
 
 ---
 
@@ -461,14 +469,14 @@ Hello World!
 列出目录下的文件和子目录。不传路径时列出当前工作目录。
 示例：
 【cmd】list【/cmd】
-【cmd】list src【/cmd】
-【cmd】list "my src"【/cmd】
-注意:此指令不会递归,不会列出子目录的子目录和文件,如果要递归列出所有内容请使用【cmd】exec dir /s /b【/cmd】
+【cmd】list `src`【/cmd】
+【cmd】list `"my src"`【/cmd】
+注意:此指令不会递归,不会列出子目录的子目录和文件,如果要递归列出所有内容请使用【cmd】exec `dir` `/s` `/b`【/cmd】
 ### mkdir <目录路径>
 创建目录（支持多级创建）。
 示例：
-【cmd】mkdir src/modules【/cmd】
-【cmd】mkdir "my modules/src"【/cmd】
+【cmd】mkdir `src/modules`【/cmd】
+【cmd】mkdir `"my modules/src"`【/cmd】
 
 ---
 
@@ -492,26 +500,26 @@ Hello World!
 
 请根据实际终端类型编写对应语法的命令。
 示例：
-【cmd】exec python --version【/cmd】
-【cmd】exec $PSVersionTable.PSVersion.ToString()【/cmd】
-【cmd】exec Get-ChildItem -Name【/cmd】
+【cmd】exec `python` `--version`【/cmd】
+【cmd】exec `$PSVersionTable.PSVersion.ToString()`【/cmd】
+【cmd】exec `Get-ChildItem` `-Name`【/cmd】
 解码格式会动态获取系统编码
 ### run <脚本路径>
 运行 Python 脚本，返回输出。
 示例：
-【cmd】run script.py【/cmd】
-【cmd】run "my script.py"【/cmd】
+【cmd】run `script.py`【/cmd】
+【cmd】run `"my script.py"`【/cmd】
 
 ---
 
 ### get <URL>
 发送 HTTP GET 请求，返回响应内容。
 示例：
-【cmd】get https://httpbin.org/get【/cmd】
+【cmd】get `https://httpbin.org/get`【/cmd】
 ### download <URL> <保存路径>
 下载文件到本地。
 示例：
-【cmd】download https://example.com/img.png images/img.png【/cmd】
-【cmd】download https://example.com/img.png "my images/img.png"【/cmd】
+【cmd】download `https://example.com/img.png` `images/img.png`【/cmd】
+【cmd】download `https://example.com/img.png` `"my images/img.png"`【/cmd】
 
 ---
