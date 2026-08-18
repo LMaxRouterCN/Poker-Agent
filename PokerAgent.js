@@ -1,19 +1,19 @@
 // ==UserScript==
-// @name         PokerAgent
-// @namespace    http://tampermonkey.net/
-// @version      30
-// @author       LMaxRouterCN
-// @description  PokerAgent的浏览器端核心脚本，提供元素选择、配置管理、调试日志等功能，支持多站点独立配置和自动发送功能。
-// @match        *://*/*
-// @grant        GM_registerMenuCommand
-// @grant        GM_unregisterMenuCommand
-// @grant        GM_xmlhttpRequest
-// @grant        GM_getValue
-// @grant        GM_setValue
-// @grant        GM_addStyle
-// @grant        GM_setClipboard
-// @connect      localhost
-// @connect      127.0.0.1
+// @name PokerAgent
+// @namespace http://tampermonkey.net/
+// @version 31
+// @author LMaxRouterCN
+// @description PokerAgent的浏览器端核心脚本，提供元素选择、配置管理、调试日志等功能，支持多站点独立配置和自动发送功能。
+// @match *://*/*
+// @grant GM_registerMenuCommand
+// @grant GM_unregisterMenuCommand
+// @grant GM_xmlhttpRequest
+// @grant GM_getValue
+// @grant GM_setValue
+// @grant GM_addStyle
+// @grant GM_setClipboard
+// @connect localhost
+// @connect 127.0.0.1
 // ==/UserScript==
 
 //UI风格:黑灰白黄红橙绿,主黑金配色
@@ -31,7 +31,7 @@
         selSendButtonContainer: '', // 发送按钮容器选择器(按钮元素会整体替换的网站用这个)
         selAnswerItem: '.answer',
         selCodeContentElement: '', // 代码块容器选择器
-        selCodeCopyButton: '',     // 代码块上的复制按钮选择器 (新增)
+        selCodeCopyButton: '', // 代码块上的复制按钮选择器 (新增)
         cleanIgnoreClassKeywords: 'thinking,reasoning,probe,deepseek-reason',
         cleanRemoveButtonLike: true,
         cleanRemovePre: true,
@@ -46,7 +46,8 @@
         waitDelayAfterDone: 500,
         showAutoSendToggle: false,
         autoSendTogglePos: 'right',
-        autoSendMode: 'click'
+        autoSendMode: 'click',
+        memoryInjectFrequency: 1  // [新增] 记忆注入频率（每N轮，0=关闭）
     };
 
     const DEFAULTS = {
@@ -59,7 +60,11 @@
 
     function _loadStore() {
         let store;
-        try { store = GM_getValue(STORE_KEY, null); } catch (_) { store = null; }
+        try {
+            store = GM_getValue(STORE_KEY, null);
+        } catch (_) {
+            store = null;
+        }
         if (!store) {
             return {
                 whitelist: ['https://chatglm.cn/'],
@@ -98,8 +103,7 @@
             if (!cfg.autoSendMode) cfg.autoSendMode = 'click';
             if (cfg.autoSendByEnter !== undefined) delete cfg.autoSendByEnter;
             if (!cfg.selAnswerItem) cfg.selAnswerItem = '.answer';
-            if (!cfg.selCodeContentElement) cfg.selCodeContentElement = '';
-            // 新字段迁移
+            if (!cfg.selCodeContentElement) cfg.selCodeContentElement = ''; // 新字段迁移
             if (cfg.selCodeCopyButton === undefined) cfg.selCodeCopyButton = '';
             if (cfg.selSendButtonContainer === undefined) cfg.selSendButtonContainer = '';
             if (cfg.cleanIgnoreClassKeywords === undefined) cfg.cleanIgnoreClassKeywords = 'thinking,reasoning,probe,deepseek-reason';
@@ -108,6 +112,7 @@
             if (!cfg.textCleanRules) cfg.textCleanRules = [];
             if (cfg.codeTrimStart === undefined) cfg.codeTrimStart = 0;
             if (cfg.codeTrimEnd === undefined) cfg.codeTrimEnd = 0;
+            if (cfg.memoryInjectFrequency === undefined) cfg.memoryInjectFrequency = 1; // [新增]
         };
 
         if (store.defaults && store.perSite !== undefined) {
@@ -126,11 +131,12 @@
         for (const key of Object.keys(SITE_DEFAULTS)) {
             if (store[key] !== undefined) newStore.defaults[key] = store[key];
         }
-        
+
         if (newStore.defaults.autoSendByEnter !== undefined && newStore.defaults.autoSendMode === undefined) {
             newStore.defaults.autoSendMode = newStore.defaults.autoSendByEnter ? 'enter' : 'click';
             delete newStore.defaults.autoSendByEnter;
         }
+
         return newStore;
     }
 
@@ -149,11 +155,21 @@
     function cfgLoad() {
         const store = _loadStore();
         const site = _matchSite();
-        const siteCfg = (site && store.perSite && store.perSite[site]) ? store.perSite[site] : (store.defaults || {});
-        const merged = { ...DEFAULTS, whitelist: store.whitelist, debugMode: store.debugMode, ...siteCfg };
+        const siteCfg = (site && store.perSite && store.perSite[site])
+            ? store.perSite[site]
+            : (store.defaults || {});
+
+        const merged = {
+            ...DEFAULTS,
+            whitelist: store.whitelist,
+            debugMode: store.debugMode,
+            ...siteCfg
+        };
+
         if (merged.autoSendByEnter !== undefined && merged.autoSendMode === undefined) {
             merged.autoSendMode = merged.autoSendByEnter ? 'enter' : 'click';
         }
+
         return merged;
     }
 
@@ -162,10 +178,12 @@
     function cfgSave(panelValues) {
         const store = _loadStore();
         store.debugMode = panelValues.debugMode;
+
         const siteData = { ...SITE_DEFAULTS };
         for (const key of Object.keys(SITE_DEFAULTS)) {
             if (panelValues[key] !== undefined) siteData[key] = panelValues[key];
         }
+
         if (_editTarget === 'defaults') {
             store.defaults = siteData;
         } else {
@@ -212,29 +230,52 @@
         GM_setValue(ENABLE_MODE_KEY, 'disabled');
         sessionStorage.removeItem(PAGE_SESSION_KEY);
         switch (state) {
-            case 'always': GM_setValue(ENABLE_MODE_KEY, 'always'); break;
-            case 'session': _sessionEnabled = true; break;
-            case 'page': sessionStorage.setItem(PAGE_SESSION_KEY, '1'); break;
+            case 'always':
+                GM_setValue(ENABLE_MODE_KEY, 'always');
+                break;
+            case 'session':
+                _sessionEnabled = true;
+                break;
+            case 'page':
+                sessionStorage.setItem(PAGE_SESSION_KEY, '1');
+                break;
         }
     }
 
-    const ENABLE_LABELS = { disabled: '不启用', always: '默认启用', session: '此次会话启用', page: '当前页面启用' };
+    const ENABLE_LABELS = {
+        disabled: '不启用',
+        always: '默认启用',
+        session: '此次会话启用',
+        page: '当前页面启用'
+    };
 
     function _stopAgent() {
         _pollConfigActive = false;
-        if (_pollTimer) { clearInterval(_pollTimer); _pollTimer = null; }
+        if (_pollTimer) {
+            clearInterval(_pollTimer);
+            _pollTimer = null;
+        }
         _destroyAutoSendToggle();
         _isProcessing = false;
         _cmdQueue = [];
         _taskList = [];
-        if (_sseEventSource) { try { _sseEventSource.abort(); } catch(e) {} _sseEventSource = null; }
+        if (_sseEventSource) {
+            try {
+                _sseEventSource.abort();
+            } catch (e) { }
+            _sseEventSource = null;
+        }
         log('INFO', '⏹ Agent 已停止');
     }
 
     let _enableMenuIds = [];
 
     function _registerEnableMenus() {
-        _enableMenuIds.forEach(id => { try { GM_unregisterMenuCommand(id); } catch(e) {} });
+        _enableMenuIds.forEach(id => {
+            try {
+                GM_unregisterMenuCommand(id);
+            } catch (e) { }
+        });
         _enableMenuIds = [];
         const current = _getEnableState();
         const modes = ['disabled', 'always', 'session', 'page'];
@@ -267,126 +308,126 @@
      * 2. 样式注入
      * ================================================================ */
     GM_addStyle(`
-        #agent-panel{position:fixed;top:50%;left:50%;transform:translate(-50%,-50%);width:min(540px,92vw);max-height:82vh;overflow-y:auto;background:#0a0a0a;color:#d4d4d4;border:1px solid #2a2a2a;border-radius:0;box-shadow:0 24px 80px rgba(0,0,0,.55);z-index:2147483647;font:14px/1.5 system-ui,sans-serif}
-        #agent-panel *{box-sizing:border-box;margin:0;padding:0}
-        #agent-panel-head{display:flex;align-items:center;justify-content:space-between;padding:14px 20px;border-bottom:1px solid #2a2a2a}
-        #agent-panel-head b{font-size:15px;color:#facc15}
-        #agent-panel-close{background:none;border:none;color:#a0a0a0;font-size:20px;cursor:pointer;padding:2px 8px;border-radius:0;transition:.15s}
-        #agent-panel-close:hover{background:#2a2a2a;color:#ef4444}
-        #agent-panel-body{padding:20px}
-        .ag-sec{margin-bottom:18px}
-        .ag-sec-title{font-size:11px;font-weight:700;color:#a0a0a0;text-transform:uppercase;letter-spacing:.8px;margin-bottom:8px;display:flex;align-items:center;gap:6px}
-        .ag-sec-title::before{content:'';width:3px;height:13px;background:#facc15;border-radius:0}
-        .ag-field{margin-bottom:10px}
-        .ag-field label{display:block;font-size:12px;color:#d4d4d4;margin-bottom:4px}
-        .ag-row{display:flex;gap:6px;align-items:center}
-        .ag-inp{flex:1;min-width:0;background:#1a1a1a;border:1px solid #2a2a2a;color:#ffffff;padding:7px 10px;border-radius:0;font-size:12px;outline:none;transition:.15s;font-family:'SF Mono',Consolas,monospace}
-        .ag-inp:focus{border-color:#facc15}
-        .ag-btn{padding:7px 13px;border:none;border-radius:0;font-size:12px;font-weight:600;cursor:pointer;transition:.15s;white-space:nowrap}
-        .ag-btn-p{background:#facc15;color:#0a0a0a}.ag-btn-p:hover{background:#fde047}
-        .ag-btn-g{background:#1a1a1a;color:#d4d4d4;border:1px solid #2a2a2a}.ag-btn-g:hover{border-color:#facc15;color:#facc15}
-        .ag-wl-list{max-height:110px;overflow-y:auto;background:#1a1a1a;border-radius:0;padding:3px;margin-bottom:6px}
-        .ag-wl-item{display:flex;align-items:center;gap:6px;padding:5px 10px;border-radius:0;font-size:12px}
-        .ag-wl-item code{flex:1;min-width:0;color:#22c55e;word-break:break-all;font-family:'SF Mono',Consolas,monospace;font-size:11px}
-        .ag-wl-rm{background:none;border:none;color:#ef4444;cursor:pointer;font-size:14px;padding:0 4px;opacity:.5}.ag-wl-rm:hover{opacity:1}
-        .ag-match{font-size:11px;padding:3px 8px;border-radius:0;margin-top:3px}
-        .ag-m-ok{background:rgba(34,197,94,.12);color:#22c55e}
-        .ag-m-fail{background:rgba(239,68,68,.12);color:#ef4444}
-        .ag-m-none{background:rgba(160,160,160,.1);color:#a0a0a0}
-        .ag-foot{display:flex;justify-content:flex-end;gap:8px;padding-top:14px;border-top:1px solid #2a2a2a;margin-top:6px}
-        .ag-toggle{display:flex;align-items:center;gap:10px}
-        .ag-toggle input[type=checkbox]{width:16px;height:16px;accent-color:#facc15}
-        .ag-pos-group{display:flex;gap:0}
-        .ag-pos-btn{padding:4px 10px;background:#1a1a1a;border:1px solid #2a2a2a;color:#a0a0a0;font-size:12px;cursor:pointer;transition:.15s;border-radius:0}
-        .ag-pos-btn+.ag-pos-btn{border-left:none}
-        .ag-pos-btn.active{background:#facc15;color:#0a0a0a;border-color:#facc15}
-        .ag-pos-btn:hover:not(.active){border-color:#facc15;color:#facc15}
-        .ag-site-info{background:#1a1a1a;padding:10px 14px;margin-bottom:10px;border:1px solid #2a2a2a}
-        .ag-site-row{display:flex;align-items:center;gap:8px;margin-bottom:4px;font-size:12px}
-        .ag-site-row:last-child{margin-bottom:0}
-        .ag-site-label{color:#a0a0a0;min-width:56px;flex-shrink:0}
-        .ag-site-value{color:#d4d4d4;word-break:break-all}
-        .ag-site-badge{font-size:10px;padding:1px 6px;flex-shrink:0;border-radius:0}
-        .ag-badge-ok{background:rgba(34,197,94,.12);color:#22c55e}
-        .ag-badge-fail{background:rgba(239,68,68,.12);color:#ef4444}
-        .ag-site-actions{display:flex;gap:6px;margin-bottom:14px;flex-wrap:wrap}
-        .ag-hint{font-size:11px;color:#737373;margin-top:2px}
-        .ag-rule-list{max-height:220px;overflow-y:auto;background:#1a1a1a;border-radius:0;padding:6px;margin-bottom:6px;display:flex;flex-direction:column;gap:8px}
-        .ag-rule-item{background:#1a1a1a;border:1px solid #2a2a2a;padding:8px;border-radius:0}
-        .ag-rule-item .ag-inp{font-size:11px;padding:5px 8px}
-        #agent-pick-dim{position:fixed;inset:0;background:rgba(0,0,0,.28);z-index:2147483645;pointer-events:none}
-        #agent-pick-hl{position:fixed;border:2.5px solid #facc15;background:rgba(250,204,21,.08);border-radius:0;pointer-events:none;z-index:2147483646;transition:left .06s,top .06s,width .06s,height .06s;box-shadow:0 0 0 4000px rgba(0,0,0,.25);display:none}
-        #agent-pick-lock-hl{position:fixed;border:2.5px solid #ef4444;background:rgba(239,68,68,.06);border-radius:0;pointer-events:none;z-index:2147483646;transition:left .06s,top .06s,width .06s,height .06s;display:none}
-        #agent-pick-tip{position:fixed;background:#0a0a0a;color:#fef08a;border:1px solid #2a2a2a;padding:5px 10px;border-radius:0;font:11px/1.4 'SF Mono',Consolas,monospace;z-index:2147483647;pointer-events:none;max-width:560px;word-break:break-all;box-shadow:0 4px 16px rgba(0,0,0,.4);opacity:0;transition:opacity .08s;display:flex;flex-direction:column;gap:3px}
-        .ag-tip-sel{display:flex;align-items:center;gap:0;flex-wrap:wrap}
-        .ag-diag-line{display:flex;align-items:center;gap:4px;flex-wrap:wrap;font-size:10px;color:#a0a0a0;border-top:1px solid #2a2a2a;padding-top:3px}
-        .ag-diag-text{color:#22c55e;max-width:200px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
-        .ag-diag-children{color:#d4d4d4}
-        .ag-diag-size{color:#737373}
-        .ag-diag-ok{color:#22c55e}
-        .ag-diag-warn{color:#facc15}
-        .ag-diag-err{color:#ef4444}
-        .ag-diag-shadow{color:#f97316;background:rgba(249,115,22,.15);padding:0 4px}
-        .ag-diag-scroll{color:#facc15;background:rgba(250,204,21,.1);padding:0 4px}
-        .ag-diag-sep{color:#2a2a2a;margin:0 1px}
-        #agent-pick-bar{position:fixed;top:14px;left:50%;transform:translateX(-50%);background:#0a0a0a;color:#d4d4d4;border:1px solid #facc15;padding:10px 28px;border-radius:0;font-size:14px;z-index:2147483647;box-shadow:0 6px 24px rgba(0,0,0,.5);pointer-events:none}
-        #agent-pick-level{color:#22c55e; margin-left: 8px; font-weight: bold;}
-        #ag-show-levels{pointer-events:auto;cursor:pointer;color:#ef4444;margin-right:8px;border-right:1px solid #2a2a2a;padding-right:8px;white-space:nowrap;flex-shrink:0;transition:color .1s}
-        #ag-show-levels:hover{color:#fca5a5}
-        .ag-level-panel{position:fixed;width:min(420px,85vw);max-height:340px;background:#0a0a0a;border:1px solid #ef4444;border-radius:0;box-shadow:0 8px 32px rgba(0,0,0,.55);z-index:2147483647;display:none;flex-direction:column;font:12px/1.5 'SF Mono',Consolas,monospace;color:#d4d4d4;}
-        .ag-level-head{display:flex;align-items:center;justify-content:space-between;padding:8px 12px;border-bottom:1px solid #2a2a2a;font-weight:600;color:#ef4444;flex-shrink:0;}
-        .ag-level-head button{background:none;border:none;color:#a0a0a0;cursor:pointer;font-size:16px;padding:0 4px;}
-        .ag-level-head button:hover{color:#ef4444}
-        .ag-level-body{flex:1;overflow-y:auto;padding:4px;}
-        .ag-level-body::-webkit-scrollbar{width:4px}
-        .ag-level-body::-webkit-scrollbar-thumb{background:#2a2a2a;border-radius:0}
-        .ag-level-item{display:flex;align-items:center;gap:6px;padding:6px 8px;cursor:pointer;border-left:2px solid transparent;transition:background .1s;}
-        .ag-level-item:hover{background:rgba(239,68,68,.1);border-left-color:#ef4444;}
-        .ag-level-target{background:rgba(239,68,68,.06);border-left-color:#ef4444;}
-        .ag-level-idx{color:#737373;font-size:10px;min-width:18px;text-align:right;flex-shrink:0;}
-        .ag-level-tag{color:#22c55e;font-weight:600;min-width:60px;flex-shrink:0;}
-        .ag-level-digest{color:#fde68a;flex:1;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;font-style:italic;}
-        .ag-level-sel{color:#737373;font-size:10px;max-width:120px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;flex-shrink:0;}
-        #agent-debug{position:fixed;top:10px;right:10px;width:380px;max-height:60vh;background:rgba(10,10,10,.92);border:1px solid #2a2a2a;border-radius:0;box-shadow:0 10px 40px rgba(0,0,0,.5);z-index:2147483644;display:flex;flex-direction:column;font:12px/1.5 'SF Mono',Consolas,monospace;backdrop-filter:blur(8px);color:#a0a0a0;}
-        #agent-debug-head{padding:8px 12px;border-bottom:1px solid #2a2a2a;display:flex;justify-content:space-between;align-items:center;color:#d4d4d4}
-        #agent-debug-body{flex:1;overflow-y:auto;padding:8px;display:flex;flex-direction:column;gap:4px}
-        #agent-debug-body::-webkit-scrollbar{width:4px}
-        #agent-debug-body::-webkit-scrollbar-thumb{background:#2a2a2a;border-radius:0}
-        .ag-log{padding:4px 6px;border-radius:0;word-break:break-all;background:rgba(255,255,255,.03);border-left:3px solid transparent}
-        .ag-log-time{color:#737373;margin-right:6px}
-        .ag-log-info{border-left-color:#facc15;color:#fef08a}
-        .ag-log-warn{border-left-color:#f97316;color:#fed7aa;background:rgba(249,115,22,.05)}
-        .ag-log-err{border-left-color:#ef4444;color:#fca5a5;background:rgba(239,68,68,.05)}
-        .ag-log-ok{border-left-color:#22c55e;color:#bbf7d0;background:rgba(34,197,94,.05)}
-        #agent-debug-foot{padding:6px 12px;border-top:1px solid #2a2a2a;text-align:right}
-        .ag-dbg-btn{background:#1a1a1a;border:1px solid #2a2a2a;color:#a0a0a0;padding:3px 10px;border-radius:0;cursor:pointer;font-size:11px}
-        .ag-dbg-btn:hover{border-color:#facc15;color:#facc15}
-        #agent-auto-send-toggle{position:fixed;z-index:2147483640;display:flex;flex-direction:row;align-items:stretch;background:#0a0a0a;border:1px solid #2a2a2a;pointer-events:auto;white-space:nowrap;user-select:none;opacity:0.85;transition:opacity .15s;}
-        #agent-auto-send-toggle:hover{opacity:1}
-        .ag-as-opts{display:flex;flex-direction:column;padding:4px 4px 4px 8px}
-        .ag-as-opt{font-size:10px;color:#737373;cursor:pointer;padding:5px 2px;line-height:1.3;transition:color .15s;font-family:system-ui,sans-serif}
-        .ag-as-opt:hover{color:#d4d4d4}
-        .ag-as-opt.active{color:#facc15}
-        .ag-as-rail{width:16px;position:relative;display:flex;justify-content:center;border-left:1px solid #2a2a2a;padding:4px 0}
-        .ag-as-rail::before{content:'';position:absolute;top:8px;bottom:8px;width:2px;background:#2a2a2a}
-        .ag-as-thumb{position:absolute;left:50%;transform:translateX(-50%);width:10px;height:10px;background:#facc15;transition:top .25s ease;z-index:1}
-        #ag-calibrate-bar{position:fixed;top:20px;left:50%;transform:translateX(-50%);background:#0a0a0a;color:#fed7aa;border:1px solid #facc15;padding:14px 24px;z-index:2147483647;box-shadow:0 8px 32px rgba(0,0,0,.6);font:13px/1.5 system-ui,sans-serif;display:none;flex-direction:column;align-items:center;gap:10px;pointer-events:auto;width:min(600px,90vw)}
-        #ag-calibrate-bar b{color:#facc15}
-        #ag-calibrate-cards{position:fixed;top:100px;left:50%;transform:translateX(-50%);background:#0a0a0a;border:1px solid #2a2a2a;z-index:2147483647;box-shadow:0 8px 32px rgba(0,0,0,.6);width:min(220px,45vw);overflow-y:auto;overflow-x:hidden;padding:10px;cursor:move}
-        #ag-calibrate-cards::-webkit-scrollbar{width:4px}
-        #ag-calibrate-cards::-webkit-scrollbar-thumb{background:#2a2a2a}
-        .ag-cal-item{display:flex;flex-direction:column;align-items:center;gap:6px;padding:6px;background:#1a1a1a;transition:.15s;width:100%;box-sizing:border-box;overflow:hidden;position:relative;z-index:0;border:1px solid transparent;min-height:0;flex-shrink:0}
-        .ag-cal-item.selected-busy{background:rgba(239,68,68,.1);border-color:#ef4444}
-        .ag-cal-item.selected-idle{background:rgba(34,197,94,.1);border-color:#22c55e}
-        .ag-cal-item.selected-sendable{background:rgba(250,204,21,.1);border-color:#facc15}
-        .ag-cal-clone{width:100%;height:60px;max-height:60px;overflow:hidden;display:flex;align-items:center;justify-content:center;background:#0a0a0a}
-        .ag-cal-actions{display:flex;flex-direction:column;gap:4px;width:100%;align-items:center}
-        .ag-cal-tag{font-size:10px;padding:2px 8px;border:1px solid #2a2a2a;color:#a0a0a0;cursor:pointer;background:none;white-space:nowrap;width:60%;text-align:center}
-        .ag-cal-tag:hover{border-color:#facc15;color:#facc15}
-        .ag-cal-tag.active-busy{border-color:#ef4444;color:#ef4444;background:rgba(239,68,68,.2)}
-        .ag-cal-tag.active-idle{border-color:#22c55e;color:#22c55e;background:rgba(34,197,94,.2)}
-        .ag-cal-tag.active-sendable{border-color:#facc15;color:#facc15;background:rgba(250,204,21,.2)}
-    `);
+#agent-panel{position:fixed;top:50%;left:50%;transform:translate(-50%,-50%);width:min(540px,92vw);max-height:82vh;overflow-y:auto;background:#0a0a0a;color:#d4d4d4;border:1px solid #2a2a2a;border-radius:0;box-shadow:0 24px 80px rgba(0,0,0,.55);z-index:2147483647;font:14px/1.5 system-ui,sans-serif}
+#agent-panel *{box-sizing:border-box;margin:0;padding:0}
+#agent-panel-head{display:flex;align-items:center;justify-content:space-between;padding:14px 20px;border-bottom:1px solid #2a2a2a}
+#agent-panel-head b{font-size:15px;color:#facc15}
+#agent-panel-close{background:none;border:none;color:#a0a0a0;font-size:20px;cursor:pointer;padding:2px 8px;border-radius:0;transition:.15s}
+#agent-panel-close:hover{background:#2a2a2a;color:#ef4444}
+#agent-panel-body{padding:20px}
+.ag-sec{margin-bottom:18px}
+.ag-sec-title{font-size:11px;font-weight:700;color:#a0a0a0;text-transform:uppercase;letter-spacing:.8px;margin-bottom:8px;display:flex;align-items:center;gap:6px}
+.ag-sec-title::before{content:'';width:3px;height:13px;background:#facc15;border-radius:0}
+.ag-field{margin-bottom:10px}
+.ag-field label{display:block;font-size:12px;color:#d4d4d4;margin-bottom:4px}
+.ag-row{display:flex;gap:6px;align-items:center}
+.ag-inp{flex:1;min-width:0;background:#1a1a1a;border:1px solid #2a2a2a;color:#ffffff;padding:7px 10px;border-radius:0;font-size:12px;outline:none;transition:.15s;font-family:'SF Mono',Consolas,monospace}
+.ag-inp:focus{border-color:#facc15}
+.ag-btn{padding:7px 13px;border:none;border-radius:0;font-size:12px;font-weight:600;cursor:pointer;transition:.15s;white-space:nowrap}
+.ag-btn-p{background:#facc15;color:#0a0a0a}.ag-btn-p:hover{background:#fde047}
+.ag-btn-g{background:#1a1a1a;color:#d4d4d4;border:1px solid #2a2a2a}.ag-btn-g:hover{border-color:#facc15;color:#facc15}
+.ag-wl-list{max-height:110px;overflow-y:auto;background:#1a1a1a;border-radius:0;padding:3px;margin-bottom:6px}
+.ag-wl-item{display:flex;align-items:center;gap:6px;padding:5px 10px;border-radius:0;font-size:12px}
+.ag-wl-item code{flex:1;min-width:0;color:#22c55e;word-break:break-all;font-family:'SF Mono',Consolas,monospace;font-size:11px}
+.ag-wl-rm{background:none;border:none;color:#ef4444;cursor:pointer;font-size:14px;padding:0 4px;opacity:.5}.ag-wl-rm:hover{opacity:1}
+.ag-match{font-size:11px;padding:3px 8px;border-radius:0;margin-top:3px}
+.ag-m-ok{background:rgba(34,197,94,.12);color:#22c55e}
+.ag-m-fail{background:rgba(239,68,68,.12);color:#ef4444}
+.ag-m-none{background:rgba(160,160,160,.1);color:#a0a0a0}
+.ag-foot{display:flex;justify-content:flex-end;gap:8px;padding-top:14px;border-top:1px solid #2a2a2a;margin-top:6px}
+.ag-toggle{display:flex;align-items:center;gap:10px}
+.ag-toggle input[type=checkbox]{width:16px;height:16px;accent-color:#facc15}
+.ag-pos-group{display:flex;gap:0}
+.ag-pos-btn{padding:4px 10px;background:#1a1a1a;border:1px solid #2a2a2a;color:#a0a0a0;font-size:12px;cursor:pointer;transition:.15s;border-radius:0}
+.ag-pos-btn+.ag-pos-btn{border-left:none}
+.ag-pos-btn.active{background:#facc15;color:#0a0a0a;border-color:#facc15}
+.ag-pos-btn:hover:not(.active){border-color:#facc15;color:#facc15}
+.ag-site-info{background:#1a1a1a;padding:10px 14px;margin-bottom:10px;border:1px solid #2a2a2a}
+.ag-site-row{display:flex;align-items:center;gap:8px;margin-bottom:4px;font-size:12px}
+.ag-site-row:last-child{margin-bottom:0}
+.ag-site-label{color:#a0a0a0;min-width:56px;flex-shrink:0}
+.ag-site-value{color:#d4d4d4;word-break:break-all}
+.ag-site-badge{font-size:10px;padding:1px 6px;flex-shrink:0;border-radius:0}
+.ag-badge-ok{background:rgba(34,197,94,.12);color:#22c55e}
+.ag-badge-fail{background:rgba(239,68,68,.12);color:#ef4444}
+.ag-site-actions{display:flex;gap:6px;margin-bottom:14px;flex-wrap:wrap}
+.ag-hint{font-size:11px;color:#737373;margin-top:2px}
+.ag-rule-list{max-height:220px;overflow-y:auto;background:#1a1a1a;border-radius:0;padding:6px;margin-bottom:6px;display:flex;flex-direction:column;gap:8px}
+.ag-rule-item{background:#1a1a1a;border:1px solid #2a2a2a;padding:8px;border-radius:0}
+.ag-rule-item .ag-inp{font-size:11px;padding:5px 8px}
+#agent-pick-dim{position:fixed;inset:0;background:rgba(0,0,0,.28);z-index:2147483645;pointer-events:none}
+#agent-pick-hl{position:fixed;border:2.5px solid #facc15;background:rgba(250,204,21,.08);border-radius:0;pointer-events:none;z-index:2147483646;transition:left .06s,top .06s,width .06s,height .06s;box-shadow:0 0 0 4000px rgba(0,0,0,.25);display:none}
+#agent-pick-lock-hl{position:fixed;border:2.5px solid #ef4444;background:rgba(239,68,68,.06);border-radius:0;pointer-events:none;z-index:2147483646;transition:left .06s,top .06s,width .06s,height .06s;display:none}
+#agent-pick-tip{position:fixed;background:#0a0a0a;color:#fef08a;border:1px solid #2a2a2a;padding:5px 10px;border-radius:0;font:11px/1.4 'SF Mono',Consolas,monospace;z-index:2147483647;pointer-events:none;max-width:560px;word-break:break-all;box-shadow:0 4px 16px rgba(0,0,0,.4);opacity:0;transition:opacity .08s;display:flex;flex-direction:column;gap:3px}
+.ag-tip-sel{display:flex;align-items:center;gap:0;flex-wrap:wrap}
+.ag-diag-line{display:flex;align-items:center;gap:4px;flex-wrap:wrap;font-size:10px;color:#a0a0a0;border-top:1px solid #2a2a2a;padding-top:3px}
+.ag-diag-text{color:#22c55e;max-width:200px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.ag-diag-children{color:#d4d4d4}
+.ag-diag-size{color:#737373}
+.ag-diag-ok{color:#22c55e}
+.ag-diag-warn{color:#facc15}
+.ag-diag-err{color:#ef4444}
+.ag-diag-shadow{color:#f97316;background:rgba(249,115,22,.15);padding:0 4px}
+.ag-diag-scroll{color:#facc15;background:rgba(250,204,21,.1);padding:0 4px}
+.ag-diag-sep{color:#2a2a2a;margin:0 1px}
+#agent-pick-bar{position:fixed;top:14px;left:50%;transform:translateX(-50%);background:#0a0a0a;color:#d4d4d4;border:1px solid #facc15;padding:10px 28px;border-radius:0;font-size:14px;z-index:2147483647;box-shadow:0 6px 24px rgba(0,0,0,.5);pointer-events:none}
+#agent-pick-level{color:#22c55e; margin-left: 8px; font-weight: bold;}
+#ag-show-levels{pointer-events:auto;cursor:pointer;color:#ef4444;margin-right:8px;border-right:1px solid #2a2a2a;padding-right:8px;white-space:nowrap;flex-shrink:0;transition:color .1s}
+#ag-show-levels:hover{color:#fca5a5}
+.ag-level-panel{position:fixed;width:min(420px,85vw);max-height:340px;background:#0a0a0a;border:1px solid #ef4444;border-radius:0;box-shadow:0 8px 32px rgba(0,0,0,.55);z-index:2147483647;display:none;flex-direction:column;font:12px/1.5 'SF Mono',Consolas,monospace;color:#d4d4d4;}
+.ag-level-head{display:flex;align-items:center;justify-content:space-between;padding:8px 12px;border-bottom:1px solid #2a2a2a;font-weight:600;color:#ef4444;flex-shrink:0;}
+.ag-level-head button{background:none;border:none;color:#a0a0a0;cursor:pointer;font-size:16px;padding:0 4px;}
+.ag-level-head button:hover{color:#ef4444}
+.ag-level-body{flex:1;overflow-y:auto;padding:4px;}
+.ag-level-body::-webkit-scrollbar{width:4px}
+.ag-level-body::-webkit-scrollbar-thumb{background:#2a2a2a;border-radius:0}
+.ag-level-item{display:flex;align-items:center;gap:6px;padding:6px 8px;cursor:pointer;border-left:2px solid transparent;transition:background .1s;}
+.ag-level-item:hover{background:rgba(239,68,68,.1);border-left-color:#ef4444;}
+.ag-level-target{background:rgba(239,68,68,.06);border-left-color:#ef4444;}
+.ag-level-idx{color:#737373;font-size:10px;min-width:18px;text-align:right;flex-shrink:0;}
+.ag-level-tag{color:#22c55e;font-weight:600;min-width:60px;flex-shrink:0;}
+.ag-level-digest{color:#fde68a;flex:1;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;font-style:italic;}
+.ag-level-sel{color:#737373;font-size:10px;max-width:120px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;flex-shrink:0;}
+#agent-debug{position:fixed;top:10px;right:10px;width:380px;max-height:60vh;background:rgba(10,10,10,.92);border:1px solid #2a2a2a;border-radius:0;box-shadow:0 10px 40px rgba(0,0,0,.5);z-index:2147483644;display:flex;flex-direction:column;font:12px/1.5 'SF Mono',Consolas,monospace;backdrop-filter:blur(8px);color:#a0a0a0;}
+#agent-debug-head{padding:8px 12px;border-bottom:1px solid #2a2a2a;display:flex;justify-content:space-between;align-items:center;color:#d4d4d4}
+#agent-debug-body{flex:1;overflow-y:auto;padding:8px;display:flex;flex-direction:column;gap:4px}
+#agent-debug-body::-webkit-scrollbar{width:4px}
+#agent-debug-body::-webkit-scrollbar-thumb{background:#2a2a2a;border-radius:0}
+.ag-log{padding:4px 6px;border-radius:0;word-break:break-all;background:rgba(255,255,255,.03);border-left:3px solid transparent}
+.ag-log-time{color:#737373;margin-right:6px}
+.ag-log-info{border-left-color:#facc15;color:#fef08a}
+.ag-log-warn{border-left-color:#f97316;color:#fed7aa;background:rgba(249,115,22,.05)}
+.ag-log-err{border-left-color:#ef4444;color:#fca5a5;background:rgba(239,68,68,.05)}
+.ag-log-ok{border-left-color:#22c55e;color:#bbf7d0;background:rgba(34,197,94,.05)}
+#agent-debug-foot{padding:6px 12px;border-top:1px solid #2a2a2a;text-align:right}
+.ag-dbg-btn{background:#1a1a1a;border:1px solid #2a2a2a;color:#a0a0a0;padding:3px 10px;border-radius:0;cursor:pointer;font-size:11px}
+.ag-dbg-btn:hover{border-color:#facc15;color:#facc15}
+#agent-auto-send-toggle{position:fixed;z-index:2147483640;display:flex;flex-direction:row;align-items:stretch;background:#0a0a0a;border:1px solid #2a2a2a;pointer-events:auto;white-space:nowrap;user-select:none;opacity:0.85;transition:opacity .15s;}
+#agent-auto-send-toggle:hover{opacity:1}
+.ag-as-opts{display:flex;flex-direction:column;padding:4px 4px 4px 8px}
+.ag-as-opt{font-size:10px;color:#737373;cursor:pointer;padding:5px 2px;line-height:1.3;transition:color .15s;font-family:system-ui,sans-serif}
+.ag-as-opt:hover{color:#d4d4d4}
+.ag-as-opt.active{color:#facc15}
+.ag-as-rail{width:16px;position:relative;display:flex;justify-content:center;border-left:1px solid #2a2a2a;padding:4px 0}
+.ag-as-rail::before{content:'';position:absolute;top:8px;bottom:8px;width:2px;background:#2a2a2a}
+.ag-as-thumb{position:absolute;left:50%;transform:translateX(-50%);width:10px;height:10px;background:#facc15;transition:top .25s ease;z-index:1}
+#ag-calibrate-bar{position:fixed;top:20px;left:50%;transform:translateX(-50%);background:#0a0a0a;color:#fed7aa;border:1px solid #facc15;padding:14px 24px;z-index:2147483647;box-shadow:0 8px 32px rgba(0,0,0,.6);font:13px/1.5 system-ui,sans-serif;display:none;flex-direction:column;align-items:center;gap:10px;pointer-events:auto;width:min(600px,90vw)}
+#ag-calibrate-bar b{color:#facc15}
+#ag-calibrate-cards{position:fixed;top:100px;left:50%;transform:translateX(-50%);background:#0a0a0a;border:1px solid #2a2a2a;z-index:2147483647;box-shadow:0 8px 32px rgba(0,0,0,.6);width:min(220px,45vw);overflow-y:auto;overflow-x:hidden;padding:10px;cursor:move}
+#ag-calibrate-cards::-webkit-scrollbar{width:4px}
+#ag-calibrate-cards::-webkit-scrollbar-thumb{background:#2a2a2a}
+.ag-cal-item{display:flex;flex-direction:column;align-items:center;gap:6px;padding:6px;background:#1a1a1a;transition:.15s;width:100%;box-sizing:border-box;overflow:hidden;position:relative;z-index:0;border:1px solid transparent;min-height:0;flex-shrink:0}
+.ag-cal-item.selected-busy{background:rgba(239,68,68,.1);border-color:#ef4444}
+.ag-cal-item.selected-idle{background:rgba(34,197,94,.1);border-color:#22c55e}
+.ag-cal-item.selected-sendable{background:rgba(250,204,21,.1);border-color:#facc15}
+.ag-cal-clone{width:100%;height:60px;max-height:60px;overflow:hidden;display:flex;align-items:center;justify-content:center;background:#0a0a0a}
+.ag-cal-actions{display:flex;flex-direction:column;gap:4px;width:100%;align-items:center}
+.ag-cal-tag{font-size:10px;padding:2px 8px;border:1px solid #2a2a2a;color:#a0a0a0;cursor:pointer;background:none;white-space:nowrap;width:60%;text-align:center}
+.ag-cal-tag:hover{border-color:#facc15;color:#facc15}
+.ag-cal-tag.active-busy{border-color:#ef4444;color:#ef4444;background:rgba(239,68,68,.2)}
+.ag-cal-tag.active-idle{border-color:#22c55e;color:#22c55e;background:rgba(34,197,94,.2)}
+.ag-cal-tag.active-sendable{border-color:#facc15;color:#facc15;background:rgba(250,204,21,.2)}
+`);
 
     /* ================================================================
      * 3. 调试日志系统
@@ -399,14 +440,14 @@
         _debugPanel = document.createElement('div');
         _debugPanel.id = 'agent-debug';
         _debugPanel.innerHTML = `
-            <div id="agent-debug-head">
-                <span>🕵️ Agent 调试台</span>
-                <button class="ag-dbg-btn" id="ag-dbg-close">隐藏</button>
-            </div>
-            <div id="agent-debug-body"></div>
-            <div id="agent-debug-foot">
-                <button class="ag-dbg-btn" id="ag-dbg-clear">清空日志</button>
-            </div>`;
+ <div id="agent-debug-head">
+ <span>🕵️ Agent 调试台</span>
+ <button class="ag-dbg-btn" id="ag-dbg-close">隐藏</button>
+ </div>
+ <div id="agent-debug-body"></div>
+ <div id="agent-debug-foot">
+ <button class="ag-dbg-btn" id="ag-dbg-clear">清空日志</button>
+ </div>`;
         document.body.appendChild(_debugPanel);
         _debugBody = _debugPanel.querySelector('#agent-debug-body');
         _debugPanel.querySelector('#ag-dbg-close').onclick = () => _debugPanel.style.display = 'none';
@@ -478,33 +519,43 @@
         if (!el || el === document.body || el === document.documentElement) return '';
         if (el.id && !/\d/.test(el.id)) {
             const sel = '#' + CSS.escape(el.id);
-            try { if (document.querySelectorAll(sel).length === 1) return sel; } catch (_) {}
+            try {
+                if (document.querySelectorAll(sel).length === 1) return sel;
+            } catch (_) { }
         }
         for (const attr of ['data-testid', 'data-test-id', 'data-role', 'data-cy']) {
             const val = el.getAttribute(attr);
             if (val) {
                 const sel = `${el.tagName.toLowerCase()}[${attr}="${CSS.escape(val)}"]`;
-                try { if (document.querySelectorAll(sel).length === 1) return sel; } catch (_) {}
+                try {
+                    if (document.querySelectorAll(sel).length === 1) return sel;
+                } catch (_) { }
             }
         }
         const role = el.getAttribute('role');
         if (role) {
             const sel = `${el.tagName.toLowerCase()}[role="${CSS.escape(role)}"]`;
-            try { if (document.querySelectorAll(sel).length === 1) return sel; } catch (_) {}
+            try {
+                if (document.querySelectorAll(sel).length === 1) return sel;
+            } catch (_) { }
         }
         if (el.className && typeof el.className === 'string') {
             const allCls = el.className.trim().split(/\s+/).filter(c => c);
             const cleanCls = allCls.filter(c => !_isPureHashClass(c) && !/^(_|-{2})/.test(c) && !/^(is|has|can|should)/.test(c) && !/[_-][a-f0-9]{5,8}$/i.test(c));
             if (cleanCls.length) {
                 const sel = `${el.tagName.toLowerCase()}.${cleanCls.map(c => CSS.escape(c)).join('.')}`;
-                try { if (document.querySelectorAll(sel).length === 1) return sel; } catch (_) {}
+                try {
+                    if (document.querySelectorAll(sel).length === 1) return sel;
+                } catch (_) { }
             }
             const hashCls = allCls.filter(c => !_isPureHashClass(c) && !/^(_|-{2})/.test(c) && !/^(is|has|can|should)/.test(c) && /[_-][a-f0-9]{5,8}$/i.test(c));
             if (hashCls.length) {
                 const stripped = hashCls.map(c => _stripClassHash(c)).filter(s => s.length >= 3);
                 if (stripped.length) {
                     const sel = `${el.tagName.toLowerCase()}${stripped.map(s => `[class*="${CSS.escape(s)}"]`).join('')}`;
-                    try { if (document.querySelectorAll(sel).length === 1) return sel; } catch (_) {}
+                    try {
+                        if (document.querySelectorAll(sel).length === 1) return sel;
+                    } catch (_) { }
                 }
             }
         }
@@ -530,7 +581,9 @@
             cur = cur.parentElement;
         }
         const sel = segs.join(' > ');
-        try { if (document.querySelectorAll(sel).length === 1) return sel; } catch (_) {}
+        try {
+            if (document.querySelectorAll(sel).length === 1) return sel;
+        } catch (_) { }
         return sel;
     }
 
@@ -606,14 +659,14 @@
 
     function _getElementDigest(el) {
         const tag = el.tagName.toLowerCase();
-        if (['input','textarea','select'].includes(tag)) {
+        if (['input', 'textarea', 'select'].includes(tag)) {
             const v = el.value;
-            return v ? `${tag}[value="${v.slice(0,50)}"]` : `${tag}`;
+            return v ? `${tag}[value="${v.slice(0, 50)}"]` : `${tag}`;
         }
         if (tag === 'img') {
-            const alt = el.alt ? `alt="${el.alt.slice(0,30)}"` : '';
-            const src = el.src ? el.src.split('/').pop().slice(0,40) : '';
-            return `img${alt ? ' '+alt : ''}${src ? ' src=…/'+src : ''}`;
+            const alt = el.alt ? `alt="${el.alt.slice(0, 30)}"` : '';
+            const src = el.src ? el.src.split('/').pop().slice(0, 40) : '';
+            return `img${alt ? ' ' + alt : ''}${src ? ' src=…/' + src : ''}`;
         }
         let text = '';
         for (const node of el.childNodes) {
@@ -627,7 +680,10 @@
     function _highlightEl(el, mouseX, mouseY) {
         const r = el.getBoundingClientRect();
         _pickHL.style.display = 'block';
-        Object.assign(_pickHL.style, { left: (r.left-2)+'px', top: (r.top-2)+'px', width: (r.width+4)+'px', height: (r.height+4)+'px' });
+        Object.assign(_pickHL.style, {
+            left: (r.left - 2) + 'px', top: (r.top - 2) + 'px',
+            width: (r.width + 4) + 'px', height: (r.height + 4) + 'px'
+        });
         const sel = genSelector(el);
         const digest = _getElementDigest(el);
         const tag = el.tagName.toLowerCase();
@@ -647,7 +703,9 @@
         diagParts.push(`<span class="ag-diag-size">${w}×${h}</span>`);
         if (el.shadowRoot) diagParts.push(`<span class="ag-diag-shadow">ShadowDOM</span>`);
         const diagHtml = diagParts.length ? `<div class="ag-diag-line">${diagParts.join('<span class="ag-diag-sep">|</span>')}</div>` : '';
-        _pickTip.innerHTML = _lockedBaseEl ? `<span class="ag-tip-sel"><span id="ag-show-levels">展开所有层级</span><span>${esc(sel)} ←${tag}${digestStr}</span></span>${diagHtml}` : `<span class="ag-tip-sel"><span>${esc(sel)} ←${tag}${digestStr}</span></span>${diagHtml}`;
+        _pickTip.innerHTML = _lockedBaseEl ?
+            `<span class="ag-tip-sel"><span id="ag-show-levels">展开所有层级</span><span>${esc(sel)} ←${tag}${digestStr}</span></span>${diagHtml}` :
+            `<span class="ag-tip-sel"><span>${esc(sel)} ←${tag}${digestStr}</span></span>${diagHtml}`;
         _pickTip.style.opacity = '1';
         _pickTip.style.left = Math.min(mouseX + 14, innerWidth - 510) + 'px';
         _pickTip.style.top = (mouseY + 22) + 'px';
@@ -657,17 +715,26 @@
         if (!_pickLockHL || !_lockedBaseEl) return;
         const r = _lockedBaseEl.getBoundingClientRect();
         _pickLockHL.style.display = 'block';
-        Object.assign(_pickLockHL.style, { left: (r.left-2)+'px', top: (r.top-2)+'px', width: (r.width+4)+'px', height: (r.height+4)+'px' });
+        Object.assign(_pickLockHL.style, {
+            left: (r.left - 2) + 'px', top: (r.top - 2) + 'px',
+            width: (r.width + 4) + 'px', height: (r.height + 4) + 'px'
+        });
     }
 
     function _syncHighlightPositions() {
         if (_pickHL && _pickedEl) {
             const r = _pickedEl.getBoundingClientRect();
-            Object.assign(_pickHL.style, { left: (r.left - 2) + 'px', top: (r.top - 2) + 'px', width: (r.width + 4) + 'px', height: (r.height + 4) + 'px' });
+            Object.assign(_pickHL.style, {
+                left: (r.left - 2) + 'px', top: (r.top - 2) + 'px',
+                width: (r.width + 4) + 'px', height: (r.height + 4) + 'px'
+            });
         }
         if (_pickLockHL && _lockedBaseEl) {
             const r = _lockedBaseEl.getBoundingClientRect();
-            Object.assign(_pickLockHL.style, { left: (r.left - 2) + 'px', top: (r.top - 2) + 'px', width: (r.width + 4) + 'px', height: (r.height + 4) + 'px' });
+            Object.assign(_pickLockHL.style, {
+                left: (r.left - 2) + 'px', top: (r.top - 2) + 'px',
+                width: (r.width + 4) + 'px', height: (r.height + 4) + 'px'
+            });
         }
     }
 
@@ -710,7 +777,10 @@
         _levelPanel.style.left = left + 'px';
         _levelPanel.style.top = top + 'px';
         _levelPanel.style.display = 'flex';
-        _levelPanel.querySelector('#ag-level-close').onclick = (e) => { e.stopPropagation(); _levelPanel.style.display = 'none'; };
+        _levelPanel.querySelector('#ag-level-close').onclick = (e) => {
+            e.stopPropagation();
+            _levelPanel.style.display = 'none';
+        };
         _levelPanel.querySelectorAll('.ag-level-item').forEach(item => {
             item.onclick = (e) => {
                 e.stopPropagation();
@@ -759,10 +829,16 @@
             } else {
                 _hideLockHL();
                 _domStack = [];
-                _lockedBaseEl = target;
-                _pickedEl = target;
-                _updateLockHL();
-                log('INFO', `点击超出锁定范围，重新选择: <${_pickedEl.tagName.toLowerCase()}>`);
+                _lockedBaseEl = target || null;
+                _pickedEl = target || null;
+                if (_pickedEl) {
+                    _updateLockHL();
+                    log('INFO', `点击超出锁定范围，重新选择: <${_pickedEl.tagName.toLowerCase()}>`);
+                    _highlightEl(_pickedEl, e.clientX, e.clientY);
+                } else {
+                    _pickHL.style.display = 'none';
+                }
+                _updateBarInfo();
             }
         }
         _highlightEl(_pickedEl, e.clientX, e.clientY);
@@ -854,7 +930,7 @@
         while (cur && cur !== document.documentElement) {
             const tag = cur.tagName ? cur.tagName.toLowerCase() : '#document';
             const digest = _getElementDigest(cur);
-            ctxChain.push(`${tag}${digest !== tag ? '('+digest+')' : ''}`);
+            ctxChain.push(`${tag}${digest !== tag ? '(' + digest + ')' : ''}`);
             cur = cur.parentElement;
         }
         log('INFO', `上下文链: ${ctxChain.reverse().join(' > ')}`);
@@ -907,25 +983,22 @@
             return;
         }
         list.innerHTML = rules.map((rule, idx) => `
-            <div class="ag-rule-item" data-idx="${idx}">
-                <div class="ag-row" style="margin-bottom:6px">
-                    <input class="ag-inp rule-find" placeholder="查找内容" value="${escAttr(rule.find || '')}" style="flex:1.2">
-                    <input class="ag-inp rule-replace" placeholder="替换为" value="${escAttr(rule.replace || '')}" style="flex:1">
-                </div>
-                <div class="ag-row" style="flex-wrap:wrap">
-                    <label class="ag-toggle" style="font-size:11px;margin:0;cursor:pointer">
-                        <input type="checkbox" class="rule-regex" ${rule.isRegex ? 'checked' : ''}> 正则
-                    </label>
-                    <label class="ag-toggle" style="font-size:11px;margin:0;cursor:pointer">
-                        <input type="checkbox" class="rule-unicode" ${rule.isUnicode ? 'checked' : ''}> Unicode
-                    </label>
-                    <label class="ag-toggle" style="font-size:11px;margin:0;cursor:pointer">
-                        <input type="checkbox" class="rule-enabled" ${rule.enabled !== false ? 'checked' : ''}> 启用
-                    </label>
-                    <button class="ag-btn ag-btn-g rule-del" style="padding:3px 8px;color:#ef4444;margin-left:auto">✕ 删除</button>
-                </div>
-            </div>
-        `).join('');
+ <div class="ag-rule-item" data-idx="${idx}">
+ <div class="ag-row" style="margin-bottom:6px">
+ <input class="ag-inp rule-find" placeholder="查找内容" value="${escAttr(rule.find || '')}" style="flex:1.2">
+ <input class="ag-inp rule-replace" placeholder="替换为" value="${escAttr(rule.replace || '')}" style="flex:1">
+ </div>
+ <div class="ag-row" style="flex-wrap:wrap">
+ <label class="ag-toggle" style="font-size:11px;margin:0;cursor:pointer">
+ <input type="checkbox" class="rule-regex" ${rule.isRegex ? 'checked' : ''}> 正则 </label>
+ <label class="ag-toggle" style="font-size:11px;margin:0;cursor:pointer">
+ <input type="checkbox" class="rule-unicode" ${rule.isUnicode ? 'checked' : ''}> Unicode </label>
+ <label class="ag-toggle" style="font-size:11px;margin:0;cursor:pointer">
+ <input type="checkbox" class="rule-enabled" ${rule.enabled !== false ? 'checked' : ''}> 启用 </label>
+ <button class="ag-btn ag-btn-g rule-del" style="padding:3px 8px;color:#ef4444;margin-left:auto">✕ 删除</button>
+ </div>
+ </div>
+ `).join('');
     }
 
     function _collectRulesFromDOM() {
@@ -949,9 +1022,13 @@
         const inWhitelist = !!site;
         const hasSiteCfg = site && store.perSite && store.perSite[site];
         const source = _getConfigSource();
+
         let editCfg;
-        if (_editTarget === 'defaults') editCfg = { ...SITE_DEFAULTS, ...(store.defaults || {}) };
-        else editCfg = { ...SITE_DEFAULTS, ...(store.perSite?.[_editTarget] || {}) };
+        if (_editTarget === 'defaults') {
+            editCfg = { ...SITE_DEFAULTS, ...(store.defaults || {}) };
+        } else {
+            editCfg = { ...SITE_DEFAULTS, ...(store.perSite?.[_editTarget] || {}) };
+        }
 
         const titleText = _editTarget === 'defaults' ? '🔧 Poker Agent 配置 — 默认设置' : `🔧 Poker Agent 配置 — ${_editTarget} 独立设置`;
         const saveText = _editTarget === 'defaults' ? '💾 保存默认配置' : `💾 保存独立配置`;
@@ -974,119 +1051,132 @@
         }
 
         _panel.innerHTML = `
-            <div id="agent-panel-head"><b>${titleText}</b><button id="agent-panel-close">✕</button></div>
-            <div id="agent-panel-body">
-                <div class="ag-site-info">
-                    <div class="ag-site-row"><span class="ag-site-label">当前网站:</span><span class="ag-site-value">${esc(siteDisplay)}</span><span class="ag-site-badge ${badgeClass}">${badgeText}</span></div>
-                    <div class="ag-site-row"><span class="ag-site-label">当前使用:</span><span class="ag-site-value" style="color:#818cf8">${esc(sourceDisplay)}</span></div>
-                </div>
-                <div class="ag-site-actions">${actionsHtml}</div>
-                <div class="ag-sec"><div class="ag-sec-title">控制台</div><div class="ag-toggle"><input type="checkbox" id="ag-debug-toggle" ${store.debugMode ? 'checked' : ''} /><label for="ag-debug-toggle" style="cursor:pointer">启用调试模式 (右侧显示日志浮窗)</label></div></div>
-                <div class="ag-sec"><div class="ag-sec-title">网站白名单</div><div class="ag-wl-list" id="ag-wl-list">${store.whitelist.length ? store.whitelist.map((u, i) => `<div class="ag-wl-item"><code>${esc(u)}</code><button class="ag-wl-rm" data-i="${i}">✕</button></div>`).join('') : '<div style="padding:8px 10px;color:#52525b;font-size:12px">暂无</div>'}</div><div class="ag-row"><input class="ag-inp" id="ag-wl-new" placeholder="https://example.com/" /><button class="ag-btn ag-btn-g" id="ag-wl-add">添加</button></div></div>
-                <div class="ag-sec"><div class="ag-sec-title">本地 Agent 服务</div><div class="ag-field"><label>接收指令的 HTTP 地址</label><input class="ag-inp" id="ag-api" value="${esc(editCfg.apiUrl)}" /></div></div>
-                <div class="ag-sec">
-                    <div class="ag-sec-title">页面元素绑定</div>
-                    <div class="ag-field"><label>聊天记录容器</label><div class="ag-row"><input class="ag-inp" id="ag-s-chat" value="${esc(editCfg.selChatContainer)}" /><button class="ag-btn ag-btn-p" id="ag-pick-chat">🖱 选择</button></div><div id="ag-m-chat"></div></div>
-                    <div class="ag-field"><label>AI回答元素</label><div class="ag-row"><input class="ag-inp" id="ag-s-answer" value="${esc(editCfg.selAnswerItem)}" /><button class="ag-btn ag-btn-p" id="ag-pick-answer">🖱 选择</button></div><div id="ag-m-answer"></div><div class="ag-hint">用于从聊天容器中定位AI的回复，默认 .answer；如不匹配请用选择器选取</div></div>
-                    <div class="ag-field">
-                        <label>代码内容元素 (必需)</label>
-                        <div class="ag-row"><input class="ag-inp" id="ag-s-code-content" value="${esc(editCfg.selCodeContentElement)}" placeholder="如：pre, .code-block" /><button class="ag-btn ag-btn-p" id="ag-pick-code-content">🖱 选择</button></div>
-                        <div id="ag-m-code-content"></div>
-                    </div>
-                    <div class="ag-field">
-                        <label>代码复制按钮 (可选)</label>
-                        <div class="ag-row"><input class="ag-inp" id="ag-s-code-copy-btn" value="${esc(editCfg.selCodeCopyButton)}" placeholder="如：button.copy, .icon-copy" /><button class="ag-btn ag-btn-p" id="ag-pick-code-copy-btn">🖱 选择</button></div>
-                        <div id="ag-m-code-copy-btn"></div>
-                        <div class="ag-hint">如果配置，将点击此按钮拦截剪贴板内容；失败则回退到读取代码元素文本。</div>
-                    </div>
-                    <div class="ag-field" style="margin-top:8px">
-                        <label>代码文本裁剪</label>
-                        <div class="ag-row">
-                            <input class="ag-inp" id="ag-trim-start" type="number" value="${editCfg.codeTrimStart || 0}" style="width:80px" />
-                            <span style="font-size:11px;color:#a0a0a0;margin-right:12px">去掉开头字符数</span>
-                            <input class="ag-inp" id="ag-trim-end" type="number" value="${editCfg.codeTrimEnd || 0}" style="width:80px" />
-                            <span style="font-size:11px;color:#a0a0a0">去掉末尾字符数</span>
-                        </div>
-                    </div>
-                    <div class="ag-field"><label>输入框</label><div class="ag-row"><input class="ag-inp" id="ag-s-input" value="${esc(editCfg.selInputBox)}" /><button class="ag-btn ag-btn-p" id="ag-pick-input">🖱 选择</button></div><div id="ag-m-input"></div></div>
-                    <div class="ag-field">
-                        <label>发送按钮</label><div class="ag-row"><input class="ag-inp" id="ag-s-send" value="${esc(editCfg.selSendButton)}" /><button class="ag-btn ag-btn-p" id="ag-pick-send">🖱 选择</button></div><div id="ag-m-send"></div>
-                        <div class="ag-field" style="margin-top:6px">
-                            <label>发送按钮容器 (可选)</label>
-                            <div class="ag-row"><input class="ag-inp" id="ag-s-send-container" value="${esc(editCfg.selSendButtonContainer)}" /><button class="ag-btn ag-btn-p" id="ag-pick-send-container">🖱 选择</button></div>
-                            <div id="ag-m-send-container"></div>
-                            <div class="ag-hint">如果网站在不同状态下会完全替换按钮元素（而非修改属性），请选择按钮的父容器。填写后指纹基于容器内容生成，selSendButton 仍可用于容器内精确定位点击目标。</div>
-                        </div>
-                        <div class="ag-field" id="ag-calibrate-field" style="margin-top:6px; padding:8px; background:#232436; border:1px solid #2a2a2a; display:${(editCfg.selSendButton || editCfg.selSendButtonContainer) ? 'block' : 'none'};">
-                            <div style="font-size:12px; color:#a1a1aa; margin-bottom:6px">捕获按钮的各种形态，手动标记【忙碌】(AI输出时)和【空闲】态。</div>
-                            <div class="ag-row"><div id="ag-calibrate-status" style="flex:1; font-size:11px; color:#52525b"> 忙碌:${(editCfg.sendBtnBusyFingerprints||[]).length}个 | 空闲:${(editCfg.sendBtnIdleFingerprints||[]).length}个 | 可发送:${(editCfg.sendBtnSendableFingerprints||[]).length}个 </div><button class="ag-btn ag-btn-p" id="ag-start-calibrate">${(editCfg.sendBtnBusyFingerprints||[]).length > 0 ? '重新校准' : '开始校准'}</button></div>
-                        </div>
-                    </div>
-                    <div class="ag-field" style="margin-top:12px;padding-top:10px;border-top:1px solid #2a2a2a">
-                        <label>输出完毕判断逻辑</label>
-                        <div class="ag-row" style="margin-bottom:6px">
-                            <input type="radio" name="verifyMode" id="ag-mode-single" value="single" ${editCfg.verifyMode !== 'double' ? 'checked' : ''} />
-                            <label for="ag-mode-single" style="font-size:12px;cursor:pointer;margin-right:12px">单验证 (脱离忙碌即放行)</label>
-                            <input type="radio" name="verifyMode" id="ag-mode-double" value="double" ${editCfg.verifyMode === 'double' ? 'checked' : ''} />
-                            <label for="ag-mode-double" style="font-size:12px;cursor:pointer">双验证 (需进入空闲态)</label>
-                        </div>
-                        <div class="ag-row">
-                            <label style="font-size:12px;color:#a0a0a0;white-space:nowrap">放行前额外延时</label>
-                            <input class="ag-inp" id="ag-wait-delay" type="number" value="${editCfg.waitDelayAfterDone || 500}" style="width:80px" />
-                        </div>
-                    </div>
-                    <label>发送模式选择器</label>
-                    <div class="ag-toggle" style="margin-bottom:6px">
-                        <input type="checkbox" id="ag-show-toggle" ${editCfg.showAutoSendToggle ? 'checked' : ''} />
-                        <label for="ag-show-toggle" style="cursor:pointer">在发送按钮旁显示发送模式选择器</label>
-                    </div>
-                    <div class="ag-row">
-                        <label style="font-size:11px;color:#a0a0a0;white-space:nowrap">位置</label>
-                        <div class="ag-pos-group">
-                            <button class="ag-pos-btn" data-pos="left">← 左</button>
-                            <button class="ag-pos-btn" data-pos="top">↑ 上</button>
-                            <button class="ag-pos-btn" data-pos="right">→ 右</button>
-                            <button class="ag-pos-btn" data-pos="bottom">↓ 下</button>
-                        </div>
-                    </div>
-                    <div class="ag-field" style="margin-top:8px">
-                        <label>发送前防抖延时</label>
-                        <div class="ag-row">
-                            <input class="ag-inp" id="ag-debounce-delay" type="number" value="${editCfg.sendDebounceDelay ?? 100}" style="width:80px" />
-                            <span style="font-size:11px;color:#a0a0a0">检测到可发送状态后等待的毫秒数，0=不等待，默认100</span>
-                        </div>
-                    </div>
-                </div>
-                <div class="ag-sec" >
-                    <div class="ag-sec-title" >内容清理规则 </div >
-                    <div class="ag-field" >
-                        <label >忽略的class关键词 (逗号分隔) </label >
-                        <div class="ag-row" >
-                            <input class="ag-inp" id="ag-clean-keywords" value="${esc(editCfg.cleanIgnoreClassKeywords)}" />
-                            <button class="ag-btn ag-btn-p" id="ag-pick-clean-keyword" >🖱 选择 </button >
-                        </div >
-                        <div class="ag-hint" >包含这些关键词的class所在元素会被移除，支持用选择器直接抓取行号等干扰元素的class </div >
-                    </div >
-                    <div class="ag-toggle" style="margin-bottom:6px">
-                        <input type="checkbox" id="ag-clean-buttons" ${editCfg.cleanRemoveButtonLike !== false ? 'checked' : ''} />
-                        <label for="ag-clean-buttons" style="cursor:pointer">移除按钮/操作类元素 (copy/operate/action/toolbar)</label>
-                    </div>
-                    <div class="ag-toggle">
-                        <input type="checkbox" id="ag-clean-pre" ${editCfg.cleanRemovePre !== false ? 'checked' : ''} />
-                        <label for="ag-clean-pre" style="cursor:pointer">移除pre代码块 (除非含【CodeSTART】)</label>
-                    </div>
-                </div>
-                <div class="ag-sec">
-                    <div class="ag-sec-title">指令文本清洗规则</div>
-                    <div class="ag-hint" style="margin-bottom:6px">在指令发送给后端前，按顺序执行以下替换规则。开启 Unicode 可解析 \\uXXXX 或 U+XXXX。</div>
-                    <div class="ag-rule-list" id="ag-rule-list"></div>
-                    <div class="ag-row" style="margin-top:8px">
-                        <button class="ag-btn ag-btn-g" id="ag-add-rule">➕ 添加规则</button>
-                    </div>
-                </div>
-                <div class="ag-foot"><button class="ag-btn ag-btn-g" id="ag-cancel">取消</button><button class="ag-btn ag-btn-p" id="ag-save">${saveText}</button></div>
-            </div>
-        `;
+ <div id="agent-panel-head"><b>${titleText}</b><button id="agent-panel-close">✕</button></div>
+ <div id="agent-panel-body">
+ <div class="ag-site-info">
+ <div class="ag-site-row"><span class="ag-site-label">当前网站:</span><span class="ag-site-value">${esc(siteDisplay)}</span><span class="ag-site-badge ${badgeClass}">${badgeText}</span></div>
+ <div class="ag-site-row"><span class="ag-site-label">当前使用:</span><span class="ag-site-value" style="color:#818cf8">${esc(sourceDisplay)}</span></div>
+ </div>
+ <div class="ag-site-actions">${actionsHtml}</div>
+ <div class="ag-sec"><div class="ag-sec-title">控制台</div><div class="ag-toggle"><input type="checkbox" id="ag-debug-toggle" ${store.debugMode ? 'checked' : ''} /><label for="ag-debug-toggle" style="cursor:pointer">启用调试模式 (右侧显示日志浮窗)</label></div></div>
+ <div class="ag-sec"><div class="ag-sec-title">网站白名单</div><div class="ag-wl-list" id="ag-wl-list">${store.whitelist.length ? store.whitelist.map((u, i) => `<div class="ag-wl-item"><code>${esc(u)}</code><button class="ag-wl-rm" data-i="${i}">✕</button></div>`).join('') : '<div style="padding:8px 10px;color:#52525b;font-size:12px">暂无</div>'}</div><div class="ag-row"><input class="ag-inp" id="ag-wl-new" placeholder="https://example.com/" /><button class="ag-btn ag-btn-g" id="ag-wl-add">添加</button></div></div>
+ <div class="ag-sec"><div class="ag-sec-title">本地 Agent 服务</div><div class="ag-field"><label>接收指令的 HTTP 地址</label><input class="ag-inp" id="ag-api" value="${esc(editCfg.apiUrl)}" /></div></div>
+ <div class="ag-sec">
+ <div class="ag-sec-title">页面元素绑定</div>
+ <div class="ag-field"><label>聊天记录容器</label><div class="ag-row"><input class="ag-inp" id="ag-s-chat" value="${esc(editCfg.selChatContainer)}" /><button class="ag-btn ag-btn-p" id="ag-pick-chat">🖱 选择</button></div><div id="ag-m-chat"></div></div>
+ <div class="ag-field"><label>AI回答元素</label><div class="ag-row"><input class="ag-inp" id="ag-s-answer" value="${esc(editCfg.selAnswerItem)}" /><button class="ag-btn ag-btn-p" id="ag-pick-answer">🖱 选择</button></div><div id="ag-m-answer"></div><div class="ag-hint">用于从聊天容器中定位AI的回复，默认 .answer；如不匹配请用选择器选取</div></div>
+ <div class="ag-field">
+ <label>代码内容元素 (必需)</label>
+ <div class="ag-row"><input class="ag-inp" id="ag-s-code-content" value="${esc(editCfg.selCodeContentElement)}" placeholder="如：pre, .code-block" /><button class="ag-btn ag-btn-p" id="ag-pick-code-content">🖱 选择</button></div>
+ <div id="ag-m-code-content"></div>
+ </div>
+ <div class="ag-field">
+ <label>代码复制按钮 (可选)</label>
+ <div class="ag-row"><input class="ag-inp" id="ag-s-code-copy-btn" value="${esc(editCfg.selCodeCopyButton)}" placeholder="如：button.copy, .icon-copy" /><button class="ag-btn ag-btn-p" id="ag-pick-code-copy-btn">🖱 选择</button></div>
+ <div id="ag-m-code-copy-btn"></div>
+ <div class="ag-hint">如果配置，将点击此按钮拦截剪贴板内容；失败则回退到读取代码元素文本。</div>
+ </div>
+ <div class="ag-field" style="margin-top:8px">
+ <label>代码文本裁剪</label>
+ <div class="ag-row">
+ <input class="ag-inp" id="ag-trim-start" type="number" value="${editCfg.codeTrimStart || 0}" style="width:80px" />
+ <span style="font-size:11px;color:#a0a0a0;margin-right:12px">去掉开头字符数</span>
+ <input class="ag-inp" id="ag-trim-end" type="number" value="${editCfg.codeTrimEnd || 0}" style="width:80px" />
+ <span style="font-size:11px;color:#a0a0a0">去掉末尾字符数</span>
+ </div>
+ </div>
+ <div class="ag-field"><label>输入框</label><div class="ag-row"><input class="ag-inp" id="ag-s-input" value="${esc(editCfg.selInputBox)}" /><button class="ag-btn ag-btn-p" id="ag-pick-input">🖱 选择</button></div><div id="ag-m-input"></div></div>
+ <div class="ag-field">
+ <label>发送按钮</label>
+ <div class="ag-row"><input class="ag-inp" id="ag-s-send" value="${esc(editCfg.selSendButton)}" /><button class="ag-btn ag-btn-p" id="ag-pick-send">🖱 选择</button></div>
+ <div id="ag-m-send"></div>
+ <div class="ag-field" style="margin-top:6px">
+ <label>发送按钮容器 (可选)</label>
+ <div class="ag-row"><input class="ag-inp" id="ag-s-send-container" value="${esc(editCfg.selSendButtonContainer)}" /><button class="ag-btn ag-btn-p" id="ag-pick-send-container">🖱 选择</button></div>
+ <div id="ag-m-send-container"></div>
+ <div class="ag-hint">如果网站在不同状态下会完全替换按钮元素（而非修改属性），请选择按钮的父容器。填写后指纹基于容器内容生成，selSendButton 仍可用于容器内精确定位点击目标。</div>
+ </div>
+ <div class="ag-field" id="ag-calibrate-field" style="margin-top:6px; padding:8px; background:#232436; border:1px solid #2a2a2a; display:${(editCfg.selSendButton || editCfg.selSendButtonContainer) ? 'block' : 'none'};">
+ <div style="font-size:12px; color:#a1a1aa; margin-bottom:6px">捕获按钮的各种形态，手动标记【忙碌】(AI输出时)和【空闲】态。</div>
+ <div class="ag-row"><div id="ag-calibrate-status" style="flex:1; font-size:11px; color:#52525b">
+ 忙碌:${(editCfg.sendBtnBusyFingerprints || []).length}个 | 空闲:${(editCfg.sendBtnIdleFingerprints || []).length}个 | 可发送:${(editCfg.sendBtnSendableFingerprints || []).length}个
+ </div><button class="ag-btn ag-btn-p" id="ag-start-calibrate">${(editCfg.sendBtnBusyFingerprints || []).length > 0 ? '重新校准' : '开始校准'}</button></div>
+ </div>
+ </div>
+ <div class="ag-field" style="margin-top:12px;padding-top:10px;border-top:1px solid #2a2a2a">
+ <label>输出完毕判断逻辑</label>
+ <div class="ag-row" style="margin-bottom:6px">
+ <input type="radio" name="verifyMode" id="ag-mode-single" value="single" ${editCfg.verifyMode !== 'double' ? 'checked' : ''} />
+ <label for="ag-mode-single" style="font-size:12px;cursor:pointer;margin-right:12px">单验证 (脱离忙碌即放行)</label>
+ <input type="radio" name="verifyMode" id="ag-mode-double" value="double" ${editCfg.verifyMode === 'double' ? 'checked' : ''} />
+ <label for="ag-mode-double" style="font-size:12px;cursor:pointer">双验证 (需进入空闲态)</label>
+ </div>
+ <div class="ag-row">
+ <label style="font-size:12px;color:#a0a0a0;white-space:nowrap">放行前额外延时</label>
+ <input class="ag-inp" id="ag-wait-delay" type="number" value="${editCfg.waitDelayAfterDone || 500}" style="width:80px" />
+ </div>
+ </div>
+ <label>发送模式选择器</label>
+ <div class="ag-toggle" style="margin-bottom:6px">
+ <input type="checkbox" id="ag-show-toggle" ${editCfg.showAutoSendToggle ? 'checked' : ''} />
+ <label for="ag-show-toggle" style="cursor:pointer">在发送按钮旁显示发送模式选择器</label>
+ </div>
+ <div class="ag-row">
+ <label style="font-size:11px;color:#a0a0a0;white-space:nowrap">位置</label>
+ <div class="ag-pos-group">
+ <button class="ag-pos-btn" data-pos="left">← 左</button>
+ <button class="ag-pos-btn" data-pos="top">↑ 上</button>
+ <button class="ag-pos-btn" data-pos="right">→ 右</button>
+ <button class="ag-pos-btn" data-pos="bottom">↓ 下</button>
+ </div>
+ </div>
+ <div class="ag-field" style="margin-top:8px">
+ <label>发送前防抖延时</label>
+ <div class="ag-row">
+ <input class="ag-inp" id="ag-debounce-delay" type="number" value="${editCfg.sendDebounceDelay ?? 100}" style="width:80px" />
+ <span style="font-size:11px;color:#a0a0a0">检测到可发送状态后等待的毫秒数，0=不等待，默认100</span>
+ </div>
+ </div>
+ </div>
+ <div class="ag-sec" >
+ <div class="ag-sec-title" >内容清理规则 </div >
+ <div class="ag-field" >
+ <label >忽略的class关键词 (逗号分隔) </label >
+ <div class="ag-row" >
+ <input class="ag-inp" id="ag-clean-keywords" value="${esc(editCfg.cleanIgnoreClassKeywords)}" />
+ <button class="ag-btn ag-btn-p" id="ag-pick-clean-keyword" >🖱 选择 </button >
+ </div >
+ <div class="ag-hint" >包含这些关键词的class所在元素会被移除，支持用选择器直接抓取行号等干扰元素的class </div >
+ </div >
+ <div class="ag-toggle" style="margin-bottom:6px">
+ <input type="checkbox" id="ag-clean-buttons" ${editCfg.cleanRemoveButtonLike !== false ? 'checked' : ''} />
+ <label for="ag-clean-buttons" style="cursor:pointer">移除按钮/操作类元素 (copy/operate/action/toolbar)</label>
+ </div>
+ <div class="ag-toggle">
+ <input type="checkbox" id="ag-clean-pre" ${editCfg.cleanRemovePre !== false ? 'checked' : ''} />
+ <label for="ag-clean-pre" style="cursor:pointer">移除pre代码块 (除非含【CodeSTART】)</label>
+ </div>
+ </div>
+ <div class="ag-sec">
+ <div class="ag-sec-title">记忆系统</div>
+ <div class="ag-field">
+ <label>记忆注入频率（每N轮，0=关闭）</label>
+ <div class="ag-row">
+ <input class="ag-inp" id="ag-memory-freq" type="number" value="${editCfg.memoryInjectFrequency ?? 1}" style="width:80px" />
+ <span style="font-size:11px;color:#a0a0a0">每N轮对话注入一次记忆上下文，0=关闭</span>
+ </div>
+ </div>
+ </div>
+ <div class="ag-sec">
+ <div class="ag-sec-title">指令文本清洗规则</div>
+ <div class="ag-hint" style="margin-bottom:6px">在指令发送给后端前，按顺序执行以下替换规则。开启 Unicode 可解析 \\uXXXX 或 U+XXXX。</div>
+ <div class="ag-rule-list" id="ag-rule-list"></div>
+ <div class="ag-row" style="margin-top:8px">
+ <button class="ag-btn ag-btn-g" id="ag-add-rule">➕ 添加规则</button>
+ </div>
+ </div>
+ <div class="ag-foot"><button class="ag-btn ag-btn-g" id="ag-cancel">取消</button><button class="ag-btn ag-btn-p" id="ag-save">${saveText}</button></div>
+ </div> `;
 
         _panel.querySelector('#agent-panel-close').onclick = hidePanel;
         _panel.querySelector('#ag-cancel').onclick = hidePanel;
@@ -1182,7 +1272,7 @@
         });
 
         // 绑定选择器输入事件和匹配提示
-        ['chat', 'input', 'send', 'send-container', 'answer', 'code-content', 'code-copy-btn'].forEach(t => {
+        ['chat', 'input', 'send', 'send-container', 'answer', 'code-content', 'code-copy-button'].forEach(t => {
             const key = t === 'chat' ? 'selChatContainer' : t === 'input' ? 'selInputBox' : t === 'send' ? 'selSendButton' : t === 'send-container' ? 'selSendButtonContainer' : t === 'answer' ? 'selAnswerItem' : t === 'code-content' ? 'selCodeContentElement' : 'selCodeCopyButton';
             _panel.querySelector(`#ag-s-${t}`).addEventListener('input', function () {
                 _showMatch(this.value.trim(), `ag-m-${t}`);
@@ -1224,6 +1314,7 @@
             siteData.selSendButton = _panel.querySelector('#ag-s-send').value.trim();
             siteData.selSendButtonContainer = _panel.querySelector('#ag-s-send-container').value.trim();
             siteData.showAutoSendToggle = _panel.querySelector('#ag-show-toggle').checked;
+
             const activePos = _panel.querySelector('.ag-pos-btn.active');
             siteData.autoSendTogglePos = activePos ? activePos.dataset.pos : 'right';
             siteData.verifyMode = _panel.querySelector('input[name="verifyMode"]:checked').value;
@@ -1239,6 +1330,8 @@
             siteData.textCleanRules = _collectRulesFromDOM();
             siteData.codeTrimStart = parseInt(_panel.querySelector('#ag-trim-start').value) || 0;
             siteData.codeTrimEnd = parseInt(_panel.querySelector('#ag-trim-end').value) || 0;
+            siteData.memoryInjectFrequency = parseInt(_panel.querySelector('#ag-memory-freq').value) || 0;
+
             if (_editTarget === 'defaults') {
                 s.defaults = siteData;
             } else {
@@ -1280,6 +1373,7 @@
 
     const TASK_START = '\n<|im_start|>pokeragent-system\n=== Poker Agent Task ===\n';
     const TASK_END = '\n=== Poker Agent Task End ===\n<|im_end|>\n';
+
     let _taskList = [];
     let _sseEventSource = null;
 
@@ -1288,7 +1382,9 @@
         const c = cfgLoad();
         const pollUrl = c.apiUrl.replace('/agent-exec', '/agent-config-poll');
         GM_xmlhttpRequest({
-            method: 'GET', url: pollUrl, timeout: 30000,
+            method: 'GET',
+            url: pollUrl,
+            timeout: 30000,
             onload(r) {
                 if (!_pollConfigActive) return;
                 if (r.status === 200) {
@@ -1302,12 +1398,18 @@
                             _permissionEnabled = !!data.permission_enabled;
                             log('INFO', `目录限制: ${_permissionEnabled ? '已启用' : '已禁用'}`);
                         }
-                    } catch (e) {}
+                    } catch (e) { }
                 }
                 _pollConfig();
             },
-            onerror() { if (!_pollConfigActive) return; setTimeout(_pollConfig, 5000); },
-            ontimeout() { if (!_pollConfigActive) return; _pollConfig(); }
+            onerror() {
+                if (!_pollConfigActive) return;
+                setTimeout(_pollConfig, 5000);
+            },
+            ontimeout() {
+                if (!_pollConfigActive) return;
+                _pollConfig();
+            }
         });
     }
 
@@ -1315,14 +1417,16 @@
         return new Promise(resolve => {
             const c = cfgLoad();
             GM_xmlhttpRequest({
-                method: 'GET', url: c.apiUrl, timeout: 3000,
+                method: 'GET',
+                url: c.apiUrl,
+                timeout: 3000,
                 onload(r) {
                     if (r.status === 200) {
                         try {
                             const data = JSON.parse(r.responseText);
                             if (!!data.clipboard_mode !== _clipboardMode) _clipboardMode = !!data.clipboard_mode;
                             if (!!data.permission_enabled !== _permissionEnabled) _permissionEnabled = !!data.permission_enabled;
-                        } catch (e) {}
+                        } catch (e) { }
                     }
                     resolve();
                 },
@@ -1378,11 +1482,9 @@
                                         resolve(null);
                                     }, 50);
                                 });
-
                                 // 触发点击
                                 btn.click();
                                 const captured = await p;
-
                                 if (captured && captured.trim().length > 0) {
                                     codeText = captured;
                                 }
@@ -1420,10 +1522,14 @@
         // 阶段2: 清理干扰元素 (针对Clone)
         const ignoreKeywords = (cfg.cleanIgnoreClassKeywords || 'thinking,reasoning,probe,deepseek-reason')
             .split(',').map(s => s.trim()).filter(s => s);
+
         if (ignoreKeywords.length > 0) {
             const sel = ignoreKeywords.map(k => `[class*="${CSS.escape(k)}"]`).join(', ');
-            try { clone.querySelectorAll(sel).forEach(n => n.remove()); } catch (_) {}
+            try {
+                clone.querySelectorAll(sel).forEach(n => n.remove());
+            } catch (_) { }
         }
+
         clone.querySelectorAll('details').forEach(n => n.remove());
         if (cfg.cleanRemoveButtonLike !== false) {
             clone.querySelectorAll('button, [class*="copy"], [class*="operate"], [class*="action"], [class*="toolbar"]').forEach(n => n.remove());
@@ -1462,6 +1568,7 @@
             }
             return result;
         }
+
         return rawText;
     }
 
@@ -1540,6 +1647,7 @@
         let selectedIdle = new Set(c.sendBtnIdleFingerprints || []);
         let selectedSendable = new Set(c.sendBtnSendableFingerprints || []);
         let checkInterval = null;
+
         const renderBar = (msg) => {
             const mode = c.verifyMode || 'single';
             const canFinish = selectedBusy.size > 0;
@@ -1550,30 +1658,34 @@
                 const isSendable = selectedSendable.has(fp);
                 const cls = isBusy ? 'selected-busy' : (isIdle ? 'selected-idle' : (isSendable ? 'selected-sendable' : ''));
                 listHtml += `
-                    <div class="ag-cal-item ${cls}">
-                        <div class="ag-cal-clone" style="background:${snap.bg};color:${snap.color}">${snap.html}</div>
-                        <div class="ag-cal-actions">
-                            <button class="ag-cal-tag ${isBusy ? 'active-busy' : ''}" data-fp="${fp}" data-type="busy">忙碌</button>
-                            <button class="ag-cal-tag ${isIdle ? 'active-idle' : ''}" data-fp="${fp}" data-type="idle">空闲</button>
-                            <button class="ag-cal-tag ${isSendable ? 'active-sendable' : ''}" data-fp="${fp}" data-type="sendable">可发送</button>
-                        </div>
-                    </div>
-                `;
+ <div class="ag-cal-item ${cls}">
+ <div class="ag-cal-clone" style="background:${snap.bg};color:${snap.color}">${snap.html}</div>
+ <div class="ag-cal-actions">
+ <button class="ag-cal-tag ${isBusy ? 'active-busy' : ''}" data-fp="${fp}" data-type="busy">忙碌</button>
+ <button class="ag-cal-tag ${isIdle ? 'active-idle' : ''}" data-fp="${fp}" data-type="idle">空闲</button>
+ <button class="ag-cal-tag ${isSendable ? 'active-sendable' : ''}" data-fp="${fp}" data-type="sendable">可发送</button>
+ </div>
+ </div>
+ `;
             });
             cards.innerHTML = listHtml || '<div style="color:#52525b;font-size:12px;text-align:center;padding:16px 0">等待按钮状态变化...</div>';
             cards.style.display = 'flex';
             bar.innerHTML = `
-                <div style="font-size:13px;color:#d4d4d8;text-align:center">${msg}</div>
-                <div style="display:flex;gap:8px;align-items:center">
-                    <button class="ag-btn ag-btn-g" id="ag-cal-stop">取消</button>
-                    <button class="ag-btn ag-btn-p" id="ag-cal-finish" style="${canFinish ? '' : 'opacity:0.5;pointer-events:none'}">完成校准</button>
-                </div>
-            `;
+ <div style="font-size:13px;color:#d4d4d8;text-align:center">${msg}</div>
+ <div style="display:flex;gap:8px;align-items:center">
+ <button class="ag-btn ag-btn-g" id="ag-cal-stop">取消</button>
+ <button class="ag-btn ag-btn-p" id="ag-cal-finish" style="${canFinish ? '' : 'opacity:0.5;pointer-events:none'}">完成校准</button>
+ </div>
+ `;
             bar.style.display = 'flex';
             bar.querySelector('#ag-cal-stop').onclick = () => stopCalibration();
             if (canFinish) {
                 bar.querySelector('#ag-cal-finish').onclick = () => {
-                    cfgSaveRuntime({ sendBtnBusyFingerprints: [...selectedBusy], sendBtnIdleFingerprints: [...selectedIdle], sendBtnSendableFingerprints: [...selectedSendable] });
+                    cfgSaveRuntime({
+                        sendBtnBusyFingerprints: [...selectedBusy],
+                        sendBtnIdleFingerprints: [...selectedIdle],
+                        sendBtnSendableFingerprints: [...selectedSendable]
+                    });
                     log('OK', `校准完成！忙碌: ${selectedBusy.size}个, 空闲: ${selectedIdle.size}个, 可发送: ${selectedSendable.size}个`);
                     stopCalibration();
                 };
@@ -1584,19 +1696,26 @@
                     const fp = btn.dataset.fp;
                     const type = btn.dataset.type;
                     if (type === 'busy') {
-                        if (selectedBusy.has(fp)) selectedBusy.delete(fp); else selectedBusy.add(fp);
-                        selectedIdle.delete(fp); selectedSendable.delete(fp);
+                        if (selectedBusy.has(fp)) selectedBusy.delete(fp);
+                        else selectedBusy.add(fp);
+                        selectedIdle.delete(fp);
+                        selectedSendable.delete(fp);
                     } else if (type === 'idle') {
-                        if (selectedIdle.has(fp)) selectedIdle.delete(fp); else selectedIdle.add(fp);
-                        selectedBusy.delete(fp); selectedSendable.delete(fp);
+                        if (selectedIdle.has(fp)) selectedIdle.delete(fp);
+                        else selectedIdle.add(fp);
+                        selectedBusy.delete(fp);
+                        selectedSendable.delete(fp);
                     } else if (type === 'sendable') {
-                        if (selectedSendable.has(fp)) selectedSendable.delete(fp); else selectedSendable.add(fp);
-                        selectedBusy.delete(fp); selectedIdle.delete(fp);
+                        if (selectedSendable.has(fp)) selectedSendable.delete(fp);
+                        else selectedSendable.add(fp);
+                        selectedBusy.delete(fp);
+                        selectedIdle.delete(fp);
                     }
                     renderBar(msg);
                 };
             });
         };
+
         const stopCalibration = () => {
             if (checkInterval) clearInterval(checkInterval);
             bar.remove();
@@ -1604,13 +1723,19 @@
             _isCalibrating = false;
             showPanel();
         };
+
         renderBar('👇 请在下方正常聊天，脚本会自动捕获按钮的不同状态。<br><b style="color:#f472b6">【忙碌】=停止生成 | 【空闲】=AI说完 | 【可发送】=可以发送消息</b>');
+
         checkInterval = setInterval(() => {
             const fp = _getSendBtnFingerprint();
             if (!fp) return;
             if (fp === 'ELEMENT_MISSING' || fp === 'CONTAINER_MISSING') {
                 if (!capturedMap.has(fp)) {
-                    capturedMap.set(fp, { html: `<span style="color:#ef4444;font-size:12px">⚠ 元素不存在 (${fp === 'CONTAINER_MISSING' ? '容器' : '按钮'})</span>`, bg: '#1a1a1a', color: '#ef4444' });
+                    capturedMap.set(fp, {
+                        html: `<span style="color:#ef4444;font-size:12px">⚠ 元素不存在 (${fp === 'CONTAINER_MISSING' ? '容器' : '按钮'})</span>`,
+                        bg: '#1a1a1a',
+                        color: '#ef4444'
+                    });
                     log('INFO', `捕获状态: ${fp} (#${capturedMap.size})`);
                     renderBar('👇 继续操作，或标记已捕获的状态后点击完成。<br><b style="color:#f472b6">【忙碌】=停止生成 | 【空闲】=AI说完 | 【可发送】=可以发送消息</b>');
                 }
@@ -1622,7 +1747,11 @@
                 if (!el) return;
                 const cs = getComputedStyle(el);
                 let inner = el.innerHTML.replace(/<(style|script|link)[\s\S]*?<\/\1>/gi, '');
-                capturedMap.set(fp, { html: inner, bg: cs.backgroundColor, color: cs.color });
+                capturedMap.set(fp, {
+                    html: inner,
+                    bg: cs.backgroundColor,
+                    color: cs.color
+                });
                 log('INFO', `捕获新状态指纹 (#${capturedMap.size})`);
                 renderBar('👇 继续操作，或标记已捕获的状态后点击完成。<br><b style="color:#f472b6">【忙碌】=停止生成 | 【空闲】=AI说完 | 【可发送】=可以发送消息</b>');
             }
@@ -1639,6 +1768,7 @@
                 return;
             }
             log('INFO', '👀 监听发送按钮状态...');
+
             const checkPhase1 = () => {
                 const fp = _getSendBtnFingerprint();
                 if (fp === null || fp === 'ELEMENT_MISSING' || fp === 'CONTAINER_MISSING' || !busyList.includes(fp)) {
@@ -1648,6 +1778,7 @@
                     setTimeout(checkPhase1, 200);
                 }
             };
+
             const startPhase2 = () => {
                 if (c.verifyMode === 'double') {
                     const idleList = c.sendBtnIdleFingerprints || [];
@@ -1673,11 +1804,13 @@
                     triggerDelay();
                 }
             };
+
             const triggerDelay = () => {
                 const delay = parseInt(c.waitDelayAfterDone) || 500;
                 log('INFO', `⏳ 等待延时 ${delay}ms...`);
                 setTimeout(resolve, delay);
             };
+
             checkPhase1();
         });
     }
@@ -1713,15 +1846,75 @@
         });
     }
 
+    async function _injectMemoryIfNeeded() {
+        // [新增] 在发送指令前，向后端拉取记忆上下文并注入到输入框
+        // 记忆内容用 <memory> 标签包裹，拼接到回执区块前面
+        const c = cfgLoad();
+        const freq = parseInt(c.memoryInjectFrequency) || 0;
+        if (freq <= 0) return; // 0 代表关闭
+
+        _memoryRoundCounter++;
+        if (_memoryRoundCounter % freq !== 0) return;
+
+        const injectUrl = c.apiUrl.replace('/agent-exec', '/agent-memory-inject');
+
+        return new Promise(resolve => {
+            GM_xmlhttpRequest({
+                method: 'GET',
+                url: injectUrl,
+                timeout: 3000,
+                onload(r) {
+                    if (r.status === 200) {
+                        try {
+                            const data = JSON.parse(r.responseText);
+                            if (data.memory && data.memory.trim()) {
+                                const input = document.querySelector(c.selInputBox);
+                                if (input) {
+                                    const memoryBlock = `<memory>\n${data.memory}\n</memory>\n`;
+                                    let currentText = '';
+                                    if (input.tagName === 'TEXTAREA' || input.tagName === 'INPUT') {
+                                        currentText = input.value;
+                                    } else {
+                                        currentText = input.textContent || '';
+                                    }
+                                    // 如果已经有 <memory> 标签，替换它
+                                    const memStart = currentText.indexOf('<memory>');
+                                    const memEnd = currentText.indexOf('</memory>');
+                                    if (memStart !== -1 && memEnd !== -1) {
+                                        currentText = currentText.substring(0, memStart)
+                                            + memoryBlock
+                                            + currentText.substring(memEnd + '</memory>'.length);
+                                    } else {
+                                        // 追加到末尾（后续 _renderTaskBlock 会将其作为 prefix）
+                                        currentText = currentText + memoryBlock;
+                                    }
+                                    _directInput(input, currentText, false);
+                                    log('INFO', `🧠 记忆已注入 (${data.memory.length} 字符)`);
+                                }
+                            }
+                        } catch (e) {
+                            log('WARN', `记忆注入解析失败: ${e.message}`);
+                        }
+                    }
+                    resolve();
+                },
+                onerror() { resolve(); },
+                ontimeout() { resolve(); }
+            });
+        });
+    }
+
     async function _checkAndDispatch() {
         if (_isProcessing || _cmdQueue.length === 0) return;
         _isProcessing = true;
         log('INFO', `⏳ 挂起等待 AI 彻底输出完毕... (队列: ${_cmdQueue.length} 条)`);
         await _waitForLLMFinish();
+
         if (_cmdQueue.length === 0) {
             _isProcessing = false;
             return;
         }
+
         const _seen = new Set();
         const batch = _cmdQueue.filter(cmd => {
             const k = cmd.replace(/\s+/g, '');
@@ -1729,7 +1922,9 @@
             _seen.add(k);
             return true;
         }).join('\n');
+
         _cmdQueue = [];
+        await _injectMemoryIfNeeded();  // [新增] 在发送指令前注入记忆
         _dispatch(batch);
     }
 
@@ -1741,7 +1936,11 @@
                 if (!str) return str;
                 return str.replace(/\\u([0-9a-fA-F]{4})|\\u\{([0-9a-fA-F]{1,6})\}|U\+([0-9a-fA-F]{4,6})/g, (match, p1, p2, p3) => {
                     const hex = p1 || p2 || p3;
-                    try { return String.fromCodePoint(parseInt(hex, 16)); } catch (e) { return match; }
+                    try {
+                        return String.fromCodePoint(parseInt(hex, 16));
+                    } catch (e) {
+                        return match;
+                    }
                 });
             };
             c.textCleanRules.forEach(rule => {
@@ -1774,9 +1973,14 @@
                 log('INFO', `✨ 已应用 ${cleanCount} 条自定义清洗规则`);
             }
         }
+
         log('INFO', `🚀 AI已说完，发送至本地后端...`);
+
         GM_xmlhttpRequest({
-            method: 'POST', url: c.apiUrl, headers: { 'Content-Type': 'application/json' }, data: JSON.stringify({ command: cmdBatch }),
+            method: 'POST',
+            url: c.apiUrl,
+            headers: { 'Content-Type': 'application/json' },
+            data: JSON.stringify({ command: cmdBatch }),
             onload: (r) => {
                 if (r.status === 200) {
                     _dispatchRetryCount = 0;
@@ -1789,7 +1993,9 @@
                             _renderTaskBlock();
                             return;
                         }
-                    } catch(e) { log('ERR', '解析task_batch失败: ' + e); }
+                    } catch (e) {
+                        log('ERR', '解析task_batch失败: ' + e);
+                    }
                 }
                 log('ERR', `HTTP ${r.status} 或响应格式错误`);
                 _dispatchRetryCount++;
@@ -1828,11 +2034,14 @@
         const marker = '__CLIPBOARD_FILE__';
         const markerIdx = resultText.indexOf(marker);
         if (markerIdx === -1) return null;
+
         const beforeMarker = resultText.substring(0, markerIdx);
         let afterMarker = resultText.substring(markerIdx + marker.length);
         let cleanStr = afterMarker.replace(/\x00/g, '').replace(/\s/g, '');
+
         const parts = cleanStr.split('|||');
         const isNewFormat = (parts[0] === 'ID');
+
         if (isNewFormat) {
             const fileId = parts[1];
             const filename = parts[2] || 'unknown';
@@ -1896,7 +2105,7 @@
             const xhr = new XMLHttpRequest();
             xhr.open('GET', apiUrl + '?id=' + fileId, true);
             xhr.responseType = 'arraybuffer';
-            xhr.onload = function() {
+            xhr.onload = function () {
                 if (this.status === 200) {
                     const u8 = new Uint8Array(this.response);
                     const binary = Array.from(u8).map(b => String.fromCharCode(b)).join('');
@@ -1907,7 +2116,7 @@
                     resolve(null);
                 }
             };
-            xhr.onerror = function() {
+            xhr.onerror = function () {
                 log('ERR', `文件下载网络错误`);
                 resolve(null);
             };
@@ -1920,20 +2129,28 @@
             const byteChars = atob(b64Data);
             const byteArr = new Uint8Array(byteChars.length);
             for (let i = 0; i < byteChars.length; i++) byteArr[i] = byteChars.charCodeAt(i);
+
             const ext = filename.split('.').pop().toLowerCase();
             const mimeMap = {
-                'js': 'text/javascript', 'ts': 'text/typescript', 'html': 'text/html', 'css': 'text/css',
-                'json': 'application/json', 'md': 'text/markdown', 'py': 'text/x-python', 'txt': 'text/plain',
-                'xml': 'text/xml', 'csv': 'text/csv', 'java': 'text/x-java-source', 'gradle': 'text/plain',
+                'js': 'text/javascript', 'ts': 'text/typescript', 'html': 'text/html',
+                'css': 'text/css', 'json': 'application/json', 'md': 'text/markdown',
+                'py': 'text/x-python', 'txt': 'text/plain', 'xml': 'text/xml',
+                'csv': 'text/csv', 'java': 'text/x-java-source', 'gradle': 'text/plain',
                 'properties': 'text/plain', 'toml': 'text/plain', 'yml': 'text/yaml', 'yaml': 'text/yaml'
             };
+
             const file = new File([byteArr], filename, { type: mimeMap[ext] || 'text/plain' });
+
             input.focus();
             const dt = new DataTransfer();
             dt.items.add(file);
+
             const pasteEvt = new ClipboardEvent('paste', { bubbles: true, cancelable: true });
-            Object.defineProperty(pasteEvt, 'clipboardData', { get() { return dt; } });
+            Object.defineProperty(pasteEvt, 'clipboardData', {
+                get() { return dt; }
+            });
             input.dispatchEvent(pasteEvt);
+
             log('OK', `📎 已粘贴文件: ${filename}（${fileSize} 字节）`);
             await _smartWait(input, { checkDOM: true, maxWait: 3000 });
         } catch (err) {
@@ -1945,6 +2162,7 @@
         const c = cfgLoad();
         const input = document.querySelector(c.selInputBox);
         if (!input) return;
+
         let block = TASK_START;
         _taskList.forEach((task, idx) => {
             if (task.status === 'done') {
@@ -1960,17 +2178,20 @@
             }
             if (idx < _taskList.length - 1) block += '\n';
         });
+
         const allDone = _taskList.length > 0 && _taskList.every(t => t.status === 'done');
         if (allDone) {
             block += `\n[Poker Agent]\nAll tasks done!`;
         }
         block += TASK_END;
+
         let currentText = '';
         if (input.tagName === 'TEXTAREA' || input.tagName === 'INPUT') {
             currentText = input.value;
         } else {
             currentText = input.textContent || '';
         }
+
         let prefix = '';
         let suffix = '';
         const startIdx = currentText.indexOf(TASK_START);
@@ -1984,23 +2205,31 @@
             prefix = currentText.trim();
             if (prefix) prefix += '\n';
         }
+
         const finalText = prefix + block + suffix;
         _directInput(input, finalText, false);
     }
 
     function _initSSE() {
         if (_sseEventSource) {
-            try { _sseEventSource.abort(); } catch(e) {}
+            try {
+                _sseEventSource.abort();
+            } catch (e) { }
             _sseEventSource = null;
         }
         const c = cfgLoad();
         const streamUrl = c.apiUrl.replace('/agent-exec', '/agent-stream');
         let _sseBuffer = '';
+
         _sseEventSource = GM_xmlhttpRequest({
-            method: 'GET', url: streamUrl, headers: { 'Accept': 'text/event-stream' }, timeout: 0,
+            method: 'GET',
+            url: streamUrl,
+            headers: { 'Accept': 'text/event-stream' },
+            timeout: 0,
             onprogress: (resp) => {
                 const newData = resp.responseText.slice(_sseBuffer.length);
                 _sseBuffer = resp.responseText;
+
                 const events = newData.split('\n\n');
                 for (const evt of events) {
                     if (!evt.trim() || evt.startsWith(':')) continue;
@@ -2011,7 +2240,7 @@
                     try {
                         const data = JSON.parse(jsonStr);
                         _handleSSEData(data);
-                    } catch(err) {
+                    } catch (err) {
                         log('ERR', `SSE 解析失败: ${err}, 原始: ${jsonStr.substring(0, 100)}`);
                     }
                 }
@@ -2035,6 +2264,7 @@
         if (data.id === 'all') return;
         const task = _taskList.find(t => t.id === data.id);
         if (!task) return;
+
         if (data.type === 'status') {
             if (data.status === 'running') {
                 task.status = 'running';
@@ -2046,10 +2276,14 @@
             if (task.status === 'waiting') task.status = 'running';
             task.logs.push(data.data);
         }
+
         _renderTaskBlock();
+
         if (_taskList.length > 0 && _taskList.every(t => t.status === 'done')) {
             if (_sseEventSource) {
-                try { _sseEventSource.abort(); } catch(e) {}
+                try {
+                    _sseEventSource.abort();
+                } catch (e) { }
                 _sseEventSource = null;
             }
             _finalizeAndSend();
@@ -2059,6 +2293,7 @@
     async function _finalizeAndSend() {
         log('INFO', '✅ 所有任务完成，等待 LLM 输出完毕...');
         await _waitForLLMFinish();
+
         const c = cfgLoad();
         const input = document.querySelector(c.selInputBox);
         if (!input) {
@@ -2068,7 +2303,9 @@
             _checkAndDispatch();
             return;
         }
+
         const hasFileTask = _clipboardMode && _taskList.some(t => t.status === 'done' && t.result && t.result.includes('__CLIPBOARD_FILE__'));
+
         if (hasFileTask) {
             log('INFO', '📋 检测到文件任务，准备文件粘贴...');
             for (const task of _taskList) {
@@ -2087,7 +2324,9 @@
                 }
             }
         }
+
         _renderTaskBlock();
+
         if (hasFileTask) {
             input.focus();
             for (const task of _taskList) {
@@ -2096,14 +2335,18 @@
                 }
             }
         }
+
         await _waitForSendable();
+
         const debounceDelay = parseInt(c.sendDebounceDelay) || 0;
         if (debounceDelay > 0) {
             log('INFO', `⏳ 发送防抖延时 ${debounceDelay}ms...`);
             await new Promise(r => setTimeout(r, debounceDelay));
         }
+
         log('INFO', '🚀 触发最终发送');
         _executeSend(input);
+
         _isProcessing = false;
         _taskList = [];
         _checkAndDispatch();
@@ -2152,7 +2395,9 @@
         const c = cfgLoad();
         const mode = c.autoSendMode || 'click';
         switch (mode) {
-            case 'none': log('INFO', '⏸️ 自动发送已关闭，仅填入输入框'); break;
+            case 'none':
+                log('INFO', '⏸️ 自动发送已关闭，仅填入输入框');
+                break;
             case 'enter':
                 try {
                     _trySendByEnter(input);
@@ -2197,7 +2442,11 @@
 
     function _trySendByEnter(input) {
         ['keydown', 'keypress', 'keyup'].forEach(evtType => {
-            input.dispatchEvent(new KeyboardEvent(evtType, { key: 'Enter', code: 'Enter', keyCode: 13, which: 13, charCode: evtType === 'keypress' ? 13 : 0, bubbles: true, cancelable: true, composed: true }));
+            input.dispatchEvent(new KeyboardEvent(evtType, {
+                key: 'Enter', code: 'Enter', keyCode: 13, which: 13,
+                charCode: evtType === 'keypress' ? 13 : 0,
+                bubbles: true, cancelable: true, composed: true
+            }));
         });
     }
 
@@ -2206,21 +2455,25 @@
         return new Promise(resolve => {
             let stable = 0;
             let domSnap = checkDOM ? input.parentElement?.children.length ?? -1 : -1;
+
             const t = setInterval(() => {
                 const valOk = !expectValue || input.value === expectValue;
                 const domOk = !checkDOM || (input.parentElement?.children.length ?? -1) === domSnap;
+
                 if (valOk && domOk) {
                     stable++;
                 } else {
                     stable = 0;
                     domSnap = checkDOM ? input.parentElement?.children.length ?? -1 : -1;
                 }
+
                 if (stable >= stableNeed) {
                     clearInterval(t);
                     clearTimeout(safety);
                     resolve();
                 }
             }, interval);
+
             const safety = setTimeout(() => {
                 clearInterval(t);
                 resolve();
@@ -2233,25 +2486,32 @@
      * ================================================================ */
     let _toggleEl = null;
     let _togglePosTimer = null;
+    let _memoryRoundCounter = 0;  // [新增] 记忆注入轮次计数器
 
     function _initAutoSendToggle() {
         _destroyAutoSendToggle();
         let c;
-        try { c = cfgLoad(); } catch(e) { console.error('[Agent] cfgLoad异常:', e); return; }
+        try {
+            c = cfgLoad();
+        } catch (e) {
+            console.error('[Agent] cfgLoad异常:', e);
+            return;
+        }
         if (!c.showAutoSendToggle || (!c.selSendButton && !c.selSendButtonContainer)) return;
+
         const mode = c.autoSendMode || 'click';
         _toggleEl = document.createElement('div');
         _toggleEl.id = 'agent-auto-send-toggle';
         _toggleEl.innerHTML = `
-            <div class="ag-as-opts">
-                <div class="ag-as-opt ${mode === 'none' ? 'active' : ''}" data-mode="none">不自动发送</div>
-                <div class="ag-as-opt ${mode === 'click' ? 'active' : ''}" data-mode="click">点击按钮</div>
-                <div class="ag-as-opt ${mode === 'enter' ? 'active' : ''}" data-mode="enter">回车发送</div>
-            </div>
-            <div class="ag-as-rail">
-                <div class="ag-as-thumb"></div>
-            </div>
-        `;
+ <div class="ag-as-opts">
+ <div class="ag-as-opt ${mode === 'none' ? 'active' : ''}" data-mode="none">不自动发送</div>
+ <div class="ag-as-opt ${mode === 'click' ? 'active' : ''}" data-mode="click">点击按钮</div>
+ <div class="ag-as-opt ${mode === 'enter' ? 'active' : ''}" data-mode="enter">回车发送</div>
+ </div>
+ <div class="ag-as-rail">
+ <div class="ag-as-thumb"></div>
+ </div>
+ `;
         document.body.appendChild(_toggleEl);
         _toggleEl.querySelectorAll('.ag-as-opt').forEach(opt => {
             opt.onclick = (e) => {
@@ -2266,6 +2526,7 @@
             };
         });
         _toggleEl.onclick = (e) => e.stopPropagation();
+
         setTimeout(() => {
             _updateTogglePosition();
             _updateSliderPos();
@@ -2286,7 +2547,9 @@
         const opts = _toggleEl.querySelectorAll('.ag-as-opt');
         const thumb = _toggleEl.querySelector('.ag-as-thumb');
         const rail = _toggleEl.querySelector('.ag-as-rail');
+
         if (!opts[idx] || !thumb || !rail) return;
+
         const optRect = opts[idx].getBoundingClientRect();
         const railRect = rail.getBoundingClientRect();
         const top = optRect.top - railRect.top + optRect.height / 2 - 5;
@@ -2351,10 +2614,11 @@
         _pollConfigActive = true;
         try {
             await _syncInitialConfig();
-        } catch(e) {
+        } catch (e) {
             log('WARN', `初始配置同步失败(不影响运行): ${e.message}`);
         }
         _pollConfig();
+
         _lastAnswerEl = null;
         _lastAnswerCount = 0;
         _currentRoundSent.clear();
@@ -2369,31 +2633,37 @@
             setTimeout(initAgent, 5000);
             return;
         }
+
         let currentContainer;
         try {
             currentContainer = document.querySelector(selector);
-        } catch(e) {
+        } catch (e) {
             log('ERR', `容器选择器语法错误: "${selector}" - ${e.message}`);
             return;
         }
+
         if (!currentContainer) {
             log('WARN', `找不到容器 ${selector}，5秒后重试...`);
             setTimeout(initAgent, 5000);
             return;
         }
+
         const answerSel = c.selAnswerItem || '.answer';
         _knownAnswers = [...currentContainer.querySelectorAll(answerSel)];
         _lastAnswerEl = null;
         _lastAnswerCount = _knownAnswers.length;
         _currentRoundSent.clear();
         _lastScannedLen = 0;
+
         log('OK', `✅ 监听已启动！回答元素选择器: "${answerSel}"`);
 
-        _pollTimer = setInterval(async () => { // setInterval回调改为async
+        _pollTimer = setInterval(async () => {
+            // setInterval回调改为async
             try {
                 _heartbeatCounter++;
                 const freshContainer = document.querySelector(selector);
                 if (!freshContainer) return;
+
                 if (freshContainer !== currentContainer) {
                     log('WARN', '🚨 检测到聊天容器被替换，重置状态...');
                     currentContainer = freshContainer;
@@ -2407,6 +2677,7 @@
                     _initAutoSendToggle();
                     return;
                 }
+
                 const answers = [...currentContainer.querySelectorAll(answerSel)];
                 if (answers.length === 0) {
                     _noAnswerCount++;
@@ -2421,6 +2692,7 @@
                     }
                     _noAnswerCount = 0;
                 }
+
                 if (_knownAnswers.length > 0 && !_knownAnswers.some(el => new Set(answers).has(el))) {
                     _lastAnswerEl = null;
                     _lastAnswerCount = 0;
@@ -2431,9 +2703,12 @@
                     _isProcessing = false;
                     log('WARN', '🚨 对话被清空，重置状态...');
                 }
+
                 _knownAnswers = answers;
                 if (_heartbeatCounter % 20 === 0) log('INFO', `💓 心跳 | 队列${_cmdQueue.length}条 | 锁定:${_isProcessing} | 回答:${answers.length}个`);
+
                 if (answers.length === 0) return;
+
                 const lastAnswer = answers[answers.length - 1];
                 if (answers.length !== _lastAnswerCount) {
                     _lastAnswerCount = answers.length;
@@ -2443,11 +2718,14 @@
                 } else if (lastAnswer !== _lastAnswerEl) {
                     _lastAnswerEl = lastAnswer;
                 }
+
                 const rawLen = lastAnswer.textContent.length;
                 if (rawLen <= _lastScannedLen && _currentRoundSent.size > 0) {
                     return;
                 }
+
                 _lastScannedLen = rawLen;
+
                 const re = /【cmd】([\s\S]*?)【\/cmd】/g;
                 // 调用 async getCleanText
                 const text = await getCleanText(lastAnswer, c);
@@ -2477,4 +2755,5 @@
     function escAttr(s) {
         return String(s || '').replace(/&/g, '&amp;').replace(/"/g, '&quot;').replace(/'/g, '&#39;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
     }
+
 })();
