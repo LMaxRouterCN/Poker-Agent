@@ -1046,10 +1046,10 @@ class LogCanvas:
             y += h
             end_row += 1
 
-        # 【修复】y 已是窗口坐标（初始已减 offset），直接与视口高度比较；
-        # 原实现再减一次 offset，深滚时每帧多渲染 offset/行高 数量级的额外行
-        if not run_to_end and y > self._canvas_height + 2 * self._line_height:
-            break
+            # 【修复】y 已是窗口坐标（初始已减 offset），直接与视口高度比较；
+            # 原实现再减一次 offset，深滚时每帧多渲染 offset/行高 数量级的额外行
+            if not run_to_end and y > self._canvas_height + 2 * self._line_height:
+                break
 
         # 清理移出渲染范围的 item
         for r in [r for r in self._visible_items if r < start_row or r >= end_row]:
