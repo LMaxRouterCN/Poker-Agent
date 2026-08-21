@@ -1,5 +1,6 @@
-"""PokerAgent - 本地接应服务 (SSE流式版) v37
-启动方式： python agent_server.py
+"""PokerAgent - 本地接应服务 (SSE流式版) v38
+启动方式：
+    python agent_server.py
 默认监听：http://127.0.0.1:9966
 """
 from flask import Flask, request, jsonify, Response
@@ -12,10 +13,10 @@ import re
 import inspect
 import threading
 import base64
-import difflib  # 用于 -s 模式的模糊匹配策略
-import shutil  # 用于移动文件/目录到回收站
-import time  # 用于回收站时间戳记录
-import locale  # 获取系统默认编码
+import difflib   # 用于 -s 模式的模糊匹配策略
+import shutil    # 用于移动文件/目录到回收站
+import time      # 用于回收站时间戳记录
+import locale    # 获取系统默认编码
 import platform  # 用于判断操作系统
 import uuid
 import queue
@@ -56,23 +57,23 @@ def _detect_powershell():
     return None
 _POWERSHELL_EXE = _detect_powershell()
 # ========== 记忆系统配置 ==========
-MEMORY_TEMP_INITIAL = 100  # 新记忆初始温度（决定新旧记忆的淘汰压力）。
-MEMORY_TEMP_DECAY_RATIO = 0.95  # 每轮衰减比例（保留95%，即衰减5%）。
-MEMORY_TEMP_HEAT_RATIO = 0.5  # 被读取时向初始温度回归的比例（极冷数据飙升）。
-MEMORY_EXPOSE_WINDOW = 20  # Tag 云暴露的记忆条数（温度Top-N）。
-MEMORY_READ_WINDOW = 2  # memory search 上下额外返回的记忆条数。
+MEMORY_TEMP_INITIAL = 100      # 新记忆初始温度（决定新旧记忆的淘汰压力）。
+MEMORY_TEMP_DECAY_RATIO = 0.95 # 每轮衰减比例（保留95%，即衰减5%）。
+MEMORY_TEMP_HEAT_RATIO = 0.5   # 被读取时向初始温度回归的比例（极冷数据飙升）。
+MEMORY_EXPOSE_WINDOW = 20      # Tag 云暴露的记忆条数（温度Top-N）。
+MEMORY_READ_WINDOW = 2         # memory search 上下额外返回的记忆条数。
 # ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 # 任务队列与 SSE 流式架构
 # ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 task_queue = queue.Queue()
 # [新增] 任务控制共享状态（GUI 按钮 → Worker 线程）
-_current_process = None  # 当前正在执行的子进程引用（exec/run）
+_current_process = None          # 当前正在执行的子进程引用（exec/run）
 _current_process_lock = threading.Lock()
-_pause_event = threading.Event()  # set=运行中, clear=暂停
-_pause_event.set()  # 初始为运行状态
-_kill_mode = None  # None / 'discard' / 'done'
+_pause_event = threading.Event() # set=运行中, clear=暂停
+_pause_event.set()               # 初始为运行状态
+_kill_mode = None                # None / 'discard' / 'done'
 _kill_mode_lock = threading.Lock()
-_current_task_id = None  # 当前正在执行的任务ID
+_current_task_id = None          # 当前正在执行的任务ID
 # [新增] 全局中断信号：request_kill 时 set，worker 取新任务前 clear
 _abort_event = threading.Event()
 # [新增] 任务中断异常：在任何检查点命中时抛出，worker_loop 统一捕获
@@ -82,12 +83,12 @@ def _check_abort():
     """检查中断信号，命中则抛出 TaskAborted（在耗时操作间调用）"""
     if _abort_event.is_set():
         raise TaskAborted()
-sse_clients = []  # 存放所有连接的 SSE 客户端队列
+sse_clients = []       # 存放所有连接的 SSE 客户端队列
 _sse_lock = threading.Lock()  # 保护 sse_clients 的锁
 # ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 # 任务状态注册表（解决 SSE 晚订阅竞态：新客户端连接时回放历史状态）
 # ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
-_task_registry = {}  # task_id -> {'status':..., 'logs':[...], 'result':...}
+_task_registry = {}             # task_id -> {'status':..., 'logs':[...], 'result':...}
 _task_registry_lock = threading.Lock()
 def emit_task_event(evt):
     """更新任务注册表并推送给所有已连接的 SSE 客户端（SSE 侧自动剥离 ANSI 颜色码）"""
@@ -128,7 +129,8 @@ def _kill_process_tree(proc):
     if platform.system() == 'Windows':
         try:
             # /F 强制 /T 杀整棵树（含 daemon 子进程）
-            subprocess.run(f'taskkill /F /T /PID {proc.pid}', shell=True, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+            subprocess.run(f'taskkill /F /T /PID {proc.pid}', shell=True,
+                           stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
         except Exception:
             pass
 # [新增] 任务控制接口（供 GUI 调用）
@@ -203,7 +205,8 @@ def worker_loop():
             if mode == 'discard':
                 # [修改] 丢弃：emit killed 状态让前端知道任务已终止
                 print(f'[{_ts}] ⛔ 任务 {task_id[:8]} 已终止并丢弃')
-                emit_task_event({'id': task_id, 'type': 'status', 'status': 'killed', 'result': '当前任务已被用户手动终止（结果已丢弃）'})
+                emit_task_event({'id': task_id, 'type': 'status', 'status': 'killed',
+                                 'result': '当前任务已被用户手动终止（结果已丢弃）'})
             elif mode == 'done':
                 # [修改] 终止但返回已有输出，前面加提示
                 print(f'[{_ts}] ⛔ 任务 {task_id[:8]} 已终止，返回已有输出:')
@@ -248,7 +251,7 @@ def smart_write(filepath, content, encoding):
             try:
                 with open(filepath, 'rb') as f:
                     had_bom = f.read(3) == b'\xef\xbb\xbf'
-            except:
+            except Exception:
                 pass
         if not had_bom:
             encoding = 'utf-8'
@@ -434,7 +437,8 @@ def _get_original_path(trash_path):
         return os.path.join(drive, *parts[2:])
     else:
         return os.path.normpath(os.path.join(WORK_DIR, rel_path))
-def _match_text_block(file_lines, old_lines, ignore_case=False, ignore_indent=False, normalize_ws=False, fuzzy_threshold=None):
+def _match_text_block(file_lines, old_lines, ignore_case=False, ignore_indent=False,
+                      normalize_ws=False, fuzzy_threshold=None):
     """
     通用文本块匹配方法，支持组合匹配条件。
     返回匹配的起始索引列表(0-based)。
@@ -460,17 +464,17 @@ def _match_text_block(file_lines, old_lines, ignore_case=False, ignore_indent=Fa
             total_sim = 0.0
             for j in range(num_old):
                 # 完全一致直接算1.0，避免计算开销
-                if proc_old[j] == proc_file[i+j]:
+                if proc_old[j] == proc_file[i + j]:
                     total_sim += 1.0
                 else:
-                    total_sim += difflib.SequenceMatcher(None, proc_old[j], proc_file[i+j]).ratio()
+                    total_sim += difflib.SequenceMatcher(None, proc_old[j], proc_file[i + j]).ratio()
             avg_sim = total_sim / num_old
             if avg_sim < fuzzy_threshold:
                 is_match = False
         # 精确/归一化匹配逻辑
         else:
             for j in range(num_old):
-                if proc_old[j] != proc_file[i+j]:
+                if proc_old[j] != proc_file[i + j]:
                     is_match = False
                     break
         if is_match:
@@ -488,11 +492,11 @@ def _check_permission(cmd, *paths):
     return None
 def _default_permission_callback(cmd, filepath):
     print(f'\n⚠ 路径超出工作目录!')
-    print(f'  指令: {cmd}')
-    print(f'  目标: {filepath}')
-    print(f'  工作目录: {WORK_DIR}')
+    print(f'   指令: {cmd}')
+    print(f'   目标: {filepath}')
+    print(f'   工作目录: {WORK_DIR}')
     while True:
-        ans = input('  是否允许? [y=允许/n=拒绝/a=本次会话始终允许]: ').strip().lower()
+        ans = input('   是否允许? [y=允许/n=拒绝/a=本次会话始终允许]: ').strip().lower()
         if ans in ('y', 'yes'):
             return True
         elif ans in ('n', 'no'):
@@ -500,7 +504,7 @@ def _default_permission_callback(cmd, filepath):
         elif ans in ('a', 'always'):
             return 'always'
         else:
-            print('  请输入 y, n 或 a')
+            print('   请输入 y, n 或 a')
 # 兼容 GUI CLI 模式的壳函数
 def execute_line(line):
     return execute_line_streaming(line, 'cli-manual')
@@ -602,8 +606,7 @@ def execute_line_streaming(line, task_id):
             _ps_cmd = 'pwsh --version'
             try:
                 _ps_ver = subprocess.run(
-                    ['pwsh', '--version'],
-                    capture_output=True, text=True, timeout=5
+                    ['pwsh', '--version'], capture_output=True, text=True, timeout=5
                 ).stdout.strip()
             except Exception:
                 _ps_ver = 'pwsh (版本获取失败)'
@@ -611,7 +614,8 @@ def execute_line_streaming(line, task_id):
             _ps_cmd = 'powershell -NoProfile -NonInteractive -Command $PSVersionTable.PSVersion.ToString()'
             try:
                 _raw = subprocess.run(
-                    ['powershell', '-NoProfile', '-NonInteractive', '-Command', '$PSVersionTable.PSVersion.ToString()'],
+                    ['powershell', '-NoProfile', '-NonInteractive', '-Command',
+                     '$PSVersionTable.PSVersion.ToString()'],
                     capture_output=True, text=True, timeout=5
                 ).stdout.strip()
                 _ps_ver = f'Windows PowerShell {_raw}'
@@ -840,7 +844,7 @@ def execute_line_streaming(line, task_id):
                         if num_search == 1:
                             results.append((start_line_no, file_lines[i]))
                         else:
-                            block_text = '\n'.join(file_lines[i:i+num_search])
+                            block_text = '\n'.join(file_lines[i:i + num_search])
                             results.append((start_line_no, block_text))
                 if not results:
                     return f'在 {filepath} 中未找到匹配内容'
@@ -943,7 +947,7 @@ def execute_line_streaming(line, task_id):
         ignore_case = '-i' in flags
         replace_all = '-a' in flags
         ignore_indent = '-s' in flags  # 忽略每行首尾空格和缩进
-        normalize_ws = '-w' in flags  # 空白归一化
+        normalize_ws = '-w' in flags   # 空白归一化
         # 解析模糊匹配参数 -f 或 -f-0.8
         fuzzy_threshold = None
         for flag in flags:
@@ -989,7 +993,7 @@ def execute_line_streaming(line, task_id):
                     for i in range(len(file_lines) - len(old_lines) + 1):
                         total = 0.0
                         for j in range(len(old_lines)):
-                            f_proc = re.sub(r'\s+', ' ', file_lines[i+j].strip()).lower()
+                            f_proc = re.sub(r'\s+', ' ', file_lines[i + j].strip()).lower()
                             o_proc = re.sub(r'\s+', ' ', old_lines[j].strip()).lower()
                             total += difflib.SequenceMatcher(None, o_proc, f_proc).ratio()
                         avg = total / len(old_lines)
@@ -1003,10 +1007,10 @@ def execute_line_streaming(line, task_id):
                             f_proc = re.sub(r'\s+', ' ', file_lines[best_pos + j].strip()).lower()
                             o_proc = re.sub(r'\s+', ' ', old_lines[j].strip()).lower()
                             if o_proc == f_proc:
-                                diag.append(f'  ✓ {repr(o_proc[:120])}{"（仅前120字符）" if len(o_proc) > 120 else ""}')
+                                diag.append(f'    ✓ {repr(o_proc[:120])}{"（仅前120字符）" if len(o_proc) > 120 else ""}')
                             else:
-                                diag.append(f'  ✗ 旧: {repr(o_proc[:120])}{"（仅前120字符）" if len(o_proc) > 120 else ""}')
-                                diag.append(f'  ✗ 文: {repr(f_proc[:120])}{"（仅前120字符）" if len(o_proc) > 120 else ""}')
+                                diag.append(f'    ✗ 旧: {repr(o_proc[:120])}{"（仅前120字符）" if len(o_proc) > 120 else ""}')
+                                diag.append(f'    ✗ 文: {repr(f_proc[:120])}{"（仅前120字符）" if len(o_proc) > 120 else ""}')
                     return '\n'.join(diag)
                 # 非全量替换时，仅保留第一个匹配
                 if not replace_all and len(matches) > 1:
@@ -1056,7 +1060,7 @@ def execute_line_streaming(line, task_id):
             if pos_val.isdigit():
                 line_no = int(pos_val)
                 if line_no < 1 or line_no > len(lines) + 1:
-                    return f'错误：行号 {line_no} 超出文件范围 (1-{len(lines)+1})'
+                    return f'错误：行号 {line_no} 超出文件范围 (1-{len(lines) + 1})'
                 insert_idx = line_no if pos_type == 'after' else line_no - 1
             else:
                 found_idx = -1
@@ -1073,8 +1077,8 @@ def execute_line_streaming(line, task_id):
             lines.insert(insert_idx, insert_text)
             new_content = ''.join(lines)
             smart_write(filepath, new_content, file_enc)
-            log_action('INSERT', f'{filepath} 行 {insert_idx+1}')
-            return f'已在 {filepath} 的第 {insert_idx+1} 行处插入内容。'
+            log_action('INSERT', f'{filepath} 行 {insert_idx + 1}')
+            return f'已在 {filepath} 的第 {insert_idx + 1} 行处插入内容。'
         except Exception as e:
             return f'插入失败：{e}'
     elif cmd == 'deleteline':
@@ -1108,7 +1112,7 @@ def execute_line_streaming(line, task_id):
                 lines = content.splitlines(True)
                 if start < 1 or end > len(lines):
                     return f'错误：行号范围 {start}-{end} 超出文件范围 (1-{len(lines)})'
-                del lines[start-1:end]
+                del lines[start - 1:end]
                 new_content = ''.join(lines)
                 smart_write(filepath, new_content, file_enc)
                 log_action('DELETELINE', f'{filepath} 行 {start}-{end}')
@@ -1126,12 +1130,12 @@ def execute_line_streaming(line, task_id):
                 non_flag_parts = [part for part in parts if not part.startswith('-')]
                 delete_text = ' '.join(non_flag_parts[1:]) if len(non_flag_parts) > 1 else ''
                 opts_str = ' '.join(parts[:1] + [part for part in parts if part.startswith('-')])
-                tokens = parse_args_with_quotes(opts_str)
-                filepath = safe_path(W, tokens[0])
-                flags = tokens[1:] if len(tokens) > 1 else []
-                ignore_case = '-i' in flags
-                whole_word = '-w' in flags
-                delete_all = '-a' in flags
+            tokens = parse_args_with_quotes(opts_str)
+            filepath = safe_path(W, tokens[0])
+            flags = tokens[1:] if len(tokens) > 1 else []
+            ignore_case = '-i' in flags
+            whole_word = '-w' in flags
+            delete_all = '-a' in flags
             if not delete_text:
                 return '错误：缺少要删除的文本。发送 @@help deleteline 获取指令详细用法'
             try:
@@ -1165,11 +1169,11 @@ def execute_line_streaming(line, task_id):
         if not tokens:
             return '错误：缺少参数。发送 @@help grep 获取指令详细用法'
         # ── 解析选项与参数 ──
-        flag_set = set()  # 单字符标志集合（支持 -ivr 合并写法）
-        patterns = []  # -e 显式指定的模式列表
-        include_pattern = None  # --include 文件名过滤正则（字符串）
-        exclude_pattern = None  # --exclude 文件名排除正则（字符串）
-        non_opts = []  # 非选项参数（模式 / 路径）
+        flag_set = set()           # 单字符标志集合（支持 -ivr 合并写法）
+        patterns = []              # -e 显式指定的模式列表
+        include_pattern = None     # --include 文件名过滤正则（字符串）
+        exclude_pattern = None     # --exclude 文件名排除正则（字符串）
+        non_opts = []              # 非选项参数（模式 / 路径）
         ti = 0
         while ti < len(tokens):
             t = tokens[ti]
@@ -1193,13 +1197,13 @@ def execute_line_streaming(line, task_id):
                 non_opts.append(t)
                 ti += 1
         # ── 标志提取 ──
-        ignore_case = 'i' in flag_set  # 忽略大小写
-        invert_match = 'v' in flag_set  # 反向匹配（输出不匹配的行）
-        count_only = 'c' in flag_set  # 仅输出匹配行数
-        files_only = 'l' in flag_set  # 仅输出含匹配的文件名
-        whole_word = 'w' in flag_set  # 全词匹配（自动包 \b）
-        recursive = 'r' in flag_set  # 递归搜索目录
-        strip_indent = 's' in flag_set  # 匹配前去除行首空白（保留原有功能）
+        ignore_case = 'i' in flag_set    # 忽略大小写
+        invert_match = 'v' in flag_set   # 反向匹配（输出不匹配的行）
+        count_only = 'c' in flag_set     # 仅输出匹配行数
+        files_only = 'l' in flag_set     # 仅输出含匹配的文件名
+        whole_word = 'w' in flag_set     # 全词匹配（自动包 \b）
+        recursive = 'r' in flag_set      # 递归搜索目录
+        strip_indent = 's' in flag_set   # 匹配前去除行首空白（保留原有功能）
         # ── 确定模式与路径 ──
         if patterns:
             # 有 -e：所有 non_opts 视为路径（本工具取第一个）
@@ -1439,7 +1443,7 @@ def execute_line_streaming(line, task_id):
                     for i, line in enumerate(selected, start=s_idx + 1):
                         output.append(f"{i:>5}\t{line.rstrip()}")
                     result = '\n'.join(output)
-                    log_action('READ', f'{filepath} 行 {start_line}-{end_line if end_line>0 else "末尾"}')
+                    log_action('READ', f'{filepath} 行 {start_line}-{end_line if end_line > 0 else "末尾"}')
                     return result
                 else:
                     content_str = ''.join(lines)
@@ -1462,7 +1466,7 @@ def execute_line_streaming(line, task_id):
                 for i, line in enumerate(selected, start=s_idx + 1):
                     output.append(f"{i:>5}\t{line.rstrip()}")
                 result = '\n'.join(output)
-                log_action('READ', f'{filepath} 行 {start_line}-{end_line if end_line>0 else "末尾"}')
+                log_action('READ', f'{filepath} 行 {start_line}-{end_line if end_line > 0 else "末尾"}')
                 return result
             except FileNotFoundError:
                 return f'错误：文件不存在：{filepath}'
@@ -1566,7 +1570,7 @@ def execute_line_streaming(line, task_id):
                 orig_path = safe_path(W, target_name)
                 trash_path_to_restore = _get_trash_path(orig_path)
             if not trash_path_to_restore or not os.path.exists(trash_path_to_restore):
-                return f'错误：在回收站中未找到对应的记录。'
+                return '错误：在回收站中未找到对应的记录。'
             # 反推原始绝对路径
             original_path = _get_original_path(trash_path_to_restore)
             if not original_path:
@@ -1638,15 +1642,15 @@ def execute_line_streaming(line, task_id):
             for name in sorted(entries):
                 full = os.path.join(dirpath, name)
                 if os.path.isdir(full):
-                    lines.append(f'  [DIR] {name}')
+                    lines.append(f'  [DIR]  {name}')
                 else:
                     size = os.path.getsize(full)
                     if size < 1024:
                         lines.append(f'  [FILE] {name} ({size} B)')
                     elif size < 1024 * 1024:
-                        lines.append(f'  [FILE] {name} ({size/1024:.1f} KB)')
+                        lines.append(f'  [FILE] {name} ({size / 1024:.1f} KB)')
                     else:
-                        lines.append(f'  [FILE] {name} ({size/1024/1024:.1f} MB)')
+                        lines.append(f'  [FILE] {name} ({size / 1024 / 1024:.1f} MB)')
             log_action('LIST', dirpath)
             return '\n'.join(lines)
         except FileNotFoundError:
@@ -1694,18 +1698,13 @@ def execute_line_streaming(line, task_id):
                 # PowerShell：列表传参，不走 shell=True，避免二次解析
                 process = subprocess.Popen(
                     [_POWERSHELL_EXE, '-NoProfile', '-NonInteractive', '-Command', arg.strip()],
-                    stdout=subprocess.PIPE,
-                    stderr=subprocess.STDOUT,
-                    cwd=W
+                    stdout=subprocess.PIPE, stderr=subprocess.STDOUT, cwd=W
                 )
             else:
                 # cmd 回退
                 process = subprocess.Popen(
-                    f'cmd /c {arg.strip()}',
-                    shell=True,
-                    stdout=subprocess.PIPE,
-                    stderr=subprocess.STDOUT,
-                    cwd=W
+                    f'cmd /c {arg.strip()}', shell=True,
+                    stdout=subprocess.PIPE, stderr=subprocess.STDOUT, cwd=W
                 )
             # [新增] 注册当前子进程，供 GUI 侧终止
             with _current_process_lock:
@@ -1745,6 +1744,7 @@ def execute_line_streaming(line, task_id):
                     if process.poll() is not None:
                         draining = True
                         continue
+                    continue
                 if item is None:
                     break  # EOF 哨兵：管道彻底关闭（正常情况，daemon 没持有管道）
                 line_out = smart_decode(item).rstrip()
@@ -1784,9 +1784,7 @@ def execute_line_streaming(line, task_id):
         try:
             process = subprocess.Popen(
                 ['python', script],
-                stdout=subprocess.PIPE,
-                stderr=subprocess.STDOUT,
-                cwd=W
+                stdout=subprocess.PIPE, stderr=subprocess.STDOUT, cwd=W
             )
             # [新增] 注册当前子进程，供 GUI 侧终止
             with _current_process_lock:
@@ -1823,6 +1821,7 @@ def execute_line_streaming(line, task_id):
                     if process.poll() is not None:
                         draining = True
                         continue
+                    continue
                 if item is None:
                     break
                 line_out = smart_decode(item).rstrip()
@@ -1897,7 +1896,8 @@ KNOWN_CMDS = set(re.findall(r"cmd\s*==\s*'([^']+)'", _EXEC_SRC))
 # 记忆引擎
 # ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 class MemoryEngine:
-    """记忆系统核心：管理短期/长期记忆的读写、温度衰减、暴露窗口裁剪
+    """
+    记忆系统核心：管理短期/长期记忆的读写、温度衰减、暴露窗口裁剪
     核心设计原则：
     - 不遗忘，只裁剪暴露。记忆永不自动删除，只控制哪些标签进入 LLM 上下文。
     - 温度采用百分比衰减（指数衰减曲线），永远 > 0，不需要 GC。
@@ -2254,12 +2254,12 @@ class _LogWriter:
     """
     重定向 stdout/stderr 的核心类：
     1. 写入原始流（控制台/IDE终端可见）
-    2. 追加写入 agent_log.txt（持久化）
-    3. 推送到 GUI 队列（事件驱动）
+    2. 追加写入 agent_log.txt（持久化，二进制模式 + 字节偏移追踪）
+    3. 推送到 GUI 队列（事件驱动，消息附带字节偏移区间）
     """
     def __init__(self, original_stream, stream_name):
         self._orig = original_stream  # 原始 sys.stdout 或 sys.stderr
-        self._name = stream_name       # 'out' 或 'err'，用于区分来源
+        self._name = stream_name      # 'out' 或 'err'，用于区分来源
     def write(self, s):
         if not s:
             return
@@ -2267,18 +2267,28 @@ class _LogWriter:
         self._orig.write(s)
         self._orig.flush()  # 立即刷新，防止卡顿
         # 2. 文件持久化（线程安全追加写入）
+        # [修改] 改用二进制模式：1) 字节偏移精确可追踪（供 GUI 窗口化回读定位）
+        #                          2) 消除 Windows 文本模式 \n→\r\n 隐式翻译
+        #             [行为变更] 日志文件新内容行尾为 LF（历史 CRLF 内容读取方均兼容）
+        start_pos = end_pos = None
         with _log_file_lock:
             try:
-                with open(LOG_FILE, 'a', encoding='utf-8') as f:
-                    f.write(s)
+                data = s.encode('utf-8')
+                with open(LOG_FILE, 'ab') as f:
+                    f.seek(0, os.SEEK_END)  # 显式定位末尾（C 标准对 'a' 流初始位置未定义，勿依赖）
+                    start_pos = f.tell()
+                    f.write(data)
+                    end_pos = f.tell()
             except Exception:
-                pass  # 写入失败静默处理，不能让日志系统搞挂主流程
+                start_pos = end_pos = None  # 写入失败静默处理，不能让日志系统搞挂主流程
         # 3. 推送到 GUI（事件驱动核心）
+        # [修改] 消息附带本次写入的字节偏移区间 (stream_name, text, start, end)
+        #             GUI 据此建立 内存行 ↔ 文件字节区间 的精确映射，支撑滑动窗口回读
         if _gui_log_queue:
             try:
                 # 使用 put_nowait 避免阻塞 worker 线程
                 # GUI 侧是异步消费，不会卡住这里
-                _gui_log_queue.put_nowait((self._name, s))
+                _gui_log_queue.put_nowait((self._name, s, start_pos, end_pos))
             except Exception:
                 pass  # 队列满或异常时静默丢弃，保证服务稳定
     def flush(self):
@@ -2302,7 +2312,7 @@ def agent_stream():
             evt = {'id': tid, 'type': 'status', 'status': entry['status']}
             if entry['status'] == 'done' and entry['result']:
                 evt['result'] = entry['result']
-                q.put(f"data: {json.dumps(evt, ensure_ascii=False)}\n\n")
+            q.put(f"data: {json.dumps(evt, ensure_ascii=False)}\n\n")
             # 只对未完成任务回放日志（done 的任务结果已含全部信息）
             if entry['status'] != 'done':
                 for log_line in entry['logs']:
@@ -2365,8 +2375,8 @@ def agent_exec():
                         idx = bln.lower().find('【/codeend】')
                         if idx != -1:
                             block.append(bln[:idx])
-                            peek += 1
-                            break
+                        peek += 1
+                        break
                     block.append(bln)
                     peek += 1
                 blocks.append('\n'.join(block).strip('\n'))
@@ -2492,7 +2502,7 @@ def agent_file_download():
         return response
     except Exception as e:
         print(f'[Download] 读取文件异常: {e}')
-        return f"下载失败: {e}", 500
+        return f'下载失败: {e}', 500
 @app.route('/agent-config-poll', methods=['GET'])
 def agent_config_poll():
     _config_changed.wait(timeout=25)
@@ -2511,10 +2521,10 @@ if __name__ == '__main__':
     permission_mgr.set_callback(_default_permission_callback)
     _push_config()
     print(f'========================================')
-    print(f' PokerAgent 本地服务已启动 (SSE流式版)')
-    print(f' 监听地址：http://127.0.0.1:9966')
-    print(f' 工作目录：{WORK_DIR}')
-    print(f' 帮助文档：{HELP_FILE}')
-    print(f' 操作日志：{LOG_FILE}')
+    print(f'  PokerAgent 本地服务已启动 (SSE流式版)')
+    print(f'  监听地址：http://127.0.0.1:9966')
+    print(f'  工作目录：{WORK_DIR}')
+    print(f'  帮助文档：{HELP_FILE}')
+    print(f'  操作日志：{LOG_FILE}')
     print(f'========================================')
     app.run(host='127.0.0.1', port=9966, debug=False, threaded=True)
