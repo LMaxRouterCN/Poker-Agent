@@ -1,7 +1,6 @@
 """PokerAgent - GUI 控制台
 
 用法：python agent_gui.py（不要和 agent_server.py 同时运行）
-
 依赖：flask, flask-cors, werkzeug, numpy, sounddevice（与 agent_server.py 相同）
 """
 
@@ -134,18 +133,18 @@ def classify_log_line(line):
 # ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 class LogCanvas:
     # 窗口与预读
-    WINDOW_DEFAULT_LINES = 4096   # 默认内存窗口行数（可通过 gui_config.json 的 log_window_lines 覆盖）
-    EVICT_MARGIN_LINES = 64       # 驱逐余量：批量驱逐摊薄 prefix 重建成本
-    PRELOAD_UP_ROWS = 256         # 视口距窗口头 ≤N 行 → 触发向上回读
-    PRELOAD_DOWN_ROWS = 256       # 视口距窗口尾 ≤N 行 → 触发向下回读
-    READ_BATCH_LINES = 500        # 每次磁盘回读行数
-    READ_CHUNK_BYTES = 65536      # 磁盘读取块大小（字节）
-    PRELOAD_COOLDOWN_MS = 200     # 回读冷却
+    WINDOW_DEFAULT_LINES = 4096  # 默认内存窗口行数（可通过 gui_config.json 的 log_window_lines 覆盖）
+    EVICT_MARGIN_LINES = 64  # 驱逐余量：批量驱逐摊薄 prefix 重建成本
+    PRELOAD_UP_ROWS = 256  # 视口距窗口头 ≤N 行 → 触发向上回读
+    PRELOAD_DOWN_ROWS = 256  # 视口距窗口尾 ≤N 行 → 触发向下回读
+    READ_BATCH_LINES = 500  # 每次磁盘回读行数
+    READ_CHUNK_BYTES = 65536  # 磁盘读取块大小（字节）
+    PRELOAD_COOLDOWN_MS = 200  # 回读冷却
 
     # 渲染调度
-    RESIZE_DEBOUNCE_MS = 120      # resize 去抖
-    LOOKBACK_ROWS = 16            # bisect 定位垫背回退行数（估算 prefix 误差兜底）
-    RELAYOUT_BATCH = 200          # 后台排版链每批行数（idle 分帧，不阻塞 UI）
+    RESIZE_DEBOUNCE_MS = 120  # resize 去抖
+    LOOKBACK_ROWS = 16  # bisect 定位垫背回退行数（估算 prefix 误差兜底）
+    RELAYOUT_BATCH = 200  # 后台排版链每批行数（idle 分帧，不阻塞 UI）
 
     # 布局
     MARGIN_X = 12
@@ -160,7 +159,7 @@ class LogCanvas:
         self.master = master
         self._log_file = log_file
         self._wrap = wrap
-        self._classify = classify or (lambda line: ('txt', None))  # 行分类回调（tag, parts）
+        self._classify = classify or (lambda line: ('txt', None))  # 行分类回调
         self._window_lines = window_lines or self.WINDOW_DEFAULT_LINES
 
         # 行记录 5 元组: (base_color, parts, fstart, fend, plain)
@@ -174,41 +173,42 @@ class LogCanvas:
         self._auto_scroll = True
 
         # 排版引擎状态
-        self._layouts = {}           # row -> {'vlines': [[seg...],...], 'gen': g, 'max_w': px}
-        self._width_gen = 0          # 宽度代际：resize/切 wrap 时 +1，全部缓存失效
-        self._pending_layout = set() # 未精排行号集合（估算占位中，后台链渐进收敛）
-        self._content_max_w = 0      # nowrap 模式内容总宽（驱动横向 scrollregion）
-        self._char_widths = {}       # 非ASCII字符 -> 像素宽缓存（Font.measure 首见）
-        self._cjk_w = None           # CJK 代表宽度（粗估用，精排走 _char_widths）
+        self._layouts = {}  # row -> {'vlines': [[seg...],...], 'gen': g, 'max_w': px}
+        self._width_gen = 0  # 宽度代际：resize/切 wrap 时 +1，全部缓存失效
+        self._pending_layout = set()  # 未精排行号集合（估算占位中，后台链渐进收敛）
+        self._content_max_w = 0  # nowrap 模式内容总宽（驱动横向 scrollregion）
+        self._char_widths = {}  # 非ASCII字符 -> 像素宽缓存（Font.measure 首见）
+        self._cjk_w = None  # CJK 代表宽度（粗估用，精排走 _char_widths）
+
         # [修改·根源修复] 唯一权威字体度量：tkfont.Font 实例（_build_ui 前创建）。
-        #        Font 实例与 create_text 共用 Tk 字体引擎，measure() 返回精确 advance，
-        #        渲染/装箱/高亮三路度量从此零偏差（原 FONT_MONO 是 ('Consolas',10) 元组
-        #        无 .measure 方法；原 bbox 法含每侧 padding 系统性虚高）
+        # Font 实例与 create_text 共用 Tk 字体引擎，measure() 返回精确 advance，
+        # 渲染/装箱/高亮三路度量从此零偏差（原 FONT_MONO 是 ('Consolas',10) 元组
+        # 无 .measure 方法；原 bbox 法含每侧 padding 系统性虚高）
         self._font_obj = tkfont.Font(family=FONT_MONO[0], size=FONT_MONO[1])
-        self._cw = 8                 # ASCII 等宽基准（_measure_font 校准）
+        self._cw = 8  # ASCII 等宽基准（_measure_font 校准）
 
         # 滑动窗口状态
-        self._file_read_pos = 0      # 窗口头行字节偏移（向上回读锚点）
-        self._file_exhausted = False # 文件头已读尽
-        self._tail_anchor = None     # 窗口尾被驱逐后的回读锚点（None=内存尾即文件尾）
-        self._file_end_pos = 0       # 文件当前末尾（消息流持续更新）
-        self._pend_text = ''         # 流式累积：未成行的字符
-        self._pend_start = None      # 流式累积：该行起始字节偏移
-
-        self._loading = False        # 向上回读进行中
-        self._loading_tail = False   # 向下回读进行中
+        self._file_read_pos = 0  # 窗口头行字节偏移（向上回读锚点）
+        self._file_exhausted = False  # 文件头已读尽
+        self._tail_anchor = None  # 窗口尾被驱逐后的回读锚点（None=内存尾即文件尾）
+        self._file_end_pos = 0  # 文件当前末尾（消息流持续更新）
+        self._pend_text = ''  # 流式累积：未成行的字符
+        self._pend_start = None  # 流式累积：该行起始字节偏移
+        self._loading = False  # 向上回读进行中
+        self._loading_tail = False  # 向下回读进行中
         self._last_preload_time = 0
 
         # 调度句柄
-        self._debounce_job = None    # resize 去抖
-        self._relayout_job = None    # 后台排版链
-        self._render_job = None      # 渲染请求合并
-        self._refresh_depth = 0      # 二次收敛渲染防重入
+        self._debounce_job = None  # resize 去抖
+        self._relayout_job = None  # 后台排版链
+        self._render_job = None  # 渲染请求合并
+        self._refresh_depth = 0  # 二次收敛渲染防重入
 
         # 文本选择（字符级：(row, char_idx) 对）
         self._sel_anchor = None
         self._sel_active = None
         self._sel_items = []
+
         self._tag_colors = {
             'ts': TXT2, 'act': BLUE, 'txt': TXT, 'ok': GREEN, 'warn': YELLOW,
             'err': RED, 'http': '#484f58', 'prompt': CYAN, 'banner': PURPLE,
@@ -241,7 +241,8 @@ class LogCanvas:
         self.canvas.bind('<Configure>', self._on_resize)
         self.canvas.bind('<MouseWheel>', self._on_mousewheel)
         # [新增] Shift+滚轮 → 横向滚动（nowrap 模式）
-        self.canvas.bind('<Shift-MouseWheel>', lambda e: self.canvas.xview_scroll(-e.delta // 120 * 3, 'units'))
+        self.canvas.bind('<Shift-MouseWheel>',
+                         lambda e: self.canvas.xview_scroll(-e.delta // 120 * 3, 'units'))
         self.canvas.bind('<Button-4>', lambda e: self._scroll_delta(-60))
         self.canvas.bind('<Button-5>', lambda e: self._scroll_delta(60))
         self.canvas.bind('<Button-1>', self._on_click)
@@ -302,8 +303,8 @@ class LogCanvas:
         char_off: token 首字符在逻辑行中的偏移（供字符级选择映射）"""
         tokens = []
         off = 0
-        wbuf, woff, wcolor = [], 0, None   # word 累积
-        sbuf, soff, scolor = [], 0, None   # space 累积
+        wbuf, woff, wcolor = [], 0, None  # word 累积
+        sbuf, soff, scolor = [], 0, None  # space 累积
 
         def flush_word():
             nonlocal wbuf, woff, wcolor
@@ -349,6 +350,7 @@ class LogCanvas:
         返回 (vlines, max_w)；vlines[i] = [[x, text, color, char_off], ...]"""
         tokens = self._tokenize(seg_input)
         vlines = []
+
         # nowrap：单视觉行，全 token 合并
         if not wrap_w or wrap_w <= 0:
             segs, x = [], 0
@@ -360,6 +362,7 @@ class LogCanvas:
                     segs.append([x, t, color, off])
                 x += tw
             return ([segs] if segs else [[]]), x
+
         cur = []  # [(token元组, 宽), ...]
         cur_w = 0
         skip_space = True  # 换行后跳过行首空格
@@ -394,11 +397,9 @@ class LogCanvas:
                 i += 1
                 continue
             # 放不下
-            if cur and tw > wrap_w:
-                # 词超整行宽且当前行已有内容 → 先换行再硬切
+            if cur and tw > wrap_w:  # 词超整行宽且当前行已有内容 → 先换行再硬切
                 flush()
-            if tw > wrap_w:
-                # 硬切：逐字符填满行宽（char_off 随切片推进）
+            if tw > wrap_w:  # 硬切：逐字符填满行宽（char_off 随切片推进）
                 rem, rem_off = t, off
                 while rem:
                     avail = wrap_w - cur_w
@@ -422,8 +423,10 @@ class LogCanvas:
             cur.append((tokens[i], tw)); cur_w += tw
             skip_space = False
             i += 1
+
         if cur:
             flush()
+
         # 【修复】空行保底一个视觉行（否则高度为 0，空行视觉上消失）
         if not vlines:
             vlines = [[]]
@@ -483,6 +486,7 @@ class LogCanvas:
             self._line_heights.appendleft(h)
             insert_h += h
         self._rebuild_prefix()
+
         # 行索引整体 +n：item/layout/pending/选择锚 全部重映射（Canvas item 复用不重建）
         self._visible_items = {r + n: v for r, v in self._visible_items.items()}
         self._layouts = {r + n: v for r, v in self._layouts.items()}
@@ -493,12 +497,15 @@ class LogCanvas:
             self._sel_anchor = (self._sel_anchor[0] + n, self._sel_anchor[1])
         if self._sel_active is not None:
             self._sel_active = (self._sel_active[0] + n, self._sel_active[1])
+
         # 窗口头锚 = 新首行起点
         if self._lines[0][2] is not None:
             self._file_read_pos = self._lines[0][2]
+
         # 窗口满 → 驱逐尾部（最新端去盘，滚到底时回读）
         if len(self._lines) > self._window_lines:
             self._evict_tail()
+
         # 【锚定】内容整体下移 insert_height，offset 同步平移保持视口内容不变；驱逐后统一夹取
         self._scroll_offset += insert_h
         total = self._get_total_height()
@@ -626,9 +633,9 @@ class LogCanvas:
     def _read_lines_backwards(self, read_pos, max_chars, max_lines=None):
         """倒序读：返回 (行列表[旧→新], 新字节偏移, 是否读尽, 尾部半行(text, start))。
         修复三个历史失真源：文本模式 tell() 误用 / 块边界腰斩行 / UTF-8 多字节撕裂。
-        【本版修复】1) buf 以 \n 结尾时的幽灵空段剔除（否则文件尾多出一行）
+        【本版修复】1) buf 以 \\n 结尾时的幽灵空段剔除（否则文件尾多出一行）
         2) 行起点偏移补上跨块半行长度（否则块边界切在行中间时区间系统性偏小）
-        3) 跨轮保留的半行连同行尾 \n 一起保留（否则空行在块间传递时蒸发）
+        3) 跨轮保留的半行连同行尾 \\n 一起保留（否则空行在块间传递时蒸发）
         4) 批次提前结束时回退到最后收集行起点（保证批边界行对齐，无腰斩行）
         尾部半行仅在初始加载（read_pos==文件末尾）时提取，供流累积器衔接"""
         lines = []  # 新→旧（最后统一 reverse）
@@ -653,7 +660,8 @@ class LogCanvas:
                         # 文件尾无换行 → segs[-1] 是写入中的半行，移交流累积器（不当作完整行）
                         if read_pos == file_size and segs and segs[-1] != b'':
                             half = segs.pop()
-                            tail_partial = (half.decode('utf-8', errors='replace'), read_pos - len(half))
+                            tail_partial = (half.decode('utf-8', errors='replace'),
+                                            read_pos - len(half))
                         if segs and segs[-1] == b'':
                             segs.pop()  # buf 以 \n 结尾的幽灵空段（\n 之后无内容）
                     if pos > 0:
@@ -870,8 +878,8 @@ class LogCanvas:
             return
         first = self._find_first_visible_row()
         up = (first <= self.PRELOAD_UP_ROWS and not self._file_exhausted)
-        down = (self._tail_anchor is not None and
-                n - first <= self.PRELOAD_DOWN_ROWS + self._canvas_height // self._line_height)
+        down = (self._tail_anchor is not None
+                and n - first <= self.PRELOAD_DOWN_ROWS + self._canvas_height // self._line_height)
         if up or down:
             self._last_preload_time = now
             if up:
@@ -990,18 +998,21 @@ class LogCanvas:
         if not self._lines or self._canvas_height <= 0:
             self._update_scrollbar()
             return
+
         if force_rebuild:
             # 强制重建（relayout 后 item 的排版已失效），先销毁全部旧 item
             for items in self._visible_items.values():
                 for item in items:
                     self.canvas.delete(item)
             self._visible_items.clear()
+
         # 【定位】prefix 含估算占位，bisect 可能有偏差，回退 LOOKBACK_ROWS 垫背（兼作预渲染）
         start_row = max(0, self._find_first_visible_row() - self.LOOKBACK_ROWS)
         y = self._line_y_prefix[start_row] - self._scroll_offset
         end_row = start_row
         dirty_min = None
         run_to_end = self._auto_scroll  # 贴底模式推进到最后一行（实测链末端校正 offset）
+
         while end_row < len(self._lines):
             # 【渲染即排版】行进入视野立即精排（缓存），高度即时校正
             lay = self._get_layout(end_row)
@@ -1009,6 +1020,7 @@ class LogCanvas:
             if h != self._line_heights[end_row]:
                 self._line_heights[end_row] = h
                 dirty_min = end_row if dirty_min is None else dirty_min
+
             # item 管理：已有 → coords 摆位（x 逻辑坐标恒定，xview 平移由 Canvas 承担）
             items = self._visible_items.get(end_row)
             if items is None:
@@ -1028,20 +1040,23 @@ class LogCanvas:
                         if not seg[1]:
                             continue
                         if idx < len(items):
-                            self.canvas.coords(items[idx], self.MARGIN_X + seg[0],
-                                               y + vi * self._line_height)
+                            self.canvas.coords(items[idx],
+                                               self.MARGIN_X + seg[0], y + vi * self._line_height)
                         idx += 1
             y += h
             end_row += 1
-            # 【修复】y 已是窗口坐标（初始已减 offset），直接与视口高度比较；
-            # 原实现再减一次 offset，深滚时每帧多渲染 offset/行高 数量级的额外行
-            if not run_to_end and y > self._canvas_height + 2 * self._line_height:
-                break
+
+        # 【修复】y 已是窗口坐标（初始已减 offset），直接与视口高度比较；
+        # 原实现再减一次 offset，深滚时每帧多渲染 offset/行高 数量级的额外行
+        if not run_to_end and y > self._canvas_height + 2 * self._line_height:
+            break
+
         # 清理移出渲染范围的 item
         for r in [r for r in self._visible_items if r < start_row or r >= end_row]:
             for item in self._visible_items[r]:
                 self.canvas.delete(item)
             del self._visible_items[r]
+
         # 【贴底校正】y 此刻 = 实测渲染链末端的屏幕坐标；+ offset 还原绝对坐标后锚定 offset
         # 【修复】target 漏加 offset 会把屏幕坐标当绝对坐标，深滚时被 max(0,...) 截到 0，
         # auto_scroll 视图会被拉回顶部
@@ -1050,6 +1065,7 @@ class LogCanvas:
             if abs(target - self._scroll_offset) > 0.5:
                 self._scroll_offset = target
                 dirty_min = dirty_min if dirty_min is not None else len(self._lines)
+
         if dirty_min is not None:
             self._rebuild_prefix_from(dirty_min)
             self._refresh_depth += 1
@@ -1057,6 +1073,7 @@ class LogCanvas:
                 self._refresh_visible()  # 二次收敛：基于校正后 prefix/offset 重新摆位
             finally:
                 self._refresh_depth -= 1
+
         # 【修复】选择高亮挂渲染管线尾部：每次渲染后同步重建（原 bug：选择矩形不随滚动/布局移动）
         self._update_selection()
         self._update_scrollbar()
@@ -1080,12 +1097,12 @@ class LogCanvas:
             self.xscrollbar.grid_remove()
         else:
             self.xscrollbar.grid(row=1, column=0, sticky='ew')
-            self.xscrollbar.set(first, last)
+        self.xscrollbar.set(first, last)
 
     # ========== 文本选择（字符级） ==========
 
     def _hit_test(self, x, y):
-        """逻辑坐标 (x, y) → (row, char_idx)。x 已含 xview 偏移（canvasx 转换）"""
+        """逻辑坐标 -> (row, char_idx)。x 已含 xview 偏移（canvasx 转换）"""
         if not self._line_y_prefix or not self._lines:
             return None
         idx = bisect.bisect_right(self._line_y_prefix, y)
@@ -1121,7 +1138,7 @@ class LogCanvas:
 
     def _on_click(self, event):
         # [修复·根源] Canvas 默认无键盘焦点（takefocus 空），<Control-c> 绑定从不触发
-        #        （复制失灵的根源）。点击即聚焦，Ctrl+C 事件从此路由到 canvas
+        # （复制失灵的根源）。点击即聚焦，Ctrl+C 事件从此路由到 canvas
         self.canvas.focus_set()
         hit = self._hit_test(self.canvas.canvasx(event.x), event.y + self._scroll_offset)
         if hit:
@@ -1357,8 +1374,7 @@ class AgentGUI:
         self.root = tk.Tk()
         self.root.title("PokerAgent")
         self.root.configure(bg=BG)
-        self.root.minsize(780, 480)
-
+        self.root.minsize(1000, 480)  # [修改] 新增记忆面板列，最小宽度提升（原 780）
         gui_cfg = self._load_gui_config()
         if gui_cfg and 'window_geometry' in gui_cfg:
             try:
@@ -1367,31 +1383,26 @@ class AgentGUI:
                 self.root.geometry('1020x660')
         else:
             self.root.geometry('1020x660')
-
         self._cli_mode = False
         self._server = None
         self._left_width = gui_cfg.get('left_panel_width', 220) if gui_cfg else 220
         self._right_width = gui_cfg.get('right_panel_width', 220) if gui_cfg else 220
         self._log_wrap = gui_cfg.get('log_wrap', True) if gui_cfg else True
-        self._window_lines = gui_cfg.get('log_window_lines') if gui_cfg else None  # [新增]
+        self._window_lines = gui_cfg.get('log_window_lines') if gui_cfg else None
+        self._mem_width = gui_cfg.get('memory_panel_width', 210) if gui_cfg else 210  # [新增] 记忆面板宽度
         self._fade_jobs = {}
-
         try:
             self._click_player = ClickPlayer()
         except Exception:
             self._click_player = None
-
         self._build_ui()
-
         # [重构] 日志消费：删除后台线程 + 跨线程 event_generate（Tk 线程安全的灰色地带），
         # 改主线程 15ms after 拉取（Tk 无跨线程唤醒原语，此为唯一稳妥方案，无感级延迟）
         self._log_queue = queue.Queue()
         agent_server.set_gui_log_queue(self._log_queue)
         self.root.after(LOG_POLL_MS, self._drain_log_queue)
-
         agent_server.permission_mgr.set_callback(self._make_permission_callback())
         agent_server._push_config()
-
         self._apply_dark_titlebar()
         self._start_server()
         self.root.protocol("WM_DELETE_WINDOW", self._on_close)
@@ -1484,21 +1495,24 @@ class AgentGUI:
                 rx = gui_ref.root.winfo_x() + (gui_ref.root.winfo_width() - dw) // 2
                 ry = gui_ref.root.winfo_y() + (gui_ref.root.winfo_height() - dh) // 2
                 dialog.geometry(f'{dw}x{dh}+{rx}+{ry}')
-
                 tk.Label(dialog, text="⚠", bg=BG, fg=YELLOW,
                          font=('Microsoft YaHei UI', 28)).pack(pady=(14, 2))
                 info = tk.Frame(dialog, bg=HEADER)
                 info.pack(fill=tk.X, padx=16, pady=8)
                 if cmd == '高危命令拦截':
                     tk.Label(dialog, text="即将执行高危系统命令", bg=BG, fg=TXT, font=FONT_UI_B).pack()
-                    tk.Label(info, text="拦截命令:", bg=HEADER, fg=TXT2, font=FONT_MONO, anchor='w').pack(fill=tk.X, padx=10, pady=(6, 0))
-                    tk.Label(info, text=f"{filepath}", bg=HEADER, fg=RED, font=FONT_MONO, anchor='w', wraplength=400).pack(fill=tk.X, padx=10, pady=(0, 6))
+                    tk.Label(info, text="拦截命令:", bg=HEADER, fg=TXT2, font=FONT_MONO, anchor='w').pack(
+                        fill=tk.X, padx=10, pady=(6, 0))
+                    tk.Label(info, text=f"{filepath}", bg=HEADER, fg=RED, font=FONT_MONO,
+                             anchor='w', wraplength=400).pack(fill=tk.X, padx=10, pady=(0, 6))
                 else:
                     tk.Label(dialog, text="路径超出工作目录", bg=BG, fg=TXT, font=FONT_UI_B).pack()
-                    tk.Label(info, text=f"指令: {cmd}", bg=HEADER, fg=RED, font=FONT_MONO, anchor='w').pack(fill=tk.X, padx=10, pady=(2, 2))
-                    tk.Label(info, text=f"目标: {filepath}", bg=HEADER, fg=TXT, font=FONT_MONO, anchor='w', wraplength=400).pack(fill=tk.X, padx=10)
-                    tk.Label(info, text=f"工作目录: {agent_server.WORK_DIR}", bg=HEADER, fg=TXT2, font=('Consolas', 9), anchor='w').pack(fill=tk.X, padx=10, pady=(2, 6))
-
+                    tk.Label(info, text=f"指令: {cmd}", bg=HEADER, fg=RED, font=FONT_MONO,
+                             anchor='w').pack(fill=tk.X, padx=10, pady=(2, 2))
+                    tk.Label(info, text=f"目标: {filepath}", bg=HEADER, fg=TXT, font=FONT_MONO,
+                             anchor='w', wraplength=400).pack(fill=tk.X, padx=10)
+                    tk.Label(info, text=f"工作目录: {agent_server.WORK_DIR}", bg=HEADER, fg=TXT2,
+                             font=('Consolas', 9), anchor='w').pack(fill=tk.X, padx=10, pady=(2, 6))
                 bf = tk.Frame(dialog, bg=BG)
                 bf.pack(fill=tk.X, padx=16, pady=(0, 14))
 
@@ -1523,7 +1537,8 @@ class AgentGUI:
             event.wait(timeout=120)
             if event.is_set():
                 count = len(agent_server.permission_mgr._always_allow)
-                gui_ref.root.after_idle(lambda: gui_ref.lbl_allow_count.configure(text=f"始终允许: {count} 条"))
+                gui_ref.root.after_idle(
+                    lambda: gui_ref.lbl_allow_count.configure(text=f"始终允许: {count} 条"))
             return result[0]
 
         return callback
@@ -1544,6 +1559,7 @@ class AgentGUI:
             'right_panel_width': self._right_width,
             'log_wrap': self._log_wrap,
             'log_window_lines': self.log_canvas._window_lines,  # [新增] 日志内存窗口行数
+            'memory_panel_width': self._mem_width,  # [新增] 记忆面板宽度
         }
         try:
             with open(GUI_CONFIG_FILE, 'w', encoding='utf-8') as f:
@@ -1557,7 +1573,8 @@ class AgentGUI:
             self.root.update_idletasks()
             hwnd = ctypes.windll.user32.GetParent(self.root.winfo_id())
             value = ctypes.c_int(2)
-            ctypes.windll.dwmapi.DwmSetWindowAttribute(hwnd, 20, ctypes.byref(value), ctypes.sizeof(value))
+            ctypes.windll.dwmapi.DwmSetWindowAttribute(
+                hwnd, 20, ctypes.byref(value), ctypes.sizeof(value))
         except Exception:
             pass
 
@@ -1577,6 +1594,12 @@ class AgentGUI:
         self.left.pack_propagate(False)
         self.left_grip = tk.Frame(self.root, bg=BORDER, width=3, cursor='sb_h_double_arrow')
         self.left_grip.pack(side=tk.LEFT, fill=tk.Y)
+        # [新增] 记忆系统独立列（控制面板与日志区之间；要挪到最左侧只需把这两段 pack 移到 self.left 之前）
+        self.mem_panel = tk.Frame(self.root, bg=PANEL, width=self._mem_width)
+        self.mem_panel.pack(side=tk.LEFT, fill=tk.Y)
+        self.mem_panel.pack_propagate(False)
+        self.mem_grip = tk.Frame(self.root, bg=BORDER, width=3, cursor='sb_h_double_arrow')
+        self.mem_grip.pack(side=tk.LEFT, fill=tk.Y)
         self.center = tk.Frame(self.root, bg=BG)
         self.center.pack(side=tk.LEFT, fill=tk.BOTH, expand=True)
         self.right_grip = tk.Frame(self.root, bg=BORDER, width=3, cursor='sb_h_double_arrow')
@@ -1585,6 +1608,7 @@ class AgentGUI:
         self.right_panel.pack(side=tk.LEFT, fill=tk.Y)
         self.right_panel.pack_propagate(False)
         self._build_left()
+        self._build_memory_panel()  # [新增]
         self._build_center()
         self._build_right_panel()
         self._bind_grips()
@@ -1595,8 +1619,7 @@ class AgentGUI:
         bar.pack_propagate(False)
         self.status_dot = tk.Label(bar, text="●", bg=HEADER, fg=GREEN, font=FONT_MONO)
         self.status_dot.pack(side=tk.LEFT, padx=(10, 4))
-        self.status_text = tk.Label(bar, text="服务运行中", bg=HEADER, fg=TXT2,
-                                    font=FONT_MONO, anchor='w')
+        self.status_text = tk.Label(bar, text="服务运行中", bg=HEADER, fg=TXT2, font=FONT_MONO, anchor='w')
         self.status_text.pack(side=tk.LEFT)
         self.port_text = tk.Label(bar, text="http://127.0.0.1:9966", bg=HEADER, fg=TXT2,
                                   font=FONT_MONO, anchor='e')
@@ -1655,6 +1678,81 @@ class AgentGUI:
                        bg=PANEL, fg=TXT, selectcolor=BTN, activebackground=PANEL, activeforeground=TXT,
                        font=FONT_UI, command=self._wrap_cmd(self._toggle_shell)).pack(side=tk.LEFT, padx=(10, 0))
 
+    # 记忆参数默认值（与 agent_server 模块级定义保持一致）
+    _MEM_DEFAULTS = {
+        'MEMORY_TEMP_INITIAL': 100,
+        'MEMORY_TEMP_DECAY_RATIO': 0.95,
+        'MEMORY_TEMP_HEAT_RATIO': 0.5,
+        'MEMORY_EXPOSE_WINDOW': 20,
+        'MEMORY_READ_WINDOW': 2,
+    }
+
+    def _build_memory_panel(self):
+        """[新增] 记忆系统独立列：五个温度参数 + 应用/恢复默认"""
+        f = self.mem_panel
+        tk.Frame(f, bg=GREEN, height=2).pack(fill=tk.X)
+        tk.Label(f, text="🧠 记忆系统", bg=PANEL, fg=TXT, font=FONT_TITLE).pack(anchor='w', padx=16, pady=(18, 4))
+        self._sep(f)
+        tk.Label(f, text="温度参数（即时生效）", bg=PANEL, fg=TXT2, font=FONT_UI).pack(anchor='w', padx=16, pady=(2, 6))
+        # (标签, agent_server 属性名, 校验类型, 提示)
+        self._mem_fields = [
+            ('初始温度', 'MEMORY_TEMP_INITIAL', 'pos_int', '新记忆的初始温度值'),
+            ('衰减比例', 'MEMORY_TEMP_DECAY_RATIO', 'ratio_01e', '每轮温度×该比例 (0<x≤1)'),
+            ('升温比例', 'MEMORY_TEMP_HEAT_RATIO', 'ratio_01i', '读取时向初始值回归的比例 (0~1)'),
+            ('暴露窗口', 'MEMORY_EXPOSE_WINDOW', 'pos_int', '标签云暴露的温度Top-N'),
+            ('读取窗口', 'MEMORY_READ_WINDOW', 'nonneg_int', 'search 上下额外返回条数'),
+        ]
+        self._mem_vars = {}
+        for label, attr, vtype, hint in self._mem_fields:
+            tk.Label(f, text=label, bg=PANEL, fg=TXT2, font=FONT_UI).pack(anchor='w', padx=16, pady=(4, 0))
+            var = tk.StringVar(value=str(getattr(agent_server, attr)))  # 从后端当前值初始化
+            self._mem_vars[attr] = (var, vtype)
+            tk.Entry(f, textvariable=var, bg=HEADER, fg=TXT, font=('Consolas', 10), bd=0,
+                     insertbackground=TXT, highlightthickness=0).pack(fill=tk.X, padx=16)
+            tk.Label(f, text=hint, bg=PANEL, fg=TXT2, font=('Microsoft YaHei UI', 8)).pack(anchor='w', padx=16, pady=(0, 2))
+        self._btn(f, "应用参数", self._apply_memory_params).pack(fill=tk.X, padx=12, pady=(8, 2))
+        self._btn(f, "恢复默认值", self._reset_memory_params).pack(fill=tk.X, padx=12, pady=2)
+
+    def _validate_mem_value(self, vtype, s):
+        """[新增] 按校验类型解析输入，非法返回 None"""
+        try:
+            if vtype == 'pos_int':
+                v = int(s)
+                return v if v > 0 else None
+            if vtype == 'nonneg_int':
+                v = int(s)
+                return v if v >= 0 else None
+            if vtype == 'ratio_01e':  # (0, 1]
+                v = float(s)
+                return v if 0 < v <= 1 else None
+            if vtype == 'ratio_01i':  # [0, 1]
+                v = float(s)
+                return v if 0 <= v <= 1 else None
+        except (ValueError, TypeError):
+            return None
+        return None
+
+    def _apply_memory_params(self):
+        """[新增] 校验并应用记忆温度参数到后端（即时生效 + 持久化 agent_config.json）"""
+        new_values = {}
+        for label, attr, vtype, _hint in self._mem_fields:
+            var, vt = self._mem_vars[attr]
+            v = self._validate_mem_value(vt, var.get().strip())
+            if v is None:
+                messagebox.showerror("参数错误", f"「{label}」的值无效：{var.get()}\n请检查范围后重试")
+                return
+            new_values[attr] = v
+        for attr, v in new_values.items():
+            setattr(agent_server, attr, v)  # MemoryEngine 调用时读模块全局，setattr 即时生效
+        agent_server._push_config()
+        print('[Agent] 记忆参数已应用: ' + ', '.join(f'{k}={new_values[k]}' for k in new_values))
+
+    def _reset_memory_params(self):
+        """[新增] 恢复默认值（填回并直接应用）"""
+        for attr, default in self._MEM_DEFAULTS.items():
+            self._mem_vars[attr][0].set(str(default))
+        self._apply_memory_params()
+
     def _build_center(self):
         f = self.center
         hdr = tk.Frame(f, bg=BG, height=38)
@@ -1663,7 +1761,8 @@ class AgentGUI:
         self.right_title = tk.Label(hdr, text="📋 控制台日志", bg=BG, fg=TXT,
                                     font=('Microsoft YaHei UI', 11), anchor='w', padx=12)
         self.right_title.pack(side=tk.LEFT, fill=tk.Y)
-        self.btn_wrap = tk.Label(hdr, text="🔁 换行: 开", bg=BG, fg=BLUE if self._log_wrap else TXT2,
+        self.btn_wrap = tk.Label(hdr, text="🔁 换行: 开", bg=BG,
+                                 fg=BLUE if self._log_wrap else TXT2,
                                  font=('Microsoft YaHei UI', 9), cursor='hand2', padx=8)
         self.btn_wrap.pack(side=tk.RIGHT, padx=(0, 12))
         self.btn_wrap.bind('<Button-1>', lambda e: self._toggle_log_wrap())
@@ -1697,6 +1796,7 @@ class AgentGUI:
 
     def _bind_grips(self):
         self.left_grip.bind('<B1-Motion>', self._on_left_grip_drag)
+        self.mem_grip.bind('<B1-Motion>', self._on_mem_grip_drag)  # [新增]
         self.right_grip.bind('<B1-Motion>', self._on_right_grip_drag)
 
     def _on_left_grip_drag(self, event):
@@ -1704,6 +1804,13 @@ class AgentGUI:
         new_w = max(160, min(new_w, 400))
         self.left.configure(width=new_w)
         self._left_width = new_w
+
+    def _on_mem_grip_drag(self, event):
+        # [新增] 记忆面板拖宽：以面板当前左缘为基准（对左侧面板宽度变化免疫）
+        new_w = event.x_root - self.mem_panel.winfo_rootx()
+        new_w = max(150, min(new_w, 400))
+        self.mem_panel.configure(width=new_w)
+        self._mem_width = new_w
 
     def _on_right_grip_drag(self, event):
         win_right = self.root.winfo_rootx() + self.root.winfo_width()
@@ -1743,7 +1850,7 @@ class AgentGUI:
             cmd_on()
         else:
             cmd_off()
-            self._fade_bg(btn, RED, BTN)
+        self._fade_bg(btn, RED, BTN)
 
     def _fade_bg(self, widget, from_color, to_color, duration_ms=300, steps=10):
         key = id(widget)
