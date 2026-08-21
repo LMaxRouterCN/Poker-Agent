@@ -1,25 +1,23 @@
 // ==UserScript==
-// @name PokerAgent
-// @namespace http://tampermonkey.net/
-// @version 31
-// @author LMaxRouterCN
-// @description PokerAgent的浏览器端核心脚本，提供元素选择、配置管理、调试日志等功能，支持多站点独立配置和自动发送功能。
-// @match *://*/*
-// @grant GM_registerMenuCommand
-// @grant GM_unregisterMenuCommand
-// @grant GM_xmlhttpRequest
-// @grant GM_getValue
-// @grant GM_setValue
-// @grant GM_addStyle
-// @grant GM_setClipboard
-// @connect localhost
-// @connect 127.0.0.1
+// @name         PokerAgent
+// @namespace    http://tampermonkey.net/
+// @version      32
+// @author       LMaxRouterCN
+// @description  PokerAgent的浏览器端核心脚本，提供元素选择、配置管理、调试日志等功能，支持多站点独立配置和自动发送功能。
+// @match        *://*/*
+// @grant        GM_registerMenuCommand
+// @grant        GM_unregisterMenuCommand
+// @grant        GM_xmlhttpRequest
+// @grant        GM_getValue
+// @grant        GM_setValue
+// @grant        GM_addStyle
+// @grant        GM_setClipboard
+// @connect      localhost
+// @connect      127.0.0.1
 // ==/UserScript==
-
 //UI风格:黑灰白黄红橙绿,主黑金配色
 (function () {
     'use strict';
-
     /* ================================================================
      * 1. 存储与配置
      * ================================================================ */
@@ -28,10 +26,10 @@
         selChatContainer: '',
         selInputBox: '',
         selSendButton: '',
-        selSendButtonContainer: '', // 发送按钮容器选择器(按钮元素会整体替换的网站用这个)
+        selSendButtonContainer: '',  // 发送按钮容器选择器(按钮元素会整体替换的网站用这个)
         selAnswerItem: '.answer',
-        selCodeContentElement: '', // 代码块容器选择器
-        selCodeCopyButton: '', // 代码块上的复制按钮选择器 (新增)
+        selCodeContentElement: '',  // 代码块容器选择器
+        selCodeCopyButton: '',  // 代码块上的复制按钮选择器 (新增)
         cleanIgnoreClassKeywords: 'thinking,reasoning,probe,deepseek-reason',
         cleanRemoveButtonLike: true,
         cleanRemovePre: true,
@@ -47,17 +45,14 @@
         showAutoSendToggle: false,
         autoSendTogglePos: 'right',
         autoSendMode: 'click',
-        memoryInjectFrequency: 1  // [新增] 记忆注入频率（每N轮，0=关闭）
+        memoryInjectFrequency: 1 // [新增] 记忆注入频率（每N轮，0=关闭）
     };
-
     const DEFAULTS = {
         whitelist: ['https://chatglm.cn/'],
         debugMode: false,
         ...SITE_DEFAULTS
     };
-
     const STORE_KEY = 'low_cost_agent_config_v4';
-
     function _loadStore() {
         let store;
         try {
@@ -77,11 +72,9 @@
         }
         return _migrateStore(store);
     }
-
     function _saveStore(store) {
         GM_setValue(STORE_KEY, store);
     }
-
     function _migrateStore(store) {
         const clearOld = (cfg) => {
             // 旧版本迁移逻辑省略，保持原有逻辑
@@ -103,7 +96,8 @@
             if (!cfg.autoSendMode) cfg.autoSendMode = 'click';
             if (cfg.autoSendByEnter !== undefined) delete cfg.autoSendByEnter;
             if (!cfg.selAnswerItem) cfg.selAnswerItem = '.answer';
-            if (!cfg.selCodeContentElement) cfg.selCodeContentElement = ''; // 新字段迁移
+            if (!cfg.selCodeContentElement) cfg.selCodeContentElement = '';
+            // 新字段迁移
             if (cfg.selCodeCopyButton === undefined) cfg.selCodeCopyButton = '';
             if (cfg.selSendButtonContainer === undefined) cfg.selSendButtonContainer = '';
             if (cfg.cleanIgnoreClassKeywords === undefined) cfg.cleanIgnoreClassKeywords = 'thinking,reasoning,probe,deepseek-reason';
@@ -114,76 +108,54 @@
             if (cfg.codeTrimEnd === undefined) cfg.codeTrimEnd = 0;
             if (cfg.memoryInjectFrequency === undefined) cfg.memoryInjectFrequency = 1; // [新增]
         };
-
         if (store.defaults && store.perSite !== undefined) {
             if (store.defaults) clearOld(store.defaults);
             if (store.perSite) Object.values(store.perSite).forEach(clearOld);
             return store;
         }
-
         const newStore = {
             whitelist: store.whitelist || ['https://chatglm.cn/'],
             debugMode: !!store.debugMode,
             defaults: { ...SITE_DEFAULTS },
             perSite: {}
         };
-
         for (const key of Object.keys(SITE_DEFAULTS)) {
             if (store[key] !== undefined) newStore.defaults[key] = store[key];
         }
-
         if (newStore.defaults.autoSendByEnter !== undefined && newStore.defaults.autoSendMode === undefined) {
             newStore.defaults.autoSendMode = newStore.defaults.autoSendByEnter ? 'enter' : 'click';
             delete newStore.defaults.autoSendByEnter;
         }
-
         return newStore;
     }
-
     function _matchSite() {
         const store = _loadStore();
         return store.whitelist.find(p => location.href.startsWith(p)) || null;
     }
-
     function _getConfigSource() {
         const store = _loadStore();
         const site = _matchSite();
         if (site && store.perSite && store.perSite[site]) return site;
         return 'defaults';
     }
-
     function cfgLoad() {
         const store = _loadStore();
         const site = _matchSite();
-        const siteCfg = (site && store.perSite && store.perSite[site])
-            ? store.perSite[site]
-            : (store.defaults || {});
-
-        const merged = {
-            ...DEFAULTS,
-            whitelist: store.whitelist,
-            debugMode: store.debugMode,
-            ...siteCfg
-        };
-
+        const siteCfg = (site && store.perSite && store.perSite[site]) ? store.perSite[site] : (store.defaults || {});
+        const merged = { ...DEFAULTS, whitelist: store.whitelist, debugMode: store.debugMode, ...siteCfg };
         if (merged.autoSendByEnter !== undefined && merged.autoSendMode === undefined) {
             merged.autoSendMode = merged.autoSendByEnter ? 'enter' : 'click';
         }
-
         return merged;
     }
-
     let _editTarget = 'defaults';
-
     function cfgSave(panelValues) {
         const store = _loadStore();
         store.debugMode = panelValues.debugMode;
-
         const siteData = { ...SITE_DEFAULTS };
         for (const key of Object.keys(SITE_DEFAULTS)) {
             if (panelValues[key] !== undefined) siteData[key] = panelValues[key];
         }
-
         if (_editTarget === 'defaults') {
             store.defaults = siteData;
         } else {
@@ -192,7 +164,6 @@
         }
         _saveStore(store);
     }
-
     function cfgSaveRuntime(partial) {
         const store = _loadStore();
         const source = _getConfigSource();
@@ -206,9 +177,7 @@
         }
         _saveStore(store);
     }
-
     const isWhitelisted = () => cfgLoad().whitelist.some(p => location.href.startsWith(p));
-
     /* ================================================================
      * 1.5 启用状态管理
      * ================================================================ */
@@ -216,7 +185,6 @@
     const PAGE_SESSION_KEY = '__PokerAgent_PageEnabled__';
     let _sessionEnabled = false;
     let _pollConfigActive = false;
-
     function _getEnableState() {
         if (_sessionEnabled) return 'session';
         if (sessionStorage.getItem(PAGE_SESSION_KEY) === '1') return 'page';
@@ -224,7 +192,6 @@
         if (globalMode === 'always') return 'always';
         return 'disabled';
     }
-
     function _setEnableState(state) {
         _sessionEnabled = false;
         GM_setValue(ENABLE_MODE_KEY, 'disabled');
@@ -241,14 +208,12 @@
                 break;
         }
     }
-
     const ENABLE_LABELS = {
         disabled: '不启用',
         always: '默认启用',
         session: '此次会话启用',
         page: '当前页面启用'
     };
-
     function _stopAgent() {
         _pollConfigActive = false;
         if (_pollTimer) {
@@ -260,21 +225,15 @@
         _cmdQueue = [];
         _taskList = [];
         if (_sseEventSource) {
-            try {
-                _sseEventSource.abort();
-            } catch (e) { }
+            try { _sseEventSource.abort(); } catch (e) { }
             _sseEventSource = null;
         }
         log('INFO', '⏹ Agent 已停止');
     }
-
     let _enableMenuIds = [];
-
     function _registerEnableMenus() {
         _enableMenuIds.forEach(id => {
-            try {
-                GM_unregisterMenuCommand(id);
-            } catch (e) { }
+            try { GM_unregisterMenuCommand(id); } catch (e) { }
         });
         _enableMenuIds = [];
         const current = _getEnableState();
@@ -285,7 +244,6 @@
             _enableMenuIds.push(id);
         });
     }
-
     function _switchEnableState(mode) {
         const current = _getEnableState();
         if (current === mode) return;
@@ -303,7 +261,6 @@
         }
         _registerEnableMenus();
     }
-
     /* ================================================================
      * 2. 样式注入
      * ================================================================ */
@@ -402,7 +359,7 @@
 #agent-debug-foot{padding:6px 12px;border-top:1px solid #2a2a2a;text-align:right}
 .ag-dbg-btn{background:#1a1a1a;border:1px solid #2a2a2a;color:#a0a0a0;padding:3px 10px;border-radius:0;cursor:pointer;font-size:11px}
 .ag-dbg-btn:hover{border-color:#facc15;color:#facc15}
-#agent-auto-send-toggle{position:fixed;z-index:2147483640;display:flex;flex-direction:row;align-items:stretch;background:#0a0a0a;border:1px solid #2a2a2a;pointer-events:auto;white-space:nowrap;user-select:none;opacity:0.85;transition:opacity .15s;}
+#agent-auto-send-toggle{position:fixed;z-index:2147483640;display:flex;flex-direction:column;align-items:stretch;background:#0a0a0a;border:1px solid #2a2a2a;pointer-events:auto;white-space:nowrap;user-select:none;opacity:0.85;transition:opacity .15s;}
 #agent-auto-send-toggle:hover{opacity:1}
 .ag-as-opts{display:flex;flex-direction:column;padding:4px 4px 4px 8px}
 .ag-as-opt{font-size:10px;color:#737373;cursor:pointer;padding:5px 2px;line-height:1.3;transition:color .15s;font-family:system-ui,sans-serif}
@@ -411,6 +368,24 @@
 .ag-as-rail{width:16px;position:relative;display:flex;justify-content:center;border-left:1px solid #2a2a2a;padding:4px 0}
 .ag-as-rail::before{content:'';position:absolute;top:8px;bottom:8px;width:2px;background:#2a2a2a}
 .ag-as-thumb{position:absolute;left:50%;transform:translateX(-50%);width:10px;height:10px;background:#facc15;transition:top .25s ease;z-index:1}
+/* [新增] 发送模式主体区（原 toggle 主体移入容器，外层改纵向容纳记忆区） */
+.ag-as-main{display:flex;flex-direction:row;align-items:stretch}
+/* [新增] 记忆注入频率：收起态头部（点击展开） */
+.ag-as-mem{display:flex;justify-content:space-between;align-items:center;gap:12px;padding:5px 4px 5px 8px;cursor:pointer;border-bottom:1px solid #2a2a2a}
+.ag-as-mem:hover{background:#1a1a1a}
+.ag-as-mem-label{font-size:10px;color:#737373;font-family:system-ui,sans-serif}
+.ag-as-mem-val{font-size:10px;color:#facc15;font-family:system-ui,sans-serif}
+/* [新增] 记忆注入频率：展开态选项区 */
+.ag-as-mem-body{display:none;padding:5px 8px;border-bottom:1px solid #2a2a2a}
+.ag-as-mem-opts{display:flex;flex-wrap:wrap;gap:2px 8px;max-width:150px}
+.ag-as-mem-opt{font-size:10px;color:#737373;cursor:pointer;padding:3px 0;font-family:system-ui,sans-serif;transition:color .15s}
+.ag-as-mem-opt:hover{color:#d4d4d4}
+.ag-as-mem-opt.active{color:#facc15}
+.ag-as-mem-custom{display:flex;gap:4px;margin-top:5px;align-items:center}
+.ag-as-mem-custom input{flex:1;min-width:60px;background:#1a1a1a;border:1px solid #2a2a2a;color:#d4d4d4;font-size:10px;padding:3px 5px;outline:none;border-radius:0}
+.ag-as-mem-custom input:focus{border-color:#facc15}
+.ag-as-mem-custom button{background:none;border:1px solid #2a2a2a;color:#facc15;font-size:10px;cursor:pointer;padding:3px 8px;border-radius:0}
+.ag-as-mem-custom button:hover{border-color:#facc15}
 #ag-calibrate-bar{position:fixed;top:20px;left:50%;transform:translateX(-50%);background:#0a0a0a;color:#fed7aa;border:1px solid #facc15;padding:14px 24px;z-index:2147483647;box-shadow:0 8px 32px rgba(0,0,0,.6);font:13px/1.5 system-ui,sans-serif;display:none;flex-direction:column;align-items:center;gap:10px;pointer-events:auto;width:min(600px,90vw)}
 #ag-calibrate-bar b{color:#facc15}
 #ag-calibrate-cards{position:fixed;top:100px;left:50%;transform:translateX(-50%);background:#0a0a0a;border:1px solid #2a2a2a;z-index:2147483647;box-shadow:0 8px 32px rgba(0,0,0,.6);width:min(220px,45vw);overflow-y:auto;overflow-x:hidden;padding:10px;cursor:move}
@@ -428,42 +403,37 @@
 .ag-cal-tag.active-idle{border-color:#22c55e;color:#22c55e;background:rgba(34,197,94,.2)}
 .ag-cal-tag.active-sendable{border-color:#facc15;color:#facc15;background:rgba(250,204,21,.2)}
 `);
-
     /* ================================================================
      * 3. 调试日志系统
      * ================================================================ */
     let _debugPanel = null;
     let _debugBody = null;
-
     function initDebugUI() {
         if (_debugPanel) return;
         _debugPanel = document.createElement('div');
         _debugPanel.id = 'agent-debug';
         _debugPanel.innerHTML = `
- <div id="agent-debug-head">
- <span>🕵️ Agent 调试台</span>
- <button class="ag-dbg-btn" id="ag-dbg-close">隐藏</button>
- </div>
- <div id="agent-debug-body"></div>
- <div id="agent-debug-foot">
- <button class="ag-dbg-btn" id="ag-dbg-clear">清空日志</button>
- </div>`;
+        <div id="agent-debug-head">
+            <span>🕵️ Agent 调试台</span>
+            <button class="ag-dbg-btn" id="ag-dbg-close">隐藏</button>
+        </div>
+        <div id="agent-debug-body"></div>
+        <div id="agent-debug-foot">
+            <button class="ag-dbg-btn" id="ag-dbg-clear">清空日志</button>
+        </div>`;
         document.body.appendChild(_debugPanel);
         _debugBody = _debugPanel.querySelector('#agent-debug-body');
         _debugPanel.querySelector('#ag-dbg-close').onclick = () => _debugPanel.style.display = 'none';
         _debugPanel.querySelector('#ag-dbg-clear').onclick = () => _debugBody.innerHTML = '';
     }
-
     function showDebug() {
         if (!_debugPanel) initDebugUI();
         _debugPanel.style.display = 'flex';
     }
-
     function _truncate(str, maxDisplay = 200, keepLen = 100) {
         str = String(str);
         return str.length > maxDisplay ? str.substring(0, keepLen) + `... (共 ${str.length} 字符)` : str;
     }
-
     function log(type, msg) {
         const c = cfgLoad();
         console.log(`[Agent-${type}] ${msg}`);
@@ -477,15 +447,14 @@
         _debugBody.appendChild(div);
         _debugBody.scrollTop = _debugBody.scrollHeight;
     }
-
     /* ================================================================
      * 4. 元素选择器
      * ================================================================ */
     const PICKER_IDS = new Set([
-        'agent-pick-dim', 'agent-pick-hl', 'agent-pick-lock-hl', 'agent-pick-tip', 'agent-pick-bar',
-        'agent-panel', 'agent-debug', 'agent-auto-send-toggle', 'ag-level-panel', 'ag-calibrate-bar'
+        'agent-pick-dim', 'agent-pick-hl', 'agent-pick-lock-hl',
+        'agent-pick-tip', 'agent-pick-bar', 'agent-panel', 'agent-debug',
+        'agent-auto-send-toggle', 'ag-level-panel', 'ag-calibrate-bar'
     ]);
-
     let _pickActive = false, _pickType = '';
     let _pickHL, _pickTip, _pickBar, _pickDim;
     let _pickLockHL = null;
@@ -493,7 +462,6 @@
     let _pickedEl = null;
     let _domStack = [];
     let _levelPanel = null;
-
     const TYPE_LABEL = {
         chat: '聊天记录容器',
         input: '输入框',
@@ -504,58 +472,45 @@
         'code-content': '代码内容元素',
         'code-copy-button': '代码复制按钮'
     };
-
     function _isPureHashClass(c) {
         if (/^[a-f0-9]{5,}$/i.test(c)) return true;
         if (/^(css|sc|emotion|styled)-[a-z0-9]{4,}$/i.test(c)) return true;
         return false;
     }
-
     function _stripClassHash(c) {
         return c.replace(/[_-][a-f0-9]{5,8}$/i, '');
     }
-
     function genSelector(el) {
         if (!el || el === document.body || el === document.documentElement) return '';
         if (el.id && !/\d/.test(el.id)) {
             const sel = '#' + CSS.escape(el.id);
-            try {
-                if (document.querySelectorAll(sel).length === 1) return sel;
-            } catch (_) { }
+            try { if (document.querySelectorAll(sel).length === 1) return sel; } catch (_) { }
         }
         for (const attr of ['data-testid', 'data-test-id', 'data-role', 'data-cy']) {
             const val = el.getAttribute(attr);
             if (val) {
                 const sel = `${el.tagName.toLowerCase()}[${attr}="${CSS.escape(val)}"]`;
-                try {
-                    if (document.querySelectorAll(sel).length === 1) return sel;
-                } catch (_) { }
+                try { if (document.querySelectorAll(sel).length === 1) return sel; } catch (_) { }
             }
         }
         const role = el.getAttribute('role');
         if (role) {
             const sel = `${el.tagName.toLowerCase()}[role="${CSS.escape(role)}"]`;
-            try {
-                if (document.querySelectorAll(sel).length === 1) return sel;
-            } catch (_) { }
+            try { if (document.querySelectorAll(sel).length === 1) return sel; } catch (_) { }
         }
         if (el.className && typeof el.className === 'string') {
             const allCls = el.className.trim().split(/\s+/).filter(c => c);
             const cleanCls = allCls.filter(c => !_isPureHashClass(c) && !/^(_|-{2})/.test(c) && !/^(is|has|can|should)/.test(c) && !/[_-][a-f0-9]{5,8}$/i.test(c));
             if (cleanCls.length) {
                 const sel = `${el.tagName.toLowerCase()}.${cleanCls.map(c => CSS.escape(c)).join('.')}`;
-                try {
-                    if (document.querySelectorAll(sel).length === 1) return sel;
-                } catch (_) { }
+                try { if (document.querySelectorAll(sel).length === 1) return sel; } catch (_) { }
             }
             const hashCls = allCls.filter(c => !_isPureHashClass(c) && !/^(_|-{2})/.test(c) && !/^(is|has|can|should)/.test(c) && /[_-][a-f0-9]{5,8}$/i.test(c));
             if (hashCls.length) {
                 const stripped = hashCls.map(c => _stripClassHash(c)).filter(s => s.length >= 3);
                 if (stripped.length) {
                     const sel = `${el.tagName.toLowerCase()}${stripped.map(s => `[class*="${CSS.escape(s)}"]`).join('')}`;
-                    try {
-                        if (document.querySelectorAll(sel).length === 1) return sel;
-                    } catch (_) { }
+                    try { if (document.querySelectorAll(sel).length === 1) return sel; } catch (_) { }
                 }
             }
         }
@@ -581,12 +536,9 @@
             cur = cur.parentElement;
         }
         const sel = segs.join(' > ');
-        try {
-            if (document.querySelectorAll(sel).length === 1) return sel;
-        } catch (_) { }
+        try { if (document.querySelectorAll(sel).length === 1) return sel; } catch (_) { }
         return sel;
     }
-
     function pickerEnter(type) {
         _pickActive = true;
         _pickType = type;
@@ -617,7 +569,6 @@
         document.addEventListener('scroll', _syncHighlightPositions, true);
         window.addEventListener('resize', _syncHighlightPositions);
     }
-
     function pickerExit() {
         _pickActive = false;
         _pickType = '';
@@ -635,7 +586,6 @@
         _levelPanel = null;
         showPanel();
     }
-
     function _targetAt(x, y) {
         let el = document.elementFromPoint(x, y);
         while (el && el.shadowRoot) {
@@ -646,7 +596,6 @@
         while (el && PICKER_IDS.has(el.id)) el = el.parentElement;
         return el;
     }
-
     function _onMove(e) {
         e.stopPropagation();
         if (!_pickedEl) {
@@ -656,7 +605,6 @@
             _updateLockHL();
         }
     }
-
     function _getElementDigest(el) {
         const tag = el.tagName.toLowerCase();
         if (['input', 'textarea', 'select'].includes(tag)) {
@@ -676,7 +624,6 @@
         if (text) return `${tag}: "${text}"`;
         return tag;
     }
-
     function _highlightEl(el, mouseX, mouseY) {
         const r = el.getBoundingClientRect();
         _pickHL.style.display = 'block';
@@ -703,14 +650,13 @@
         diagParts.push(`<span class="ag-diag-size">${w}×${h}</span>`);
         if (el.shadowRoot) diagParts.push(`<span class="ag-diag-shadow">ShadowDOM</span>`);
         const diagHtml = diagParts.length ? `<div class="ag-diag-line">${diagParts.join('<span class="ag-diag-sep">|</span>')}</div>` : '';
-        _pickTip.innerHTML = _lockedBaseEl ?
-            `<span class="ag-tip-sel"><span id="ag-show-levels">展开所有层级</span><span>${esc(sel)} ←${tag}${digestStr}</span></span>${diagHtml}` :
-            `<span class="ag-tip-sel"><span>${esc(sel)} ←${tag}${digestStr}</span></span>${diagHtml}`;
+        _pickTip.innerHTML = _lockedBaseEl
+            ? `<span class="ag-tip-sel"><span id="ag-show-levels">展开所有层级</span><span>${esc(sel)} ←${tag}${digestStr}</span></span>${diagHtml}`
+            : `<span class="ag-tip-sel"><span>${esc(sel)} ←${tag}${digestStr}</span></span>${diagHtml}`;
         _pickTip.style.opacity = '1';
         _pickTip.style.left = Math.min(mouseX + 14, innerWidth - 510) + 'px';
         _pickTip.style.top = (mouseY + 22) + 'px';
     }
-
     function _updateLockHL() {
         if (!_pickLockHL || !_lockedBaseEl) return;
         const r = _lockedBaseEl.getBoundingClientRect();
@@ -720,7 +666,6 @@
             width: (r.width + 4) + 'px', height: (r.height + 4) + 'px'
         });
     }
-
     function _syncHighlightPositions() {
         if (_pickHL && _pickedEl) {
             const r = _pickedEl.getBoundingClientRect();
@@ -737,11 +682,9 @@
             });
         }
     }
-
     function _hideLockHL() {
         if (_pickLockHL) _pickLockHL.style.display = 'none';
     }
-
     function _showLevelPanel() {
         if (!_lockedBaseEl) return;
         if (!_levelPanel) {
@@ -788,7 +731,6 @@
             };
         });
     }
-
     function _onClick(e) {
         if (_levelPanel && _levelPanel.style.display !== 'none' && _levelPanel.contains(e.target)) return;
         e.stopPropagation();
@@ -844,7 +786,6 @@
         _highlightEl(_pickedEl, e.clientX, e.clientY);
         _updateBarInfo();
     }
-
     function _onCtx(e) {
         if (_levelPanel && _levelPanel.style.display !== 'none' && _levelPanel.contains(e.target)) return;
         e.stopPropagation();
@@ -879,12 +820,10 @@
             log('WARN', '已在最底层，无法回退');
         }
     }
-
     function _updateBarInfo() {
         if (!_pickBar || !_pickedEl) return;
         _pickBar.innerHTML = `🎯 当前层级: <span style="color:#86efac">${_domStack.length}</span> (${_pickedEl.tagName.toLowerCase()}) | <span style="font-size:12px;opacity:0.7">左键↑ 右键↓ Shift+点击确认</span>`;
     }
-
     function _confirmSelection(el) {
         if (_pickType === 'clean-class') {
             let classes = [];
@@ -937,7 +876,6 @@
         log('INFO', `目标元素详情: <${el.tagName.toLowerCase()}>, class="${el.className}", id="${el.id}"`);
         pickerExit();
     }
-
     function _onKey(e) {
         if (e.key === 'Escape') {
             e.stopPropagation();
@@ -950,12 +888,10 @@
             _confirmSelection(_pickedEl);
         }
     }
-
     /* ================================================================
      * 5. 配置面板
      * ================================================================ */
     let _panel = null;
-
     function showPanel() {
         if (!_panel) {
             _panel = document.createElement('div');
@@ -970,11 +906,9 @@
         _renderPanel();
         _panel.style.display = 'block';
     }
-
     function hidePanel() {
         if (_panel) _panel.style.display = 'none';
     }
-
     function _renderRules(rules) {
         const list = _panel.querySelector('#ag-rule-list');
         if (!list) return;
@@ -983,24 +917,26 @@
             return;
         }
         list.innerHTML = rules.map((rule, idx) => `
- <div class="ag-rule-item" data-idx="${idx}">
- <div class="ag-row" style="margin-bottom:6px">
- <input class="ag-inp rule-find" placeholder="查找内容" value="${escAttr(rule.find || '')}" style="flex:1.2">
- <input class="ag-inp rule-replace" placeholder="替换为" value="${escAttr(rule.replace || '')}" style="flex:1">
- </div>
- <div class="ag-row" style="flex-wrap:wrap">
- <label class="ag-toggle" style="font-size:11px;margin:0;cursor:pointer">
- <input type="checkbox" class="rule-regex" ${rule.isRegex ? 'checked' : ''}> 正则 </label>
- <label class="ag-toggle" style="font-size:11px;margin:0;cursor:pointer">
- <input type="checkbox" class="rule-unicode" ${rule.isUnicode ? 'checked' : ''}> Unicode </label>
- <label class="ag-toggle" style="font-size:11px;margin:0;cursor:pointer">
- <input type="checkbox" class="rule-enabled" ${rule.enabled !== false ? 'checked' : ''}> 启用 </label>
- <button class="ag-btn ag-btn-g rule-del" style="padding:3px 8px;color:#ef4444;margin-left:auto">✕ 删除</button>
- </div>
- </div>
- `).join('');
+            <div class="ag-rule-item" data-idx="${idx}">
+                <div class="ag-row" style="margin-bottom:6px">
+                    <input class="ag-inp rule-find" placeholder="查找内容" value="${escAttr(rule.find || '')}" style="flex:1.2">
+                    <input class="ag-inp rule-replace" placeholder="替换为" value="${escAttr(rule.replace || '')}" style="flex:1">
+                </div>
+                <div class="ag-row" style="flex-wrap:wrap">
+                    <label class="ag-toggle" style="font-size:11px;margin:0;cursor:pointer">
+                        <input type="checkbox" class="rule-regex" ${rule.isRegex ? 'checked' : ''}> 正则
+                    </label>
+                    <label class="ag-toggle" style="font-size:11px;margin:0;cursor:pointer">
+                        <input type="checkbox" class="rule-unicode" ${rule.isUnicode ? 'checked' : ''}> Unicode
+                    </label>
+                    <label class="ag-toggle" style="font-size:11px;margin:0;cursor:pointer">
+                        <input type="checkbox" class="rule-enabled" ${rule.enabled !== false ? 'checked' : ''}> 启用
+                    </label>
+                    <button class="ag-btn ag-btn-g rule-del" style="padding:3px 8px;color:#ef4444;margin-left:auto">✕ 删除</button>
+                </div>
+            </div>
+        `).join('');
     }
-
     function _collectRulesFromDOM() {
         const items = _panel.querySelectorAll('.ag-rule-item');
         const rules = [];
@@ -1015,28 +951,24 @@
         });
         return rules;
     }
-
     function _renderPanel() {
         const store = _loadStore();
         const site = _matchSite();
         const inWhitelist = !!site;
         const hasSiteCfg = site && store.perSite && store.perSite[site];
         const source = _getConfigSource();
-
         let editCfg;
         if (_editTarget === 'defaults') {
             editCfg = { ...SITE_DEFAULTS, ...(store.defaults || {}) };
         } else {
             editCfg = { ...SITE_DEFAULTS, ...(store.perSite?.[_editTarget] || {}) };
         }
-
         const titleText = _editTarget === 'defaults' ? '🔧 Poker Agent 配置 — 默认设置' : `🔧 Poker Agent 配置 — ${_editTarget} 独立设置`;
         const saveText = _editTarget === 'defaults' ? '💾 保存默认配置' : `💾 保存独立配置`;
         const siteDisplay = site || location.hostname;
         const sourceDisplay = source === 'defaults' ? '默认配置' : `${source} 独立配置`;
         const badgeClass = inWhitelist ? 'ag-badge-ok' : 'ag-badge-fail';
         const badgeText = inWhitelist ? '在白名单内' : '不在白名单内';
-
         let actionsHtml = '';
         const defActive = _editTarget === 'defaults';
         actionsHtml += `<button class="ag-btn ${defActive ? 'ag-btn-p' : 'ag-btn-g'}" id="ag-edit-defaults">编辑默认配置</button>`;
@@ -1049,135 +981,132 @@
                 actionsHtml += `<button class="ag-btn ag-btn-g" id="ag-create-site">为此网站创建独立配置</button>`;
             }
         }
-
         _panel.innerHTML = `
- <div id="agent-panel-head"><b>${titleText}</b><button id="agent-panel-close">✕</button></div>
- <div id="agent-panel-body">
- <div class="ag-site-info">
- <div class="ag-site-row"><span class="ag-site-label">当前网站:</span><span class="ag-site-value">${esc(siteDisplay)}</span><span class="ag-site-badge ${badgeClass}">${badgeText}</span></div>
- <div class="ag-site-row"><span class="ag-site-label">当前使用:</span><span class="ag-site-value" style="color:#818cf8">${esc(sourceDisplay)}</span></div>
- </div>
- <div class="ag-site-actions">${actionsHtml}</div>
- <div class="ag-sec"><div class="ag-sec-title">控制台</div><div class="ag-toggle"><input type="checkbox" id="ag-debug-toggle" ${store.debugMode ? 'checked' : ''} /><label for="ag-debug-toggle" style="cursor:pointer">启用调试模式 (右侧显示日志浮窗)</label></div></div>
- <div class="ag-sec"><div class="ag-sec-title">网站白名单</div><div class="ag-wl-list" id="ag-wl-list">${store.whitelist.length ? store.whitelist.map((u, i) => `<div class="ag-wl-item"><code>${esc(u)}</code><button class="ag-wl-rm" data-i="${i}">✕</button></div>`).join('') : '<div style="padding:8px 10px;color:#52525b;font-size:12px">暂无</div>'}</div><div class="ag-row"><input class="ag-inp" id="ag-wl-new" placeholder="https://example.com/" /><button class="ag-btn ag-btn-g" id="ag-wl-add">添加</button></div></div>
- <div class="ag-sec"><div class="ag-sec-title">本地 Agent 服务</div><div class="ag-field"><label>接收指令的 HTTP 地址</label><input class="ag-inp" id="ag-api" value="${esc(editCfg.apiUrl)}" /></div></div>
- <div class="ag-sec">
- <div class="ag-sec-title">页面元素绑定</div>
- <div class="ag-field"><label>聊天记录容器</label><div class="ag-row"><input class="ag-inp" id="ag-s-chat" value="${esc(editCfg.selChatContainer)}" /><button class="ag-btn ag-btn-p" id="ag-pick-chat">🖱 选择</button></div><div id="ag-m-chat"></div></div>
- <div class="ag-field"><label>AI回答元素</label><div class="ag-row"><input class="ag-inp" id="ag-s-answer" value="${esc(editCfg.selAnswerItem)}" /><button class="ag-btn ag-btn-p" id="ag-pick-answer">🖱 选择</button></div><div id="ag-m-answer"></div><div class="ag-hint">用于从聊天容器中定位AI的回复，默认 .answer；如不匹配请用选择器选取</div></div>
- <div class="ag-field">
- <label>代码内容元素 (必需)</label>
- <div class="ag-row"><input class="ag-inp" id="ag-s-code-content" value="${esc(editCfg.selCodeContentElement)}" placeholder="如：pre, .code-block" /><button class="ag-btn ag-btn-p" id="ag-pick-code-content">🖱 选择</button></div>
- <div id="ag-m-code-content"></div>
- </div>
- <div class="ag-field">
- <label>代码复制按钮 (可选)</label>
- <div class="ag-row"><input class="ag-inp" id="ag-s-code-copy-btn" value="${esc(editCfg.selCodeCopyButton)}" placeholder="如：button.copy, .icon-copy" /><button class="ag-btn ag-btn-p" id="ag-pick-code-copy-btn">🖱 选择</button></div>
- <div id="ag-m-code-copy-btn"></div>
- <div class="ag-hint">如果配置，将点击此按钮拦截剪贴板内容；失败则回退到读取代码元素文本。</div>
- </div>
- <div class="ag-field" style="margin-top:8px">
- <label>代码文本裁剪</label>
- <div class="ag-row">
- <input class="ag-inp" id="ag-trim-start" type="number" value="${editCfg.codeTrimStart || 0}" style="width:80px" />
- <span style="font-size:11px;color:#a0a0a0;margin-right:12px">去掉开头字符数</span>
- <input class="ag-inp" id="ag-trim-end" type="number" value="${editCfg.codeTrimEnd || 0}" style="width:80px" />
- <span style="font-size:11px;color:#a0a0a0">去掉末尾字符数</span>
- </div>
- </div>
- <div class="ag-field"><label>输入框</label><div class="ag-row"><input class="ag-inp" id="ag-s-input" value="${esc(editCfg.selInputBox)}" /><button class="ag-btn ag-btn-p" id="ag-pick-input">🖱 选择</button></div><div id="ag-m-input"></div></div>
- <div class="ag-field">
- <label>发送按钮</label>
- <div class="ag-row"><input class="ag-inp" id="ag-s-send" value="${esc(editCfg.selSendButton)}" /><button class="ag-btn ag-btn-p" id="ag-pick-send">🖱 选择</button></div>
- <div id="ag-m-send"></div>
- <div class="ag-field" style="margin-top:6px">
- <label>发送按钮容器 (可选)</label>
- <div class="ag-row"><input class="ag-inp" id="ag-s-send-container" value="${esc(editCfg.selSendButtonContainer)}" /><button class="ag-btn ag-btn-p" id="ag-pick-send-container">🖱 选择</button></div>
- <div id="ag-m-send-container"></div>
- <div class="ag-hint">如果网站在不同状态下会完全替换按钮元素（而非修改属性），请选择按钮的父容器。填写后指纹基于容器内容生成，selSendButton 仍可用于容器内精确定位点击目标。</div>
- </div>
- <div class="ag-field" id="ag-calibrate-field" style="margin-top:6px; padding:8px; background:#232436; border:1px solid #2a2a2a; display:${(editCfg.selSendButton || editCfg.selSendButtonContainer) ? 'block' : 'none'};">
- <div style="font-size:12px; color:#a1a1aa; margin-bottom:6px">捕获按钮的各种形态，手动标记【忙碌】(AI输出时)和【空闲】态。</div>
- <div class="ag-row"><div id="ag-calibrate-status" style="flex:1; font-size:11px; color:#52525b">
- 忙碌:${(editCfg.sendBtnBusyFingerprints || []).length}个 | 空闲:${(editCfg.sendBtnIdleFingerprints || []).length}个 | 可发送:${(editCfg.sendBtnSendableFingerprints || []).length}个
- </div><button class="ag-btn ag-btn-p" id="ag-start-calibrate">${(editCfg.sendBtnBusyFingerprints || []).length > 0 ? '重新校准' : '开始校准'}</button></div>
- </div>
- </div>
- <div class="ag-field" style="margin-top:12px;padding-top:10px;border-top:1px solid #2a2a2a">
- <label>输出完毕判断逻辑</label>
- <div class="ag-row" style="margin-bottom:6px">
- <input type="radio" name="verifyMode" id="ag-mode-single" value="single" ${editCfg.verifyMode !== 'double' ? 'checked' : ''} />
- <label for="ag-mode-single" style="font-size:12px;cursor:pointer;margin-right:12px">单验证 (脱离忙碌即放行)</label>
- <input type="radio" name="verifyMode" id="ag-mode-double" value="double" ${editCfg.verifyMode === 'double' ? 'checked' : ''} />
- <label for="ag-mode-double" style="font-size:12px;cursor:pointer">双验证 (需进入空闲态)</label>
- </div>
- <div class="ag-row">
- <label style="font-size:12px;color:#a0a0a0;white-space:nowrap">放行前额外延时</label>
- <input class="ag-inp" id="ag-wait-delay" type="number" value="${editCfg.waitDelayAfterDone || 500}" style="width:80px" />
- </div>
- </div>
- <label>发送模式选择器</label>
- <div class="ag-toggle" style="margin-bottom:6px">
- <input type="checkbox" id="ag-show-toggle" ${editCfg.showAutoSendToggle ? 'checked' : ''} />
- <label for="ag-show-toggle" style="cursor:pointer">在发送按钮旁显示发送模式选择器</label>
- </div>
- <div class="ag-row">
- <label style="font-size:11px;color:#a0a0a0;white-space:nowrap">位置</label>
- <div class="ag-pos-group">
- <button class="ag-pos-btn" data-pos="left">← 左</button>
- <button class="ag-pos-btn" data-pos="top">↑ 上</button>
- <button class="ag-pos-btn" data-pos="right">→ 右</button>
- <button class="ag-pos-btn" data-pos="bottom">↓ 下</button>
- </div>
- </div>
- <div class="ag-field" style="margin-top:8px">
- <label>发送前防抖延时</label>
- <div class="ag-row">
- <input class="ag-inp" id="ag-debounce-delay" type="number" value="${editCfg.sendDebounceDelay ?? 100}" style="width:80px" />
- <span style="font-size:11px;color:#a0a0a0">检测到可发送状态后等待的毫秒数，0=不等待，默认100</span>
- </div>
- </div>
- </div>
- <div class="ag-sec" >
- <div class="ag-sec-title" >内容清理规则 </div >
- <div class="ag-field" >
- <label >忽略的class关键词 (逗号分隔) </label >
- <div class="ag-row" >
- <input class="ag-inp" id="ag-clean-keywords" value="${esc(editCfg.cleanIgnoreClassKeywords)}" />
- <button class="ag-btn ag-btn-p" id="ag-pick-clean-keyword" >🖱 选择 </button >
- </div >
- <div class="ag-hint" >包含这些关键词的class所在元素会被移除，支持用选择器直接抓取行号等干扰元素的class </div >
- </div >
- <div class="ag-toggle" style="margin-bottom:6px">
- <input type="checkbox" id="ag-clean-buttons" ${editCfg.cleanRemoveButtonLike !== false ? 'checked' : ''} />
- <label for="ag-clean-buttons" style="cursor:pointer">移除按钮/操作类元素 (copy/operate/action/toolbar)</label>
- </div>
- <div class="ag-toggle">
- <input type="checkbox" id="ag-clean-pre" ${editCfg.cleanRemovePre !== false ? 'checked' : ''} />
- <label for="ag-clean-pre" style="cursor:pointer">移除pre代码块 (除非含【CodeSTART】)</label>
- </div>
- </div>
- <div class="ag-sec">
- <div class="ag-sec-title">记忆系统</div>
- <div class="ag-field">
- <label>记忆注入频率（每N轮，0=关闭）</label>
- <div class="ag-row">
- <input class="ag-inp" id="ag-memory-freq" type="number" value="${editCfg.memoryInjectFrequency ?? 1}" style="width:80px" />
- <span style="font-size:11px;color:#a0a0a0">每N轮对话注入一次记忆上下文，0=关闭</span>
- </div>
- </div>
- </div>
- <div class="ag-sec">
- <div class="ag-sec-title">指令文本清洗规则</div>
- <div class="ag-hint" style="margin-bottom:6px">在指令发送给后端前，按顺序执行以下替换规则。开启 Unicode 可解析 \\uXXXX 或 U+XXXX。</div>
- <div class="ag-rule-list" id="ag-rule-list"></div>
- <div class="ag-row" style="margin-top:8px">
- <button class="ag-btn ag-btn-g" id="ag-add-rule">➕ 添加规则</button>
- </div>
- </div>
- <div class="ag-foot"><button class="ag-btn ag-btn-g" id="ag-cancel">取消</button><button class="ag-btn ag-btn-p" id="ag-save">${saveText}</button></div>
- </div> `;
-
+        <div id="agent-panel-head"><b>${titleText}</b><button id="agent-panel-close">✕</button></div>
+        <div id="agent-panel-body">
+            <div class="ag-site-info">
+                <div class="ag-site-row"><span class="ag-site-label">当前网站:</span><span class="ag-site-value">${esc(siteDisplay)}</span><span class="ag-site-badge ${badgeClass}">${badgeText}</span></div>
+                <div class="ag-site-row"><span class="ag-site-label">当前使用:</span><span class="ag-site-value" style="color:#818cf8">${esc(sourceDisplay)}</span></div>
+            </div>
+            <div class="ag-site-actions">${actionsHtml}</div>
+            <div class="ag-sec"><div class="ag-sec-title">控制台</div><div class="ag-toggle"><input type="checkbox" id="ag-debug-toggle" ${store.debugMode ? 'checked' : ''} /><label for="ag-debug-toggle" style="cursor:pointer">启用调试模式 (右侧显示日志浮窗)</label></div></div>
+            <div class="ag-sec"><div class="ag-sec-title">网站白名单</div><div class="ag-wl-list" id="ag-wl-list">${store.whitelist.length ? store.whitelist.map((u, i) => `<div class="ag-wl-item"><code>${esc(u)}</code><button class="ag-wl-rm" data-i="${i}">✕</button></div>`).join('') : '<div style="padding:8px 10px;color:#52525b;font-size:12px">暂无</div>'}</div><div class="ag-row"><input class="ag-inp" id="ag-wl-new" placeholder="https://example.com/" /><button class="ag-btn ag-btn-g" id="ag-wl-add">添加</button></div></div>
+            <div class="ag-sec"><div class="ag-sec-title">本地 Agent 服务</div><div class="ag-field"><label>接收指令的 HTTP 地址</label><input class="ag-inp" id="ag-api" value="${esc(editCfg.apiUrl)}" /></div></div>
+            <div class="ag-sec">
+                <div class="ag-sec-title">页面元素绑定</div>
+                <div class="ag-field"><label>聊天记录容器</label><div class="ag-row"><input class="ag-inp" id="ag-s-chat" value="${esc(editCfg.selChatContainer)}" /><button class="ag-btn ag-btn-p" id="ag-pick-chat">🖱 选择</button></div><div id="ag-m-chat"></div></div>
+                <div class="ag-field"><label>AI回答元素</label><div class="ag-row"><input class="ag-inp" id="ag-s-answer" value="${esc(editCfg.selAnswerItem)}" /><button class="ag-btn ag-btn-p" id="ag-pick-answer">🖱 选择</button></div><div id="ag-m-answer"></div><div class="ag-hint">用于从聊天容器中定位AI的回复，默认 .answer；如不匹配请用选择器选取</div></div>
+                <div class="ag-field">
+                    <label>代码内容元素 (必需)</label>
+                    <div class="ag-row"><input class="ag-inp" id="ag-s-code-content" value="${esc(editCfg.selCodeContentElement)}" placeholder="如：pre, .code-block" /><button class="ag-btn ag-btn-p" id="ag-pick-code-content">🖱 选择</button></div>
+                    <div id="ag-m-code-content"></div>
+                </div>
+                <div class="ag-field">
+                    <label>代码复制按钮 (可选)</label>
+                    <div class="ag-row"><input class="ag-inp" id="ag-s-code-copy-btn" value="${esc(editCfg.selCodeCopyButton)}" placeholder="如：button.copy, .icon-copy" /><button class="ag-btn ag-btn-p" id="ag-pick-code-copy-btn">🖱 选择</button></div>
+                    <div id="ag-m-code-copy-btn"></div>
+                    <div class="ag-hint">如果配置，将点击此按钮拦截剪贴板内容；失败则回退到读取代码元素文本。</div>
+                </div>
+                <div class="ag-field" style="margin-top:8px">
+                    <label>代码文本裁剪</label>
+                    <div class="ag-row">
+                        <input class="ag-inp" id="ag-trim-start" type="number" value="${editCfg.codeTrimStart || 0}" style="width:80px" />
+                        <span style="font-size:11px;color:#a0a0a0;margin-right:12px">去掉开头字符数</span>
+                        <input class="ag-inp" id="ag-trim-end" type="number" value="${editCfg.codeTrimEnd || 0}" style="width:80px" />
+                        <span style="font-size:11px;color:#a0a0a0">去掉末尾字符数</span>
+                    </div>
+                </div>
+                <div class="ag-field"><label>输入框</label><div class="ag-row"><input class="ag-inp" id="ag-s-input" value="${esc(editCfg.selInputBox)}" /><button class="ag-btn ag-btn-p" id="ag-pick-input">🖱 选择</button></div><div id="ag-m-input"></div></div>
+                <div class="ag-field">
+                    <label>发送按钮</label>
+                    <div class="ag-row"><input class="ag-inp" id="ag-s-send" value="${esc(editCfg.selSendButton)}" /><button class="ag-btn ag-btn-p" id="ag-pick-send">🖱 选择</button></div>
+                    <div id="ag-m-send"></div>
+                    <div class="ag-field" style="margin-top:6px">
+                        <label>发送按钮容器 (可选)</label>
+                        <div class="ag-row"><input class="ag-inp" id="ag-s-send-container" value="${esc(editCfg.selSendButtonContainer)}" /><button class="ag-btn ag-btn-p" id="ag-pick-send-container">🖱 选择</button></div>
+                        <div id="ag-m-send-container"></div>
+                        <div class="ag-hint">如果网站在不同状态下会完全替换按钮元素（而非修改属性），请选择按钮的父容器。填写后指纹基于容器内容生成，selSendButton 仍可用于容器内精确定位点击目标。</div>
+                    </div>
+                    <div class="ag-field" id="ag-calibrate-field" style="margin-top:6px; padding:8px; background:#232436; border:1px solid #2a2a2a; display:${(editCfg.selSendButton || editCfg.selSendButtonContainer) ? 'block' : 'none'};">
+                        <div style="font-size:12px; color:#a1a1aa; margin-bottom:6px">捕获按钮的各种形态，手动标记【忙碌】(AI输出时)和【空闲】态。</div>
+                        <div class="ag-row"><div id="ag-calibrate-status" style="flex:1; font-size:11px; color:#52525b"> 忙碌:${(editCfg.sendBtnBusyFingerprints || []).length}个 | 空闲:${(editCfg.sendBtnIdleFingerprints || []).length}个 | 可发送:${(editCfg.sendBtnSendableFingerprints || []).length}个 </div><button class="ag-btn ag-btn-p" id="ag-start-calibrate">${(editCfg.sendBtnBusyFingerprints || []).length > 0 ? '重新校准' : '开始校准'}</button></div>
+                    </div>
+                </div>
+                <div class="ag-field" style="margin-top:12px;padding-top:10px;border-top:1px solid #2a2a2a">
+                    <label>输出完毕判断逻辑</label>
+                    <div class="ag-row" style="margin-bottom:6px">
+                        <input type="radio" name="verifyMode" id="ag-mode-single" value="single" ${editCfg.verifyMode !== 'double' ? 'checked' : ''} />
+                        <label for="ag-mode-single" style="font-size:12px;cursor:pointer;margin-right:12px">单验证 (脱离忙碌即放行)</label>
+                        <input type="radio" name="verifyMode" id="ag-mode-double" value="double" ${editCfg.verifyMode === 'double' ? 'checked' : ''} />
+                        <label for="ag-mode-double" style="font-size:12px;cursor:pointer">双验证 (需进入空闲态)</label>
+                    </div>
+                    <div class="ag-row">
+                        <label style="font-size:12px;color:#a0a0a0;white-space:nowrap">放行前额外延时</label>
+                        <input class="ag-inp" id="ag-wait-delay" type="number" value="${editCfg.waitDelayAfterDone || 500}" style="width:80px" />
+                    </div>
+                </div>
+                <label>发送模式选择器</label>
+                <div class="ag-toggle" style="margin-bottom:6px">
+                    <input type="checkbox" id="ag-show-toggle" ${editCfg.showAutoSendToggle ? 'checked' : ''} />
+                    <label for="ag-show-toggle" style="cursor:pointer">在发送按钮旁显示发送模式选择器</label>
+                </div>
+                <div class="ag-row">
+                    <label style="font-size:11px;color:#a0a0a0;white-space:nowrap">位置</label>
+                    <div class="ag-pos-group">
+                        <button class="ag-pos-btn" data-pos="left">← 左</button>
+                        <button class="ag-pos-btn" data-pos="top">↑ 上</button>
+                        <button class="ag-pos-btn" data-pos="right">→ 右</button>
+                        <button class="ag-pos-btn" data-pos="bottom">↓ 下</button>
+                    </div>
+                </div>
+                <div class="ag-field" style="margin-top:8px">
+                    <label>发送前防抖延时</label>
+                    <div class="ag-row">
+                        <input class="ag-inp" id="ag-debounce-delay" type="number" value="${editCfg.sendDebounceDelay ?? 100}" style="width:80px" />
+                        <span style="font-size:11px;color:#a0a0a0">检测到可发送状态后等待的毫秒数，0=不等待，默认100</span>
+                    </div>
+                </div>
+            </div>
+            <div class="ag-sec" >
+                <div class="ag-sec-title" >内容清理规则 </div >
+                <div class="ag-field" >
+                    <label >忽略的class关键词 (逗号分隔) </label >
+                    <div class="ag-row" >
+                        <input class="ag-inp" id="ag-clean-keywords" value="${esc(editCfg.cleanIgnoreClassKeywords)}" />
+                        <button class="ag-btn ag-btn-p" id="ag-pick-clean-keyword" >🖱 选择 </button >
+                    </div >
+                    <div class="ag-hint" >包含这些关键词的class所在元素会被移除，支持用选择器直接抓取行号等干扰元素的class </div >
+                </div >
+                <div class="ag-toggle" style="margin-bottom:6px">
+                    <input type="checkbox" id="ag-clean-buttons" ${editCfg.cleanRemoveButtonLike !== false ? 'checked' : ''} />
+                    <label for="ag-clean-buttons" style="cursor:pointer">移除按钮/操作类元素 (copy/operate/action/toolbar)</label>
+                </div>
+                <div class="ag-toggle">
+                    <input type="checkbox" id="ag-clean-pre" ${editCfg.cleanRemovePre !== false ? 'checked' : ''} />
+                    <label for="ag-clean-pre" style="cursor:pointer">移除pre代码块 (除非含【CodeSTART】)</label>
+                </div>
+            </div >
+            <div class="ag-sec">
+                <div class="ag-sec-title">记忆系统</div>
+                <div class="ag-field">
+                    <label>记忆注入频率（每N轮，0=关闭）</label>
+                    <div class="ag-row">
+                        <input class="ag-inp" id="ag-memory-freq" type="number" value="${editCfg.memoryInjectFrequency ?? 1}" style="width:80px" />
+                        <span style="font-size:11px;color:#a0a0a0">每N轮对话注入一次记忆上下文，0=关闭</span>
+                    </div>
+                </div>
+            </div>
+            <div class="ag-sec">
+                <div class="ag-sec-title">指令文本清洗规则</div>
+                <div class="ag-hint" style="margin-bottom:6px">在指令发送给后端前，按顺序执行以下替换规则。开启 Unicode 可解析 \\uXXXX 或 U+XXXX。</div>
+                <div class="ag-rule-list" id="ag-rule-list"></div>
+                <div class="ag-row" style="margin-top:8px">
+                    <button class="ag-btn ag-btn-g" id="ag-add-rule">➕ 添加规则</button>
+                </div>
+            </div>
+            <div class="ag-foot"><button class="ag-btn ag-btn-g" id="ag-cancel">取消</button><button class="ag-btn ag-btn-p" id="ag-save">${saveText}</button></div>
+        </div>
+        `;
         _panel.querySelector('#agent-panel-close').onclick = hidePanel;
         _panel.querySelector('#ag-cancel').onclick = hidePanel;
         _panel.querySelector('#ag-debug-toggle').onchange = (e) => {
@@ -1191,7 +1120,6 @@
                 if (_debugPanel) _debugPanel.style.display = 'none';
             }
         };
-
         const wlInput = _panel.querySelector('#ag-wl-new');
         const doAdd = () => {
             const v = wlInput.value.trim();
@@ -1212,10 +1140,15 @@
                 _renderPanel();
             };
         });
-
-        _panel.querySelector('#ag-edit-defaults').onclick = () => { _editTarget = 'defaults'; _renderPanel(); };
+        _panel.querySelector('#ag-edit-defaults').onclick = () => {
+            _editTarget = 'defaults';
+            _renderPanel();
+        };
         if (inWhitelist && hasSiteCfg) {
-            _panel.querySelector('#ag-edit-site').onclick = () => { _editTarget = site; _renderPanel(); };
+            _panel.querySelector('#ag-edit-site').onclick = () => {
+                _editTarget = site;
+                _renderPanel();
+            };
         }
         if (inWhitelist && !hasSiteCfg) {
             _panel.querySelector('#ag-create-site').onclick = () => {
@@ -1242,7 +1175,6 @@
                 _renderPanel();
             };
         }
-
         _panel.querySelector('#ag-pick-chat').onclick = () => pickerEnter('chat');
         _panel.querySelector('#ag-pick-answer').onclick = () => pickerEnter('answer');
         _panel.querySelector('#ag-pick-code-content').onclick = () => pickerEnter('code-content');
@@ -1251,7 +1183,6 @@
         _panel.querySelector('#ag-pick-send').onclick = () => pickerEnter('send');
         _panel.querySelector('#ag-pick-send-container').onclick = () => pickerEnter('send-container');
         _panel.querySelector('#ag-pick-clean-keyword').onclick = () => pickerEnter('clean-class');
-
         if (editCfg.selSendButton || editCfg.selSendButtonContainer) {
             _panel.querySelector('#ag-start-calibrate').onclick = () => {
                 if (!editCfg.selSendButton && !editCfg.selSendButtonContainer) {
@@ -1261,7 +1192,6 @@
                 _startCalibration();
             };
         }
-
         const posBtns = _panel.querySelectorAll('.ag-pos-btn');
         posBtns.forEach(btn => {
             if (btn.dataset.pos === editCfg.autoSendTogglePos) btn.classList.add('active');
@@ -1270,7 +1200,6 @@
                 btn.classList.add('active');
             };
         });
-
         // 绑定选择器输入事件和匹配提示
         ['chat', 'input', 'send', 'send-container', 'answer', 'code-content', 'code-copy-button'].forEach(t => {
             const key = t === 'chat' ? 'selChatContainer' : t === 'input' ? 'selInputBox' : t === 'send' ? 'selSendButton' : t === 'send-container' ? 'selSendButtonContainer' : t === 'answer' ? 'selAnswerItem' : t === 'code-content' ? 'selCodeContentElement' : 'selCodeCopyButton';
@@ -1284,7 +1213,6 @@
             });
             _showMatch(editCfg[key], `ag-m-${t}`);
         });
-
         _renderRules(editCfg.textCleanRules || []);
         _panel.querySelector('#ag-add-rule').onclick = () => {
             const current = _collectRulesFromDOM();
@@ -1300,7 +1228,6 @@
                 _renderRules(current);
             }
         };
-
         _panel.querySelector('#ag-save').onclick = () => {
             const s = _loadStore();
             s.debugMode = _panel.querySelector('#ag-debug-toggle').checked;
@@ -1314,7 +1241,6 @@
             siteData.selSendButton = _panel.querySelector('#ag-s-send').value.trim();
             siteData.selSendButtonContainer = _panel.querySelector('#ag-s-send-container').value.trim();
             siteData.showAutoSendToggle = _panel.querySelector('#ag-show-toggle').checked;
-
             const activePos = _panel.querySelector('.ag-pos-btn.active');
             siteData.autoSendTogglePos = activePos ? activePos.dataset.pos : 'right';
             siteData.verifyMode = _panel.querySelector('input[name="verifyMode"]:checked').value;
@@ -1331,7 +1257,6 @@
             siteData.codeTrimStart = parseInt(_panel.querySelector('#ag-trim-start').value) || 0;
             siteData.codeTrimEnd = parseInt(_panel.querySelector('#ag-trim-end').value) || 0;
             siteData.memoryInjectFrequency = parseInt(_panel.querySelector('#ag-memory-freq').value) || 0;
-
             if (_editTarget === 'defaults') {
                 s.defaults = siteData;
             } else {
@@ -1344,7 +1269,6 @@
             if (s.debugMode) showDebug();
         };
     }
-
     function _showMatch(sel, id) {
         const el = _panel.querySelector('#' + id);
         if (!sel) {
@@ -1358,7 +1282,6 @@
             el.innerHTML = '<div class="ag-match ag-m-fail">✘ 语法错误</div>';
         }
     }
-
     /* ================================================================
      * 6. Agent 核心逻辑
      * ================================================================ */
@@ -1370,21 +1293,18 @@
     let _isCalibrating = false;
     let _dispatchRetryCount = 0;
     const MAX_DISPATCH_RETRIES = 3;
-
     const TASK_START = '\n<|im_start|>pokeragent-system\n=== Poker Agent Task ===\n';
     const TASK_END = '\n=== Poker Agent Task End ===\n<|im_end|>\n';
-
     let _taskList = [];
     let _sseEventSource = null;
-
+    let _roundCount = 0;            // [新增] 对话回合计数（新回答元素恰+1时递增，衰减/注入共享）
+    let _lastMemoryInjectRound = 0; // [新增] 上次记忆注入时的回合数
     function _pollConfig() {
         if (!_pollConfigActive) return;
         const c = cfgLoad();
         const pollUrl = c.apiUrl.replace('/agent-exec', '/agent-config-poll');
         GM_xmlhttpRequest({
-            method: 'GET',
-            url: pollUrl,
-            timeout: 30000,
+            method: 'GET', url: pollUrl, timeout: 30000,
             onload(r) {
                 if (!_pollConfigActive) return;
                 if (r.status === 200) {
@@ -1412,14 +1332,11 @@
             }
         });
     }
-
     function _syncInitialConfig() {
         return new Promise(resolve => {
             const c = cfgLoad();
             GM_xmlhttpRequest({
-                method: 'GET',
-                url: c.apiUrl,
-                timeout: 3000,
+                method: 'GET', url: c.apiUrl, timeout: 3000,
                 onload(r) {
                     if (r.status === 200) {
                         try {
@@ -1435,7 +1352,6 @@
             });
         });
     }
-
     let _pollTimer = null;
     let _lastAnswerEl = null;
     let _lastAnswerCount = 0;
@@ -1444,7 +1360,6 @@
     let _knownAnswers = [];
     let _noAnswerCount = 0;
     let _lastScannedLen = 0;
-
     /**
      * 获取清理后的文本
      * 优先级：复制按钮 > 代码内容元素 > 默认DOM
@@ -1452,18 +1367,15 @@
     async function getCleanText(el, cfg) {
         const clone = el.cloneNode(true);
         const codeBlocks = [];
-
         // 阶段1: 尝试精确定位代码块
         if (cfg.selCodeContentElement) {
             const liveCodeEls = el.querySelectorAll(cfg.selCodeContentElement);
             const cloneCodeEls = clone.querySelectorAll(cfg.selCodeContentElement);
-
             // 如果匹配到了代码块
             if (liveCodeEls.length > 0 && liveCodeEls.length === cloneCodeEls.length) {
                 for (let i = 0; i < liveCodeEls.length; i++) {
                     const liveEl = liveCodeEls[i];
                     let codeText = '';
-
                     // 策略1: 尝试点击复制按钮拦截 (最高优先级)
                     if (cfg.selCodeCopyButton) {
                         const btn = liveEl.querySelector(cfg.selCodeCopyButton);
@@ -1494,19 +1406,16 @@
                             }
                         }
                     }
-
                     // 策略2: 如果策略1失败，直接读取元素文本 (中等优先级)
                     if (!codeText) {
                         codeText = liveEl.textContent;
                     }
-
                     // 处理裁剪
                     const trimStart = parseInt(cfg.codeTrimStart) || 0;
                     const trimEnd = parseInt(cfg.codeTrimEnd) || 0;
                     if (trimStart > 0 || trimEnd > 0) {
                         codeText = codeText.slice(trimStart, codeText.length - trimEnd);
                     }
-
                     // 存入数组并在Clone中替换
                     if (codeText) {
                         codeBlocks.push(codeText);
@@ -1518,18 +1427,15 @@
                 }
             }
         }
-
         // 阶段2: 清理干扰元素 (针对Clone)
         const ignoreKeywords = (cfg.cleanIgnoreClassKeywords || 'thinking,reasoning,probe,deepseek-reason')
             .split(',').map(s => s.trim()).filter(s => s);
-
         if (ignoreKeywords.length > 0) {
             const sel = ignoreKeywords.map(k => `[class*="${CSS.escape(k)}"]`).join(', ');
             try {
                 clone.querySelectorAll(sel).forEach(n => n.remove());
             } catch (_) { }
         }
-
         clone.querySelectorAll('details').forEach(n => n.remove());
         if (cfg.cleanRemoveButtonLike !== false) {
             clone.querySelectorAll('button, [class*="copy"], [class*="operate"], [class*="action"], [class*="toolbar"]').forEach(n => n.remove());
@@ -1540,7 +1446,6 @@
                 n.remove();
             });
         }
-
         (function injectNewlines(node) {
             for (let i = node.childNodes.length - 1; i >= 0; i--) {
                 const child = node.childNodes[i];
@@ -1552,9 +1457,7 @@
                 }
             }
         })(clone);
-
         const rawText = clone.textContent;
-
         // 阶段3: 组装最终文本
         if (codeBlocks.length > 0) {
             const parts = rawText.split(/\u0000CODE(\d+)\u0000/);
@@ -1568,10 +1471,8 @@
             }
             return result;
         }
-
         return rawText;
     }
-
     function _getSendBtnFingerprint() {
         const c = cfgLoad();
         if (c.selSendButtonContainer) {
@@ -1600,7 +1501,6 @@
         const ariaLabel = el.getAttribute('aria-label') || '';
         return `${el.tagName}|${style}|${cls}|${innerTag}|${disabled}|${ariaDisabled}|${ariaLabel}`;
     }
-
     function _makeDraggable(el) {
         el.addEventListener('mousedown', (e) => {
             if (e.target.closest('button') || e.target.closest('input')) return;
@@ -1625,7 +1525,6 @@
             e.preventDefault();
         });
     }
-
     function _startCalibration() {
         if (_isCalibrating) return;
         _isCalibrating = true;
@@ -1647,7 +1546,6 @@
         let selectedIdle = new Set(c.sendBtnIdleFingerprints || []);
         let selectedSendable = new Set(c.sendBtnSendableFingerprints || []);
         let checkInterval = null;
-
         const renderBar = (msg) => {
             const mode = c.verifyMode || 'single';
             const canFinish = selectedBusy.size > 0;
@@ -1658,25 +1556,25 @@
                 const isSendable = selectedSendable.has(fp);
                 const cls = isBusy ? 'selected-busy' : (isIdle ? 'selected-idle' : (isSendable ? 'selected-sendable' : ''));
                 listHtml += `
- <div class="ag-cal-item ${cls}">
- <div class="ag-cal-clone" style="background:${snap.bg};color:${snap.color}">${snap.html}</div>
- <div class="ag-cal-actions">
- <button class="ag-cal-tag ${isBusy ? 'active-busy' : ''}" data-fp="${fp}" data-type="busy">忙碌</button>
- <button class="ag-cal-tag ${isIdle ? 'active-idle' : ''}" data-fp="${fp}" data-type="idle">空闲</button>
- <button class="ag-cal-tag ${isSendable ? 'active-sendable' : ''}" data-fp="${fp}" data-type="sendable">可发送</button>
- </div>
- </div>
- `;
+                    <div class="ag-cal-item ${cls}">
+                        <div class="ag-cal-clone" style="background:${snap.bg};color:${snap.color}">${snap.html}</div>
+                        <div class="ag-cal-actions">
+                            <button class="ag-cal-tag ${isBusy ? 'active-busy' : ''}" data-fp="${fp}" data-type="busy">忙碌</button>
+                            <button class="ag-cal-tag ${isIdle ? 'active-idle' : ''}" data-fp="${fp}" data-type="idle">空闲</button>
+                            <button class="ag-cal-tag ${isSendable ? 'active-sendable' : ''}" data-fp="${fp}" data-type="sendable">可发送</button>
+                        </div>
+                    </div>
+                `;
             });
             cards.innerHTML = listHtml || '<div style="color:#52525b;font-size:12px;text-align:center;padding:16px 0">等待按钮状态变化...</div>';
             cards.style.display = 'flex';
             bar.innerHTML = `
- <div style="font-size:13px;color:#d4d4d8;text-align:center">${msg}</div>
- <div style="display:flex;gap:8px;align-items:center">
- <button class="ag-btn ag-btn-g" id="ag-cal-stop">取消</button>
- <button class="ag-btn ag-btn-p" id="ag-cal-finish" style="${canFinish ? '' : 'opacity:0.5;pointer-events:none'}">完成校准</button>
- </div>
- `;
+                <div style="font-size:13px;color:#d4d4d8;text-align:center">${msg}</div>
+                <div style="display:flex;gap:8px;align-items:center">
+                    <button class="ag-btn ag-btn-g" id="ag-cal-stop">取消</button>
+                    <button class="ag-btn ag-btn-p" id="ag-cal-finish" style="${canFinish ? '' : 'opacity:0.5;pointer-events:none'}">完成校准</button>
+                </div>
+            `;
             bar.style.display = 'flex';
             bar.querySelector('#ag-cal-stop').onclick = () => stopCalibration();
             if (canFinish) {
@@ -1715,7 +1613,6 @@
                 };
             });
         };
-
         const stopCalibration = () => {
             if (checkInterval) clearInterval(checkInterval);
             bar.remove();
@@ -1723,9 +1620,7 @@
             _isCalibrating = false;
             showPanel();
         };
-
         renderBar('👇 请在下方正常聊天，脚本会自动捕获按钮的不同状态。<br><b style="color:#f472b6">【忙碌】=停止生成 | 【空闲】=AI说完 | 【可发送】=可以发送消息</b>');
-
         checkInterval = setInterval(() => {
             const fp = _getSendBtnFingerprint();
             if (!fp) return;
@@ -1733,8 +1628,7 @@
                 if (!capturedMap.has(fp)) {
                     capturedMap.set(fp, {
                         html: `<span style="color:#ef4444;font-size:12px">⚠ 元素不存在 (${fp === 'CONTAINER_MISSING' ? '容器' : '按钮'})</span>`,
-                        bg: '#1a1a1a',
-                        color: '#ef4444'
+                        bg: '#1a1a1a', color: '#ef4444'
                     });
                     log('INFO', `捕获状态: ${fp} (#${capturedMap.size})`);
                     renderBar('👇 继续操作，或标记已捕获的状态后点击完成。<br><b style="color:#f472b6">【忙碌】=停止生成 | 【空闲】=AI说完 | 【可发送】=可以发送消息</b>');
@@ -1747,17 +1641,12 @@
                 if (!el) return;
                 const cs = getComputedStyle(el);
                 let inner = el.innerHTML.replace(/<(style|script|link)[\s\S]*?<\/\1>/gi, '');
-                capturedMap.set(fp, {
-                    html: inner,
-                    bg: cs.backgroundColor,
-                    color: cs.color
-                });
+                capturedMap.set(fp, { html: inner, bg: cs.backgroundColor, color: cs.color });
                 log('INFO', `捕获新状态指纹 (#${capturedMap.size})`);
                 renderBar('👇 继续操作，或标记已捕获的状态后点击完成。<br><b style="color:#f472b6">【忙碌】=停止生成 | 【空闲】=AI说完 | 【可发送】=可以发送消息</b>');
             }
         }, 300);
     }
-
     function _waitForLLMFinish() {
         return new Promise(resolve => {
             const c = cfgLoad();
@@ -1768,7 +1657,6 @@
                 return;
             }
             log('INFO', '👀 监听发送按钮状态...');
-
             const checkPhase1 = () => {
                 const fp = _getSendBtnFingerprint();
                 if (fp === null || fp === 'ELEMENT_MISSING' || fp === 'CONTAINER_MISSING' || !busyList.includes(fp)) {
@@ -1778,7 +1666,6 @@
                     setTimeout(checkPhase1, 200);
                 }
             };
-
             const startPhase2 = () => {
                 if (c.verifyMode === 'double') {
                     const idleList = c.sendBtnIdleFingerprints || [];
@@ -1804,17 +1691,14 @@
                     triggerDelay();
                 }
             };
-
             const triggerDelay = () => {
                 const delay = parseInt(c.waitDelayAfterDone) || 500;
                 log('INFO', `⏳ 等待延时 ${delay}ms...`);
                 setTimeout(resolve, delay);
             };
-
             checkPhase1();
         });
     }
-
     function _waitForSendable() {
         return new Promise(resolve => {
             const c = cfgLoad();
@@ -1845,24 +1729,50 @@
             check();
         });
     }
-
+    const _TICK_ROUNDS_STORE = 'pokeragent_tick_rounds'; // [新增] 已衰减回合记录（GM 存储，跨标签页共享）
+    function _fireMemoryTick(answerCount) {
+        // [新增] 回合信号 → 后端温度衰减（fire-and-forget）。
+        // 去重（前端）：round key = 页面URL + 回答数。同一对话在多个标签页中看到的
+        // 回答数一致 → key 相同；不同对话 URL 不同 → key 天然隔离，各自独立衰减。
+        // GM 存储跨标签页共享 → 同一回合只有首个检测到的标签页实际发送
+        const roundKey = location.href + '#' + answerCount;
+        const keys = GM_getValue(_TICK_ROUNDS_STORE, []);
+        if (keys.includes(roundKey)) return; // 本页或其他标签页已报告过该回合
+        keys.push(roundKey);
+        if (keys.length > 64) keys.splice(0, keys.length - 64); // 容量兜底（正常路径由下方主动清理控制）
+        GM_setValue(_TICK_ROUNDS_STORE, keys);
+        const c = cfgLoad();
+        GM_xmlhttpRequest({
+            method: 'GET',
+            url: c.apiUrl.replace('/agent-exec', '/agent-memory-tick'),
+            timeout: 3000,
+            onload() { },
+            onerror() { log('WARN', '记忆衰减信号发送失败（本回合温度未衰减）'); },
+            ontimeout() { }
+        });
+    }
+    function _pruneTickRounds() {
+        // [新增] 清除本 URL 的已报告回合记录。
+        // 同一 URL 下对话清空重建后回答数从 1 重用，旧记录会吞掉新回合的衰减信号，
+        // 检测到回答数减少即清理（对话切换走 URL 变化，天然不受影响）
+        const keys = GM_getValue(_TICK_ROUNDS_STORE, []);
+        const prefix = location.href + '#';
+        const kept = keys.filter(k => !k.startsWith(prefix));
+        if (kept.length !== keys.length) GM_setValue(_TICK_ROUNDS_STORE, kept);
+    }
     async function _injectMemoryIfNeeded() {
         // [新增] 在发送指令前，向后端拉取记忆上下文并注入到输入框
         // 记忆内容用 <memory> 标签包裹，拼接到回执区块前面
         const c = cfgLoad();
         const freq = parseInt(c.memoryInjectFrequency) || 0;
         if (freq <= 0) return; // 0 代表关闭
-
-        _memoryRoundCounter++;
-        if (_memoryRoundCounter % freq !== 0) return;
-
+        // [修改] 计数基准从 dispatch 次数改为对话回合数（与温度衰减共享 _roundCount）
+        if (_roundCount - _lastMemoryInjectRound < freq) return;
+        _lastMemoryInjectRound = _roundCount;
         const injectUrl = c.apiUrl.replace('/agent-exec', '/agent-memory-inject');
-
         return new Promise(resolve => {
             GM_xmlhttpRequest({
-                method: 'GET',
-                url: injectUrl,
-                timeout: 3000,
+                method: 'GET', url: injectUrl, timeout: 3000,
                 onload(r) {
                     if (r.status === 200) {
                         try {
@@ -1881,9 +1791,7 @@
                                     const memStart = currentText.indexOf('<memory>');
                                     const memEnd = currentText.indexOf('</memory>');
                                     if (memStart !== -1 && memEnd !== -1) {
-                                        currentText = currentText.substring(0, memStart)
-                                            + memoryBlock
-                                            + currentText.substring(memEnd + '</memory>'.length);
+                                        currentText = currentText.substring(0, memStart) + memoryBlock + currentText.substring(memEnd + '</memory>'.length);
                                     } else {
                                         // 追加到末尾（后续 _renderTaskBlock 会将其作为 prefix）
                                         currentText = currentText + memoryBlock;
@@ -1903,18 +1811,15 @@
             });
         });
     }
-
     async function _checkAndDispatch() {
         if (_isProcessing || _cmdQueue.length === 0) return;
         _isProcessing = true;
         log('INFO', `⏳ 挂起等待 AI 彻底输出完毕... (队列: ${_cmdQueue.length} 条)`);
         await _waitForLLMFinish();
-
         if (_cmdQueue.length === 0) {
             _isProcessing = false;
             return;
         }
-
         const _seen = new Set();
         const batch = _cmdQueue.filter(cmd => {
             const k = cmd.replace(/\s+/g, '');
@@ -1922,12 +1827,10 @@
             _seen.add(k);
             return true;
         }).join('\n');
-
         _cmdQueue = [];
-        await _injectMemoryIfNeeded();  // [新增] 在发送指令前注入记忆
+        await _injectMemoryIfNeeded(); // [新增] 在发送指令前注入记忆
         _dispatch(batch);
     }
-
     function _dispatch(cmdBatch) {
         const c = cfgLoad();
         if (c.textCleanRules && Array.isArray(c.textCleanRules) && c.textCleanRules.length > 0) {
@@ -1973,12 +1876,9 @@
                 log('INFO', `✨ 已应用 ${cleanCount} 条自定义清洗规则`);
             }
         }
-
         log('INFO', `🚀 AI已说完，发送至本地后端...`);
-
         GM_xmlhttpRequest({
-            method: 'POST',
-            url: c.apiUrl,
+            method: 'POST', url: c.apiUrl,
             headers: { 'Content-Type': 'application/json' },
             data: JSON.stringify({ command: cmdBatch }),
             onload: (r) => {
@@ -2029,19 +1929,15 @@
             }
         });
     }
-
     async function _decodeClipboardFile(resultText) {
         const marker = '__CLIPBOARD_FILE__';
         const markerIdx = resultText.indexOf(marker);
         if (markerIdx === -1) return null;
-
         const beforeMarker = resultText.substring(0, markerIdx);
         let afterMarker = resultText.substring(markerIdx + marker.length);
         let cleanStr = afterMarker.replace(/\x00/g, '').replace(/\s/g, '');
-
         const parts = cleanStr.split('|||');
         const isNewFormat = (parts[0] === 'ID');
-
         if (isNewFormat) {
             const fileId = parts[1];
             const filename = parts[2] || 'unknown';
@@ -2097,7 +1993,6 @@
             }
         }
     }
-
     function _downloadFileFromAgent(fileId) {
         const c = cfgLoad();
         const apiUrl = c.apiUrl.replace('/agent-exec', '/agent-file-download');
@@ -2123,13 +2018,11 @@
             xhr.send();
         });
     }
-
     async function _doPasteFile(input, filename, fileSize, b64Data) {
         try {
             const byteChars = atob(b64Data);
             const byteArr = new Uint8Array(byteChars.length);
             for (let i = 0; i < byteChars.length; i++) byteArr[i] = byteChars.charCodeAt(i);
-
             const ext = filename.split('.').pop().toLowerCase();
             const mimeMap = {
                 'js': 'text/javascript', 'ts': 'text/typescript', 'html': 'text/html',
@@ -2138,31 +2031,23 @@
                 'csv': 'text/csv', 'java': 'text/x-java-source', 'gradle': 'text/plain',
                 'properties': 'text/plain', 'toml': 'text/plain', 'yml': 'text/yaml', 'yaml': 'text/yaml'
             };
-
             const file = new File([byteArr], filename, { type: mimeMap[ext] || 'text/plain' });
-
             input.focus();
             const dt = new DataTransfer();
             dt.items.add(file);
-
             const pasteEvt = new ClipboardEvent('paste', { bubbles: true, cancelable: true });
-            Object.defineProperty(pasteEvt, 'clipboardData', {
-                get() { return dt; }
-            });
+            Object.defineProperty(pasteEvt, 'clipboardData', { get() { return dt; } });
             input.dispatchEvent(pasteEvt);
-
             log('OK', `📎 已粘贴文件: ${filename}（${fileSize} 字节）`);
             await _smartWait(input, { checkDOM: true, maxWait: 3000 });
         } catch (err) {
             log('ERR', `文件粘贴失败: ${err.message}`);
         }
     }
-
     function _renderTaskBlock() {
         const c = cfgLoad();
         const input = document.querySelector(c.selInputBox);
         if (!input) return;
-
         let block = TASK_START;
         _taskList.forEach((task, idx) => {
             if (task.status === 'done') {
@@ -2178,20 +2063,17 @@
             }
             if (idx < _taskList.length - 1) block += '\n';
         });
-
         const allDone = _taskList.length > 0 && _taskList.every(t => t.status === 'done');
         if (allDone) {
             block += `\n[Poker Agent]\nAll tasks done!`;
         }
         block += TASK_END;
-
         let currentText = '';
         if (input.tagName === 'TEXTAREA' || input.tagName === 'INPUT') {
             currentText = input.value;
         } else {
             currentText = input.textContent || '';
         }
-
         let prefix = '';
         let suffix = '';
         const startIdx = currentText.indexOf(TASK_START);
@@ -2205,31 +2087,24 @@
             prefix = currentText.trim();
             if (prefix) prefix += '\n';
         }
-
         const finalText = prefix + block + suffix;
         _directInput(input, finalText, false);
     }
-
     function _initSSE() {
         if (_sseEventSource) {
-            try {
-                _sseEventSource.abort();
-            } catch (e) { }
+            try { _sseEventSource.abort(); } catch (e) { }
             _sseEventSource = null;
         }
         const c = cfgLoad();
         const streamUrl = c.apiUrl.replace('/agent-exec', '/agent-stream');
         let _sseBuffer = '';
-
         _sseEventSource = GM_xmlhttpRequest({
-            method: 'GET',
-            url: streamUrl,
+            method: 'GET', url: streamUrl,
             headers: { 'Accept': 'text/event-stream' },
             timeout: 0,
             onprogress: (resp) => {
                 const newData = resp.responseText.slice(_sseBuffer.length);
                 _sseBuffer = resp.responseText;
-
                 const events = newData.split('\n\n');
                 for (const evt of events) {
                     if (!evt.trim() || evt.startsWith(':')) continue;
@@ -2259,12 +2134,10 @@
             }
         });
     }
-
     function _handleSSEData(data) {
         if (data.id === 'all') return;
         const task = _taskList.find(t => t.id === data.id);
         if (!task) return;
-
         if (data.type === 'status') {
             if (data.status === 'running') {
                 task.status = 'running';
@@ -2276,24 +2149,18 @@
             if (task.status === 'waiting') task.status = 'running';
             task.logs.push(data.data);
         }
-
         _renderTaskBlock();
-
         if (_taskList.length > 0 && _taskList.every(t => t.status === 'done')) {
             if (_sseEventSource) {
-                try {
-                    _sseEventSource.abort();
-                } catch (e) { }
+                try { _sseEventSource.abort(); } catch (e) { }
                 _sseEventSource = null;
             }
             _finalizeAndSend();
         }
     }
-
     async function _finalizeAndSend() {
         log('INFO', '✅ 所有任务完成，等待 LLM 输出完毕...');
         await _waitForLLMFinish();
-
         const c = cfgLoad();
         const input = document.querySelector(c.selInputBox);
         if (!input) {
@@ -2303,9 +2170,7 @@
             _checkAndDispatch();
             return;
         }
-
         const hasFileTask = _clipboardMode && _taskList.some(t => t.status === 'done' && t.result && t.result.includes('__CLIPBOARD_FILE__'));
-
         if (hasFileTask) {
             log('INFO', '📋 检测到文件任务，准备文件粘贴...');
             for (const task of _taskList) {
@@ -2324,9 +2189,7 @@
                 }
             }
         }
-
         _renderTaskBlock();
-
         if (hasFileTask) {
             input.focus();
             for (const task of _taskList) {
@@ -2335,23 +2198,18 @@
                 }
             }
         }
-
         await _waitForSendable();
-
         const debounceDelay = parseInt(c.sendDebounceDelay) || 0;
         if (debounceDelay > 0) {
             log('INFO', `⏳ 发送防抖延时 ${debounceDelay}ms...`);
             await new Promise(r => setTimeout(r, debounceDelay));
         }
-
         log('INFO', '🚀 触发最终发送');
         _executeSend(input);
-
         _isProcessing = false;
         _taskList = [];
         _checkAndDispatch();
     }
-
     function _trySendByClick() {
         const c = cfgLoad();
         if (c.selSendButtonContainer) {
@@ -2390,7 +2248,6 @@
         log('INFO', '👆 点击发送按钮发送');
         return true;
     }
-
     function _executeSend(input) {
         const c = cfgLoad();
         const mode = c.autoSendMode || 'click';
@@ -2420,7 +2277,6 @@
                 break;
         }
     }
-
     function _directInput(input, text, append = false) {
         input.focus();
         if (input.tagName === 'TEXTAREA' || input.tagName === 'INPUT') {
@@ -2439,7 +2295,6 @@
             document.execCommand('insertText', false, text);
         }
     }
-
     function _trySendByEnter(input) {
         ['keydown', 'keypress', 'keyup'].forEach(evtType => {
             input.dispatchEvent(new KeyboardEvent(evtType, {
@@ -2449,69 +2304,72 @@
             }));
         });
     }
-
     function _smartWait(input, opts = {}) {
         const { expectValue, checkDOM = false, maxWait = 3000, interval = 50, stableNeed = 3 } = opts;
         return new Promise(resolve => {
             let stable = 0;
             let domSnap = checkDOM ? input.parentElement?.children.length ?? -1 : -1;
-
             const t = setInterval(() => {
                 const valOk = !expectValue || input.value === expectValue;
                 const domOk = !checkDOM || (input.parentElement?.children.length ?? -1) === domSnap;
-
                 if (valOk && domOk) {
                     stable++;
                 } else {
                     stable = 0;
                     domSnap = checkDOM ? input.parentElement?.children.length ?? -1 : -1;
                 }
-
                 if (stable >= stableNeed) {
                     clearInterval(t);
                     clearTimeout(safety);
                     resolve();
                 }
             }, interval);
-
-            const safety = setTimeout(() => {
-                clearInterval(t);
-                resolve();
-            }, maxWait);
+            const safety = setTimeout(() => { clearInterval(t); resolve(); }, maxWait);
         });
     }
-
     /* ================================================================
      * 6.5 发送模式选择器
      * ================================================================ */
     let _toggleEl = null;
     let _togglePosTimer = null;
-    let _memoryRoundCounter = 0;  // [新增] 记忆注入轮次计数器
-
     function _initAutoSendToggle() {
         _destroyAutoSendToggle();
         let c;
-        try {
-            c = cfgLoad();
-        } catch (e) {
-            console.error('[Agent] cfgLoad异常:', e);
-            return;
-        }
+        try { c = cfgLoad(); } catch (e) { console.error('[Agent] cfgLoad异常:', e); return; }
         if (!c.showAutoSendToggle || (!c.selSendButton && !c.selSendButtonContainer)) return;
-
         const mode = c.autoSendMode || 'click';
+        const freq = parseInt(c.memoryInjectFrequency);
         _toggleEl = document.createElement('div');
         _toggleEl.id = 'agent-auto-send-toggle';
+        // [修改] 结构改纵向两段：顶部记忆注入频率（收起/展开）+ 底部原发送模式区
         _toggleEl.innerHTML = `
- <div class="ag-as-opts">
- <div class="ag-as-opt ${mode === 'none' ? 'active' : ''}" data-mode="none">不自动发送</div>
- <div class="ag-as-opt ${mode === 'click' ? 'active' : ''}" data-mode="click">点击按钮</div>
- <div class="ag-as-opt ${mode === 'enter' ? 'active' : ''}" data-mode="enter">回车发送</div>
- </div>
- <div class="ag-as-rail">
- <div class="ag-as-thumb"></div>
- </div>
- `;
+            <div class="ag-as-mem" id="ag-as-mem-head" title="记忆注入频率：每N轮对话注入一次记忆上下文">
+                <span class="ag-as-mem-label">🧠 记忆注入</span>
+                <span class="ag-as-mem-val" id="ag-as-mem-val">${_memFreqLabel(freq)}</span>
+            </div>
+            <div class="ag-as-mem-body" id="ag-as-mem-body">
+                <div class="ag-as-mem-opts" id="ag-as-mem-opts">
+                    <span class="ag-as-mem-opt" data-freq="0">关闭</span>
+                    <span class="ag-as-mem-opt" data-freq="1">每1轮</span>
+                    <span class="ag-as-mem-opt" data-freq="2">每2轮</span>
+                    <span class="ag-as-mem-opt" data-freq="3">每3轮</span>
+                    <span class="ag-as-mem-opt" data-freq="5">每5轮</span>
+                    <span class="ag-as-mem-opt" data-freq="10">每10轮</span>
+                </div>
+                <div class="ag-as-mem-custom">
+                    <input type="number" min="1" id="ag-as-mem-custom-inp" placeholder="自定义轮数">
+                    <button id="ag-as-mem-custom-ok">✓</button>
+                </div>
+            </div>
+            <div class="ag-as-main">
+                <div class="ag-as-opts">
+                    <div class="ag-as-opt ${mode === 'none' ? 'active' : ''}" data-mode="none">不自动发送</div>
+                    <div class="ag-as-opt ${mode === 'click' ? 'active' : ''}" data-mode="click">点击按钮</div>
+                    <div class="ag-as-opt ${mode === 'enter' ? 'active' : ''}" data-mode="enter">回车发送</div>
+                </div>
+                <div class="ag-as-rail"><div class="ag-as-thumb"></div></div>
+            </div>
+        `;
         document.body.appendChild(_toggleEl);
         _toggleEl.querySelectorAll('.ag-as-opt').forEach(opt => {
             opt.onclick = (e) => {
@@ -2525,18 +2383,43 @@
                 log('INFO', `发送模式切换为: ${modeLabels[newMode] || newMode}`);
             };
         });
+        // [新增] 记忆注入频率交互：头部点击收起/展开，选项即选即存并收起
+        const memHead = _toggleEl.querySelector('#ag-as-mem-head');
+        const memBody = _toggleEl.querySelector('#ag-as-mem-body');
+        const applyFreq = (n) => {
+            cfgSaveRuntime({ memoryInjectFrequency: n });
+            _toggleEl.querySelector('#ag-as-mem-val').textContent = _memFreqLabel(n);
+            _toggleEl.querySelectorAll('.ag-as-mem-opt').forEach(o =>
+                o.classList.toggle('active', parseInt(o.dataset.freq) === n));
+            memBody.style.display = 'none';
+            log('INFO', `🧠 记忆注入频率切换为: ${_memFreqLabel(n)}`);
+        };
+        memHead.onclick = (e) => {
+            e.stopPropagation();
+            memBody.style.display = (memBody.style.display === 'block') ? 'none' : 'block';
+        };
+        _toggleEl.querySelectorAll('.ag-as-mem-opt').forEach(opt => {
+            opt.onclick = (e) => { e.stopPropagation(); applyFreq(parseInt(opt.dataset.freq)); };
+        });
+        _toggleEl.querySelector('#ag-as-mem-custom-ok').onclick = (e) => {
+            e.stopPropagation();
+            const v = parseInt(_toggleEl.querySelector('#ag-as-mem-custom-inp').value);
+            if (v > 0) applyFreq(v);
+        };
+        _toggleEl.querySelectorAll('.ag-as-mem-opt').forEach(o =>
+            o.classList.toggle('active', parseInt(o.dataset.freq) === (parseInt(freq) || 0)));
         _toggleEl.onclick = (e) => e.stopPropagation();
-
         setTimeout(() => {
             _updateTogglePosition();
             _updateSliderPos();
-            _togglePosTimer = setInterval(() => {
-                _updateTogglePosition();
-                _updateSliderPos();
-            }, 500);
+            _togglePosTimer = setInterval(() => { _updateTogglePosition(); _updateSliderPos(); }, 500);
         }, 100);
     }
-
+    function _memFreqLabel(freq) {
+        // [新增] 频率显示文案（0/NaN = 关闭）
+        const n = parseInt(freq);
+        return (!n || n <= 0) ? '关闭' : `每${n}轮`;
+    }
     function _updateSliderPos() {
         if (!_toggleEl) return;
         const c = cfgLoad();
@@ -2547,15 +2430,12 @@
         const opts = _toggleEl.querySelectorAll('.ag-as-opt');
         const thumb = _toggleEl.querySelector('.ag-as-thumb');
         const rail = _toggleEl.querySelector('.ag-as-rail');
-
         if (!opts[idx] || !thumb || !rail) return;
-
         const optRect = opts[idx].getBoundingClientRect();
         const railRect = rail.getBoundingClientRect();
         const top = optRect.top - railRect.top + optRect.height / 2 - 5;
         thumb.style.top = top + 'px';
     }
-
     function _updateTogglePosition() {
         if (!_toggleEl) return;
         const c = cfgLoad();
@@ -2573,15 +2453,26 @@
         const pos = c.autoSendTogglePos || 'right';
         let left, top;
         switch (pos) {
-            case 'right': left = br.right; top = br.top + br.height / 2 - tr.height / 2; break;
-            case 'left': left = br.left - tr.width; top = br.top + br.height / 2 - tr.height / 2; break;
-            case 'top': left = br.left + br.width / 2 - tr.width / 2; top = br.top - tr.height; break;
-            case 'bottom': left = br.left + br.width / 2 - tr.width / 2; top = br.bottom; break;
+            case 'right':
+                left = br.right;
+                top = br.top + br.height / 2 - tr.height / 2;
+                break;
+            case 'left':
+                left = br.left - tr.width;
+                top = br.top + br.height / 2 - tr.height / 2;
+                break;
+            case 'top':
+                left = br.left + br.width / 2 - tr.width / 2;
+                top = br.top - tr.height;
+                break;
+            case 'bottom':
+                left = br.left + br.width / 2 - tr.width / 2;
+                top = br.bottom;
+                break;
         }
         _toggleEl.style.left = left + 'px';
         _toggleEl.style.top = top + 'px';
     }
-
     function _destroyAutoSendToggle() {
         if (_togglePosTimer) {
             clearInterval(_togglePosTimer);
@@ -2592,20 +2483,17 @@
             _toggleEl = null;
         }
     }
-
     /* ================================================================
      * 7. 启动入口
      * ================================================================ */
     GM_registerMenuCommand('⚙️ Agent 配置面板', showPanel);
     _registerEnableMenus();
-
     if (_getEnableState() !== 'disabled') {
         if (cfgLoad().debugMode) setTimeout(initDebugUI, 500);
         const start = () => setTimeout(initAgent, 1500);
         if (document.readyState === 'loading') document.addEventListener('DOMContentLoaded', start);
         else start();
     }
-
     async function initAgent() {
         if (_pollTimer) {
             clearInterval(_pollTimer);
@@ -2618,14 +2506,12 @@
             log('WARN', `初始配置同步失败(不影响运行): ${e.message}`);
         }
         _pollConfig();
-
         _lastAnswerEl = null;
         _lastAnswerCount = 0;
         _currentRoundSent.clear();
         _lastScannedLen = 0;
         _noAnswerCount = 0;
         _initAutoSendToggle();
-
         const c = cfgLoad();
         const selector = c.selChatContainer;
         if (!selector) {
@@ -2633,7 +2519,6 @@
             setTimeout(initAgent, 5000);
             return;
         }
-
         let currentContainer;
         try {
             currentContainer = document.querySelector(selector);
@@ -2641,29 +2526,23 @@
             log('ERR', `容器选择器语法错误: "${selector}" - ${e.message}`);
             return;
         }
-
         if (!currentContainer) {
             log('WARN', `找不到容器 ${selector}，5秒后重试...`);
             setTimeout(initAgent, 5000);
             return;
         }
-
         const answerSel = c.selAnswerItem || '.answer';
         _knownAnswers = [...currentContainer.querySelectorAll(answerSel)];
         _lastAnswerEl = null;
         _lastAnswerCount = _knownAnswers.length;
         _currentRoundSent.clear();
         _lastScannedLen = 0;
-
         log('OK', `✅ 监听已启动！回答元素选择器: "${answerSel}"`);
-
-        _pollTimer = setInterval(async () => {
-            // setInterval回调改为async
+        _pollTimer = setInterval(async () => {  // setInterval回调改为async
             try {
                 _heartbeatCounter++;
                 const freshContainer = document.querySelector(selector);
                 if (!freshContainer) return;
-
                 if (freshContainer !== currentContainer) {
                     log('WARN', '🚨 检测到聊天容器被替换，重置状态...');
                     currentContainer = freshContainer;
@@ -2677,7 +2556,6 @@
                     _initAutoSendToggle();
                     return;
                 }
-
                 const answers = [...currentContainer.querySelectorAll(answerSel)];
                 if (answers.length === 0) {
                     _noAnswerCount++;
@@ -2692,25 +2570,30 @@
                     }
                     _noAnswerCount = 0;
                 }
-
                 if (_knownAnswers.length > 0 && !_knownAnswers.some(el => new Set(answers).has(el))) {
                     _lastAnswerEl = null;
                     _lastAnswerCount = 0;
                     _currentRoundSent.clear();
                     _lastScannedLen = 0;
+                    _pruneTickRounds();  // [新增] 对话整体被替换：回合记录同步清除
                     _cmdQueue = [];
                     _sendPromiseChain = Promise.resolve();
                     _isProcessing = false;
                     log('WARN', '🚨 对话被清空，重置状态...');
                 }
-
                 _knownAnswers = answers;
                 if (_heartbeatCounter % 20 === 0) log('INFO', `💓 心跳 | 队列${_cmdQueue.length}条 | 锁定:${_isProcessing} | 回答:${answers.length}个`);
-
                 if (answers.length === 0) return;
-
                 const lastAnswer = answers[answers.length - 1];
                 if (answers.length !== _lastAnswerCount) {
+                    if (answers.length === _lastAnswerCount + 1) {
+                        // [新增] 恰好 +1 = 真实对话回合（≥2 视为历史批量重载，不计）
+                        _roundCount++;
+                        _fireMemoryTick(answers.length);
+                    } else if (answers.length < _lastAnswerCount) {
+                        // [新增] 回答数减少 = 对话被清空/删除消息/重置：清除本 URL 回合记录
+                        _pruneTickRounds();
+                    }
                     _lastAnswerCount = answers.length;
                     _lastAnswerEl = lastAnswer;
                     _currentRoundSent.clear();
@@ -2718,14 +2601,11 @@
                 } else if (lastAnswer !== _lastAnswerEl) {
                     _lastAnswerEl = lastAnswer;
                 }
-
                 const rawLen = lastAnswer.textContent.length;
                 if (rawLen <= _lastScannedLen && _currentRoundSent.size > 0) {
                     return;
                 }
-
                 _lastScannedLen = rawLen;
-
                 const re = /【cmd】([\s\S]*?)【\/cmd】/g;
                 // 调用 async getCleanText
                 const text = await getCleanText(lastAnswer, c);
@@ -2745,15 +2625,12 @@
             }
         }, 800);
     }
-
     function esc(s) {
         const d = document.createElement('div');
         d.textContent = s;
         return d.innerHTML;
     }
-
     function escAttr(s) {
         return String(s || '').replace(/&/g, '&amp;').replace(/"/g, '&quot;').replace(/'/g, '&#39;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
     }
-
 })();
