@@ -1,4 +1,4 @@
-"""PokerAgent - 本地接应服务 (SSE流式版) v39
+"""PokerAgent - 本地接应服务 (SSE流式版) v40
 启动方式：
     python agent_server.py
 默认监听：http://127.0.0.1:9966
@@ -57,11 +57,11 @@ def _detect_powershell():
     return None
 _POWERSHELL_EXE = _detect_powershell()
 # ========== 记忆系统配置 ==========
-MEMORY_TEMP_INITIAL = 100  # 新记忆初始温度（决定新旧记忆的淘汰压力）。
-MEMORY_TEMP_DECAY_RATIO = 0.95  # 每轮衰减比例（保留95%，即衰减5%）。
-MEMORY_TEMP_HEAT_RATIO = 0.5  # 被读取时向初始温度回归的比例（极冷数据飙升）。
-MEMORY_EXPOSE_WINDOW = 20  # Tag 云暴露的记忆条数（温度Top-N）。
-MEMORY_READ_WINDOW = 2  # memory search 上下额外返回的记忆条数。
+MEMORY_TEMP_INITIAL = 100        # 新记忆初始温度（决定新旧记忆的淘汰压力）。
+MEMORY_TEMP_DECAY_RATIO = 0.95   # 每轮衰减比例（保留95%，即衰减5%）。
+MEMORY_TEMP_HEAT_RATIO = 0.5     # 被读取时向初始温度回归的比例（极冷数据飙升）。
+MEMORY_EXPOSE_WINDOW = 20        # Tag 云暴露的记忆条数（温度Top-N）。
+MEMORY_READ_WINDOW = 2           # memory search 上下额外返回的记忆条数。
 # ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 # 任务队列与 SSE 流式架构
 # ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
@@ -394,14 +394,14 @@ class PermissionManager:
             if result == 'always':
                 with self._lock:
                     self._always_allow.add(fp_norm)
-                save_config()  # 新增始终允许条目后持久化
+                    save_config()  # 新增始终允许条目后持久化
                 return True
             return bool(result)
         return False
     def reset_session(self):
         with self._lock:
             self._always_allow.clear()
-        save_config()  # 清除始终允许列表后持久化
+            save_config()  # 清除始终允许列表后持久化
 permission_mgr = PermissionManager()
 # [新增] 判断路径是否在回收站内
 def _is_trash_path(filepath):
@@ -790,10 +790,11 @@ def execute_line_streaming(line, task_id):
             chars = len(content)
             words = len(re.findall(r'[\u4e00-\u9fff]|[a-zA-Z0-9]+', content))
             log_action('COUNT', filepath)
-            return (f'文件统计：{filepath}\n'
-                    f'  行数：{len(lines)}\n'
-                    f'  字数（中英文混合）：{words}\n'
-                    f'  字符数（含空白）：{chars}')
+            return (
+                f'文件统计：{filepath}\n'
+                f'  行数：{len(lines)}\n'
+                f'  字数（中英文混合）：{words}\n'
+                f'  字符数（含空白）：{chars}')
         except Exception as e:
             return f'统计失败：{e}'
     elif cmd == 'find':
@@ -1704,7 +1705,8 @@ def execute_line_streaming(line, task_id):
         # [新增] 危险命令拦截与弹窗确认
         dangerous_patterns = re.compile(r'\b(del|rd|rm|rmdir|format|erase|diskpart|mkfs)\b', re.IGNORECASE)
         if dangerous_patterns.search(arg):
-            if permission_mgr._callback:  # 触发 GUI 弹窗或 CLI 询问
+            if permission_mgr._callback:
+                # 触发 GUI 弹窗或 CLI 询问
                 approved = permission_mgr._callback('高危命令拦截', arg.strip())
                 if not approved:
                     return f'操作被拒绝：执行高危系统命令需用户确认。命令：{arg.strip()}'
@@ -1719,13 +1721,18 @@ def execute_line_streaming(line, task_id):
                 # PowerShell：列表传参，不走 shell=True，避免二次解析
                 process = subprocess.Popen(
                     [_POWERSHELL_EXE, '-NoProfile', '-NonInteractive', '-Command', arg.strip()],
-                    stdout=subprocess.PIPE, stderr=subprocess.STDOUT, cwd=W
+                    stdout=subprocess.PIPE,
+                    stderr=subprocess.STDOUT,
+                    cwd=W
                 )
             else:
                 # cmd 回退
                 process = subprocess.Popen(
-                    f'cmd /c {arg.strip()}', shell=True,
-                    stdout=subprocess.PIPE, stderr=subprocess.STDOUT, cwd=W
+                    f'cmd /c {arg.strip()}',
+                    shell=True,
+                    stdout=subprocess.PIPE,
+                    stderr=subprocess.STDOUT,
+                    cwd=W
                 )
             # [新增] 注册当前子进程，供 GUI 侧终止
             with _current_process_lock:
@@ -1761,10 +1768,11 @@ def execute_line_streaming(line, task_id):
                     if time.time() - start_time > 3600:
                         timed_out = True
                         break
-                    # 主进程已退出 → 进入 drain 模式，等读取线程把缓冲区剩余数据吐完
+                    # [修复] 队列空但主进程已退出 → 切 drain 模式，等读取线程把缓冲区剩余数据吐完
+                    #        （原检查点在公共路径上，会吞掉刚 get 到的行）
                     if process.poll() is not None:
                         draining = True
-                        continue
+                    continue  # [修复] 关键：回到循环头重新 get，避免 item 未绑定即落出 except 块
                 if item is None:
                     break  # EOF 哨兵：管道彻底关闭（正常情况，daemon 没持有管道）
                 line_out = smart_decode(item).rstrip()
@@ -1803,7 +1811,10 @@ def execute_line_streaming(line, task_id):
         log_action('RUN', script)
         try:
             process = subprocess.Popen(
-                ['python', script], stdout=subprocess.PIPE, stderr=subprocess.STDOUT, cwd=W
+                ['python', script],
+                stdout=subprocess.PIPE,
+                stderr=subprocess.STDOUT,
+                cwd=W
             )
             # [新增] 注册当前子进程，供 GUI 侧终止
             with _current_process_lock:
@@ -1837,9 +1848,10 @@ def execute_line_streaming(line, task_id):
                     if time.time() - start_time > 60:
                         timed_out = True
                         break
+                    # [修复] 队列空但主进程已退出 → 切 drain 模式（原位置会吞刚取到的行）
                     if process.poll() is not None:
                         draining = True
-                        continue
+                    continue  # [修复] 关键：回到循环头重新 get，避免 item 未绑定
                 if item is None:
                     break
                 line_out = smart_decode(item).rstrip()
@@ -1882,8 +1894,8 @@ def execute_line_streaming(line, task_id):
                         body = raw_bytes.decode('utf-8')
                     except UnicodeDecodeError:
                         body = raw_bytes.decode('gbk', errors='replace')
-                log_action('GET', url)
-                return body
+            log_action('GET', url)
+            return body
         except urllib.error.HTTPError as e:
             return f'HTTP 错误：{e.code} {e.reason}'
         except Exception as e:
@@ -1988,8 +2000,11 @@ class MemoryEngine:
             f.write(entry)
         # 更新 meta
         meta['memory'][str(mem_id)] = {
-            'temp': temp, 'tags': tags, 'pin': pin,
-            'created_at': time.time(), 'last_accessed': time.time()
+            'temp': temp,
+            'tags': tags,
+            'pin': pin,
+            'created_at': time.time(),
+            'last_accessed': time.time()
         }
         self._save_meta(meta)
         log_action('MEMORY-WRITE', f'ID:{mem_id:03d} | tags:{tags} | pin:{pin}')
@@ -2069,8 +2084,11 @@ class MemoryEngine:
             pin = mem_meta.get('pin', False)
             temp = mem_meta.get('temp', MEMORY_TEMP_INITIAL)
             entries.append({
-                'id': mem_id, 'temp': temp, 'pin': pin,
-                'tags': tags, 'content': content_text
+                'id': mem_id,
+                'temp': temp,
+                'pin': pin,
+                'tags': tags,
+                'content': content_text
             })
         return entries
     def _heat_memory(self, mem_id):
@@ -2121,7 +2139,7 @@ class MemoryEngine:
                 deleted += 1
         if deleted > 0:
             self._save_meta(meta)
-        log_action('MEMORY-DEL', f'已删除 {deleted} 条记忆: {ids}')
+            log_action('MEMORY-DEL', f'已删除 {deleted} 条记忆: {ids}')
         return deleted
     # ── 按ID固定记忆 ──
     def pin_by_ids(self, ids):
@@ -2136,7 +2154,7 @@ class MemoryEngine:
                 pinned += 1
         if pinned > 0:
             self._save_meta(meta)
-        log_action('MEMORY-PIN', f'已固定 {pinned} 条记忆: {ids}')
+            log_action('MEMORY-PIN', f'已固定 {pinned} 条记忆: {ids}')
         return pinned
     # ── 按ID取消固定 ──
     def unpin_by_ids(self, ids):
@@ -2151,7 +2169,7 @@ class MemoryEngine:
                 unpin_count += 1
         if unpin_count > 0:
             self._save_meta(meta)
-        log_action('MEMORY-UNPIN', f'已取消固定 {unpin_count} 条记忆: {ids}')
+            log_action('MEMORY-UNPIN', f'已取消固定 {unpin_count} 条记忆: {ids}')
         return unpin_count
     # ── 按ID覆盖写入 ──
     def overwrite_by_id(self, mem_id, content, tags, pin=False):
@@ -2280,7 +2298,7 @@ class _LogWriter:
         self._orig.flush()  # 立即刷新，防止卡顿
         # 2. 文件持久化（线程安全追加写入）
         # [修改] 改用二进制模式：1) 字节偏移精确可追踪（供 GUI 窗口化回读定位）
-        # 2) 消除 Windows 文本模式 \n→\r\n 隐式翻译
+        #                        2) 消除 Windows 文本模式 \n→\r\n 隐式翻译
         # [行为变更] 日志文件新内容行尾为 LF（历史 CRLF 内容读取方均兼容）
         start_pos = end_pos = None
         with _log_file_lock:
@@ -2295,7 +2313,7 @@ class _LogWriter:
                 start_pos = end_pos = None  # 写入失败静默处理，不能让日志系统搞挂主流程
         # 3. 推送到 GUI（事件驱动核心）
         # [修改] 消息附带本次写入的字节偏移区间 (stream_name, text, start, end)
-        # GUI 据此建立 内存行 ↔ 文件字节区间 的精确映射，支撑滑动窗口回读
+        #        GUI 据此建立 内存行 ↔ 文件字节区间 的精确映射，支撑滑动窗口回读
         if _gui_log_queue:
             try:
                 # 使用 put_nowait 避免阻塞 worker 线程
@@ -2319,17 +2337,17 @@ def agent_stream():
     with _task_registry_lock:
         with _sse_lock:
             sse_clients.append(q)
-        # 回放所有任务的当前状态（晚订阅补偿）
-        for tid, entry in _task_registry.items():
-            evt = {'id': tid, 'type': 'status', 'status': entry['status']}
-            if entry['status'] == 'done' and entry['result']:
-                evt['result'] = entry['result']
-            q.put(f"data: {json.dumps(evt, ensure_ascii=False)}\n\n")
-            # 只对未完成任务回放日志（done 的任务结果已含全部信息）
-            if entry['status'] != 'done':
-                for log_line in entry['logs']:
-                    log_evt = {'id': tid, 'type': 'log', 'data': log_line}
-                    q.put(f"data: {json.dumps(log_evt, ensure_ascii=False)}\n\n")
+            # 回放所有任务的当前状态（晚订阅补偿）
+            for tid, entry in _task_registry.items():
+                evt = {'id': tid, 'type': 'status', 'status': entry['status']}
+                if entry['status'] == 'done' and entry['result']:
+                    evt['result'] = entry['result']
+                q.put(f"data: {json.dumps(evt, ensure_ascii=False)}\n\n")
+                # 只对未完成任务回放日志（done 的任务结果已含全部信息）
+                if entry['status'] != 'done':
+                    for log_line in entry['logs']:
+                        log_evt = {'id': tid, 'type': 'log', 'data': log_line}
+                        q.put(f"data: {json.dumps(log_evt, ensure_ascii=False)}\n\n")
     def generate():
         try:
             while True:
@@ -2386,8 +2404,8 @@ def agent_exec():
                         idx = bln.lower().find('【/codeend】')
                         if idx != -1:
                             block.append(bln[:idx])
-                            peek += 1
-                            break
+                        peek += 1
+                        break
                     block.append(bln)
                     peek += 1
                 blocks.append('\n'.join(block).strip('\n'))
@@ -2539,10 +2557,10 @@ if __name__ == '__main__':
     permission_mgr.set_callback(_default_permission_callback)
     _push_config()
     print(f'========================================')
-    print(f'  PokerAgent 本地服务已启动 (SSE流式版)')
-    print(f'  监听地址：http://127.0.0.1:9966')
-    print(f'  工作目录：{WORK_DIR}')
-    print(f'  帮助文档：{HELP_FILE}')
-    print(f'  操作日志：{LOG_FILE}')
+    print(f' PokerAgent 本地服务已启动 (SSE流式版)')
+    print(f' 监听地址：http://127.0.0.1:9966')
+    print(f' 工作目录：{WORK_DIR}')
+    print(f' 帮助文档：{HELP_FILE}')
+    print(f' 操作日志：{LOG_FILE}')
     print(f'========================================')
     app.run(host='127.0.0.1', port=9966, debug=False, threaded=True)
