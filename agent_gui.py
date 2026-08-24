@@ -1,6 +1,7 @@
 """PokerAgent - GUI 控制台
 
 用法：python agent_gui.py（不要和 agent_server.py 同时运行）
+
 依赖：flask, flask-cors, werkzeug, numpy, sounddevice（与 agent_server.py 相同）
 """
 
@@ -25,6 +26,12 @@ except ImportError as e:
 from werkzeug.serving import make_server
 
 GUI_CONFIG_FILE = os.path.join(os.path.dirname(os.path.abspath(__file__)), 'gui_config.json')
+
+# ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+# 权限弹窗配置（模块级可调；要进 gui_config.json 持久化再说一声）
+# ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+PERM_DIALOG_WIDTH = 440      # 弹窗宽度 px（横向锁定，换行宽度由此确定）
+PERM_DIALOG_MAX_LINES = 12   # 信息区最大视觉行数，超出启用纵向滚动条
 
 # ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 # 颜色方案
@@ -91,7 +98,9 @@ def _parse_ansi_to_parts(text):
 # ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 # 日志行分类（所有日志行的统一分类入口）
 # ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
 LOG_POLL_MS = 15  # [新增] 主线程日志队列拉取间隔（无感级）
+
 _LOG_TS_RE = re.compile(r'^(\[\d{4}-\d{2}-\d{2} \d{2}:\d{2}:\d{2}\])\s+(\S+)(?:\s*\|\s*(.*))?$')
 _LOG_HTTP_RE = re.compile(r'^\d+\.\d+\.\d+\.\d+\s')
 
@@ -131,20 +140,21 @@ def classify_log_line(line):
 #   4. 字符级文本选择：排版数据含每段字符偏移，命中测试/高亮/复制全字符级
 #   5. nowrap 模式横向滚动条：Canvas xview + scrollregion
 # ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
 class LogCanvas:
     # 窗口与预读
     WINDOW_DEFAULT_LINES = 4096  # 默认内存窗口行数（可通过 gui_config.json 的 log_window_lines 覆盖）
-    EVICT_MARGIN_LINES = 64  # 驱逐余量：批量驱逐摊薄 prefix 重建成本
-    PRELOAD_UP_ROWS = 256  # 视口距窗口头 ≤N 行 → 触发向上回读
-    PRELOAD_DOWN_ROWS = 256  # 视口距窗口尾 ≤N 行 → 触发向下回读
-    READ_BATCH_LINES = 500  # 每次磁盘回读行数
-    READ_CHUNK_BYTES = 65536  # 磁盘读取块大小（字节）
-    PRELOAD_COOLDOWN_MS = 200  # 回读冷却
+    EVICT_MARGIN_LINES = 64      # 驱逐余量：批量驱逐摊薄 prefix 重建成本
+    PRELOAD_UP_ROWS = 256        # 视口距窗口头 ≤N 行 → 触发向上回读
+    PRELOAD_DOWN_ROWS = 256      # 视口距窗口尾 ≤N 行 → 触发向下回读
+    READ_BATCH_LINES = 500       # 每次磁盘回读行数
+    READ_CHUNK_BYTES = 65536     # 磁盘读取块大小（字节）
+    PRELOAD_COOLDOWN_MS = 200    # 回读冷却
 
     # 渲染调度
-    RESIZE_DEBOUNCE_MS = 120  # resize 去抖
-    LOOKBACK_ROWS = 16  # bisect 定位垫背回退行数（估算 prefix 误差兜底）
-    RELAYOUT_BATCH = 200  # 后台排版链每批行数（idle 分帧，不阻塞 UI）
+    RESIZE_DEBOUNCE_MS = 120     # resize 去抖
+    LOOKBACK_ROWS = 16           # bisect 定位垫背回退行数（估算 prefix 误差兜底）
+    RELAYOUT_BATCH = 200         # 后台排版链每批行数（idle 分帧，不阻塞 UI）
 
     # 布局
     MARGIN_X = 12
@@ -173,12 +183,12 @@ class LogCanvas:
         self._auto_scroll = True
 
         # 排版引擎状态
-        self._layouts = {}  # row -> {'vlines': [[seg...],...], 'gen': g, 'max_w': px}
-        self._width_gen = 0  # 宽度代际：resize/切 wrap 时 +1，全部缓存失效
+        self._layouts = {}            # row -> {'vlines': [[seg...],...], 'gen': g, 'max_w': px}
+        self._width_gen = 0           # 宽度代际：resize/切 wrap 时 +1，全部缓存失效
         self._pending_layout = set()  # 未精排行号集合（估算占位中，后台链渐进收敛）
-        self._content_max_w = 0  # nowrap 模式内容总宽（驱动横向 scrollregion）
-        self._char_widths = {}  # 非ASCII字符 -> 像素宽缓存（Font.measure 首见）
-        self._cjk_w = None  # CJK 代表宽度（粗估用，精排走 _char_widths）
+        self._content_max_w = 0       # nowrap 模式内容总宽（驱动横向 scrollregion）
+        self._char_widths = {}        # 非ASCII字符 -> 像素宽缓存（Font.measure 首见）
+        self._cjk_w = None            # CJK 代表宽度（粗估用，精排走 _char_widths）
 
         # [修改·根源修复] 唯一权威字体度量：tkfont.Font 实例（_build_ui 前创建）。
         # Font 实例与 create_text 共用 Tk 字体引擎，measure() 返回精确 advance，
@@ -188,21 +198,21 @@ class LogCanvas:
         self._cw = 8  # ASCII 等宽基准（_measure_font 校准）
 
         # 滑动窗口状态
-        self._file_read_pos = 0  # 窗口头行字节偏移（向上回读锚点）
+        self._file_read_pos = 0       # 窗口头行字节偏移（向上回读锚点）
         self._file_exhausted = False  # 文件头已读尽
-        self._tail_anchor = None  # 窗口尾被驱逐后的回读锚点（None=内存尾即文件尾）
-        self._file_end_pos = 0  # 文件当前末尾（消息流持续更新）
-        self._pend_text = ''  # 流式累积：未成行的字符
-        self._pend_start = None  # 流式累积：该行起始字节偏移
-        self._loading = False  # 向上回读进行中
-        self._loading_tail = False  # 向下回读进行中
+        self._tail_anchor = None      # 窗口尾被驱逐后的回读锚点（None=内存尾即文件尾）
+        self._file_end_pos = 0        # 文件当前末尾（消息流持续更新）
+        self._pend_text = ''          # 流式累积：未成行的字符
+        self._pend_start = None       # 流式累积：该行起始字节偏移
+        self._loading = False         # 向上回读进行中
+        self._loading_tail = False    # 向下回读进行中
         self._last_preload_time = 0
 
         # 调度句柄
-        self._debounce_job = None  # resize 去抖
-        self._relayout_job = None  # 后台排版链
-        self._render_job = None  # 渲染请求合并
-        self._refresh_depth = 0  # 二次收敛渲染防重入
+        self._debounce_job = None   # resize 去抖
+        self._relayout_job = None   # 后台排版链
+        self._render_job = None     # 渲染请求合并
+        self._refresh_depth = 0     # 二次收敛渲染防重入
 
         # 文本选择（字符级：(row, char_idx) 对）
         self._sel_anchor = None
@@ -303,20 +313,20 @@ class LogCanvas:
         char_off: token 首字符在逻辑行中的偏移（供字符级选择映射）"""
         tokens = []
         off = 0
-        wbuf, woff, wcolor = [], 0, None  # word 累积
-        sbuf, soff, scolor = [], 0, None  # space 累积
+        wbuf, woff, wcolor = [], 0, None   # word 累积
+        sbuf, soff, scolor = [], 0, None   # space 累积
 
         def flush_word():
             nonlocal wbuf, woff, wcolor
             if wbuf:
                 tokens.append((''.join(wbuf), wcolor, woff, self._T_WORD))
-                wbuf, woff, wcolor = [], 0, None
+            wbuf, woff, wcolor = [], 0, None
 
         def flush_space():
             nonlocal sbuf, soff, scolor
             if sbuf:
                 tokens.append((''.join(sbuf), scolor, soff, self._T_SPACE))
-                sbuf, soff, scolor = [], 0, None
+            sbuf, soff, scolor = [], 0, None
 
         for text, color in seg_input:
             for ch in text:
@@ -363,7 +373,7 @@ class LogCanvas:
                 x += tw
             return ([segs] if segs else [[]]), x
 
-        cur = []  # [(token元组, 宽), ...]
+        cur = []    # [(token元组, 宽), ...]
         cur_w = 0
         skip_space = True  # 换行后跳过行首空格
         nonlocal_max = [0]
@@ -385,21 +395,27 @@ class LogCanvas:
         while i < n:
             t, color, off, kind = tokens[i]
             tw = self._text_w(t)
+
             if kind == self._T_SPACE:
                 if not skip_space and cur_w + tw <= wrap_w:  # 空格悬挂行尾（Tk 行为近似）
                     cur.append((tokens[i], tw)); cur_w += tw
                 # 行首空格 / 超宽空格：丢弃
                 i += 1
                 continue
+
             if cur_w + tw <= wrap_w:
                 cur.append((tokens[i], tw)); cur_w += tw
                 skip_space = False
                 i += 1
                 continue
+
             # 放不下
-            if cur and tw > wrap_w:  # 词超整行宽且当前行已有内容 → 先换行再硬切
+            if cur and tw > wrap_w:
+                # 词超整行宽且当前行已有内容 → 先换行再硬切
                 flush()
-            if tw > wrap_w:  # 硬切：逐字符填满行宽（char_off 随切片推进）
+
+            if tw > wrap_w:
+                # 硬切：逐字符填满行宽（char_off 随切片推进）
                 rem, rem_off = t, off
                 while rem:
                     avail = wrap_w - cur_w
@@ -416,9 +432,11 @@ class LogCanvas:
                     rem, rem_off = rem[cut:], rem_off + cut
                 i += 1
                 continue
+
             if cur:
                 flush()  # 普通换行（行首空格由 skip_space 丢弃）
                 continue
+
             # cur 为空仍放不下（行宽极小的极端防御）：强制放行
             cur.append((tokens[i], tw)); cur_w += tw
             skip_space = False
@@ -426,7 +444,6 @@ class LogCanvas:
 
         if cur:
             flush()
-
         # 【修复】空行保底一个视觉行（否则高度为 0，空行视觉上消失）
         if not vlines:
             vlines = [[]]
@@ -486,7 +503,6 @@ class LogCanvas:
             self._line_heights.appendleft(h)
             insert_h += h
         self._rebuild_prefix()
-
         # 行索引整体 +n：item/layout/pending/选择锚 全部重映射（Canvas item 复用不重建）
         self._visible_items = {r + n: v for r, v in self._visible_items.items()}
         self._layouts = {r + n: v for r, v in self._layouts.items()}
@@ -497,15 +513,12 @@ class LogCanvas:
             self._sel_anchor = (self._sel_anchor[0] + n, self._sel_anchor[1])
         if self._sel_active is not None:
             self._sel_active = (self._sel_active[0] + n, self._sel_active[1])
-
         # 窗口头锚 = 新首行起点
         if self._lines[0][2] is not None:
             self._file_read_pos = self._lines[0][2]
-
         # 窗口满 → 驱逐尾部（最新端去盘，滚到底时回读）
         if len(self._lines) > self._window_lines:
             self._evict_tail()
-
         # 【锚定】内容整体下移 insert_height，offset 同步平移保持视口内容不变；驱逐后统一夹取
         self._scroll_offset += insert_h
         total = self._get_total_height()
@@ -638,7 +651,7 @@ class LogCanvas:
         3) 跨轮保留的半行连同行尾 \\n 一起保留（否则空行在块间传递时蒸发）
         4) 批次提前结束时回退到最后收集行起点（保证批边界行对齐，无腰斩行）
         尾部半行仅在初始加载（read_pos==文件末尾）时提取，供流累积器衔接"""
-        lines = []  # 新→旧（最后统一 reverse）
+        lines = []   # 新→旧（最后统一 reverse）
         read_chars = 0
         pos = read_pos
         buf = b''
@@ -764,8 +777,8 @@ class LogCanvas:
                 self._pend_text, self._pend_start = tail_partial
             if lines:
                 self.prepend_lines(lines)
-                self._scroll_to_bottom()
-                self._schedule_relayout()
+            self._scroll_to_bottom()
+            self._schedule_relayout()
         except Exception as e:
             print(f'[Agent] 加载日志文件失败: {e}')
 
@@ -859,8 +872,7 @@ class LogCanvas:
 
     def _scroll_delta(self, delta):
         total = self._get_total_height()
-        self._scroll_offset = max(0, min(self._scroll_offset + delta,
-                                         max(0, total - self._canvas_height)))
+        self._scroll_offset = max(0, min(self._scroll_offset + delta, max(0, total - self._canvas_height)))
         self._auto_scroll = self._is_at_bottom()
         self._check_preload()
         self._refresh_visible()
@@ -878,8 +890,8 @@ class LogCanvas:
             return
         first = self._find_first_visible_row()
         up = (first <= self.PRELOAD_UP_ROWS and not self._file_exhausted)
-        down = (self._tail_anchor is not None
-                and n - first <= self.PRELOAD_DOWN_ROWS + self._canvas_height // self._line_height)
+        down = (self._tail_anchor is not None and
+                n - first <= self.PRELOAD_DOWN_ROWS + self._canvas_height // self._line_height)
         if up or down:
             self._last_preload_time = now
             if up:
@@ -998,21 +1010,18 @@ class LogCanvas:
         if not self._lines or self._canvas_height <= 0:
             self._update_scrollbar()
             return
-
         if force_rebuild:
             # 强制重建（relayout 后 item 的排版已失效），先销毁全部旧 item
             for items in self._visible_items.values():
                 for item in items:
                     self.canvas.delete(item)
             self._visible_items.clear()
-
         # 【定位】prefix 含估算占位，bisect 可能有偏差，回退 LOOKBACK_ROWS 垫背（兼作预渲染）
         start_row = max(0, self._find_first_visible_row() - self.LOOKBACK_ROWS)
         y = self._line_y_prefix[start_row] - self._scroll_offset
         end_row = start_row
         dirty_min = None
         run_to_end = self._auto_scroll  # 贴底模式推进到最后一行（实测链末端校正 offset）
-
         while end_row < len(self._lines):
             # 【渲染即排版】行进入视野立即精排（缓存），高度即时校正
             lay = self._get_layout(end_row)
@@ -1020,7 +1029,6 @@ class LogCanvas:
             if h != self._line_heights[end_row]:
                 self._line_heights[end_row] = h
                 dirty_min = end_row if dirty_min is None else dirty_min
-
             # item 管理：已有 → coords 摆位（x 逻辑坐标恒定，xview 平移由 Canvas 承担）
             items = self._visible_items.get(end_row)
             if items is None:
@@ -1041,22 +1049,20 @@ class LogCanvas:
                             continue
                         if idx < len(items):
                             self.canvas.coords(items[idx],
-                                               self.MARGIN_X + seg[0], y + vi * self._line_height)
+                                               self.MARGIN_X + seg[0],
+                                               y + vi * self._line_height)
                         idx += 1
             y += h
             end_row += 1
-
             # 【修复】y 已是窗口坐标（初始已减 offset），直接与视口高度比较；
             # 原实现再减一次 offset，深滚时每帧多渲染 offset/行高 数量级的额外行
             if not run_to_end and y > self._canvas_height + 2 * self._line_height:
                 break
-
         # 清理移出渲染范围的 item
         for r in [r for r in self._visible_items if r < start_row or r >= end_row]:
             for item in self._visible_items[r]:
                 self.canvas.delete(item)
             del self._visible_items[r]
-
         # 【贴底校正】y 此刻 = 实测渲染链末端的屏幕坐标；+ offset 还原绝对坐标后锚定 offset
         # 【修复】target 漏加 offset 会把屏幕坐标当绝对坐标，深滚时被 max(0,...) 截到 0，
         # auto_scroll 视图会被拉回顶部
@@ -1065,7 +1071,6 @@ class LogCanvas:
             if abs(target - self._scroll_offset) > 0.5:
                 self._scroll_offset = target
                 dirty_min = dirty_min if dirty_min is not None else len(self._lines)
-
         if dirty_min is not None:
             self._rebuild_prefix_from(dirty_min)
             self._refresh_depth += 1
@@ -1073,7 +1078,6 @@ class LogCanvas:
                 self._refresh_visible()  # 二次收敛：基于校正后 prefix/offset 重新摆位
             finally:
                 self._refresh_depth -= 1
-
         # 【修复】选择高亮挂渲染管线尾部：每次渲染后同步重建（原 bug：选择矩形不随滚动/布局移动）
         self._update_selection()
         self._update_scrollbar()
@@ -1097,7 +1101,7 @@ class LogCanvas:
             self.xscrollbar.grid_remove()
         else:
             self.xscrollbar.grid(row=1, column=0, sticky='ew')
-        self.xscrollbar.set(first, last)
+            self.xscrollbar.set(first, last)
 
     # ========== 文本选择（字符级） ==========
 
@@ -1267,12 +1271,13 @@ class LogCanvas:
                     self.master.after_cancel(job)
                 except Exception:
                     pass
-                setattr(self, attr, None)
+            setattr(self, attr, None)
 
 
 # ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 # 点击音效
 # ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
 class ClickPlayer:
     def __init__(self, samplerate=18000, blocksize=128, max_voices=32):
         import numpy as np
@@ -1280,6 +1285,7 @@ class ClickPlayer:
         self._np = np
         self.samplerate = samplerate
         self.max_voices = max_voices
+
         n = int(samplerate * 0.012)
         t = np.arange(n, dtype=np.float32) / samplerate
         rng = np.random.default_rng(0)
@@ -1290,10 +1296,12 @@ class ClickPlayer:
             click /= peak
         click *= 0.45
         self.click = click
+
         self.trigger_queue = queue.SimpleQueue()
         self.pos = np.zeros(max_voices, dtype=np.int32)
         self.active = np.zeros(max_voices, dtype=np.bool)
         self.next_voice = 0
+
         self.stream = sd.OutputStream(
             samplerate=samplerate, channels=2, dtype='float32',
             blocksize=blocksize, latency='low', callback=self._audio_callback)
@@ -1313,6 +1321,7 @@ class ClickPlayer:
             self.next_voice = (self.next_voice + 1) % self.max_voices
             self.pos[v] = 0
             self.active[v] = True
+
         mix = np.zeros(frames, dtype=np.float32)
         click = self.click
         click_len = len(click)
@@ -1345,6 +1354,7 @@ class ClickPlayer:
 # ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 # Flask 服务器线程
 # ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
 class _ServerThread(threading.Thread):
     def __init__(self):
         super().__init__(daemon=True)
@@ -1369,12 +1379,14 @@ class _ServerThread(threading.Thread):
 # ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 # GUI 主类
 # ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
 class AgentGUI:
     def __init__(self):
         self.root = tk.Tk()
         self.root.title("PokerAgent")
         self.root.configure(bg=BG)
         self.root.minsize(1000, 480)  # [修改] 新增记忆面板列，最小宽度提升（原 780）
+
         gui_cfg = self._load_gui_config()
         if gui_cfg and 'window_geometry' in gui_cfg:
             try:
@@ -1383,6 +1395,7 @@ class AgentGUI:
                 self.root.geometry('1020x660')
         else:
             self.root.geometry('1020x660')
+
         self._cli_mode = False
         self._server = None
         self._left_width = gui_cfg.get('left_panel_width', 220) if gui_cfg else 220
@@ -1391,18 +1404,24 @@ class AgentGUI:
         self._window_lines = gui_cfg.get('log_window_lines') if gui_cfg else None
         self._mem_width = gui_cfg.get('memory_panel_width', 210) if gui_cfg else 210  # [新增] 记忆面板宽度
         self._fade_jobs = {}
+        self._perm_font = None  # [新增] 权限弹窗字体度量缓存（避免每次弹窗注册新 Tk 字体）
+
         try:
             self._click_player = ClickPlayer()
         except Exception:
             self._click_player = None
+
         self._build_ui()
+
         # [重构] 日志消费：删除后台线程 + 跨线程 event_generate（Tk 线程安全的灰色地带），
         # 改主线程 15ms after 拉取（Tk 无跨线程唤醒原语，此为唯一稳妥方案，无感级延迟）
         self._log_queue = queue.Queue()
         agent_server.set_gui_log_queue(self._log_queue)
         self.root.after(LOG_POLL_MS, self._drain_log_queue)
+
         agent_server.permission_mgr.set_callback(self._make_permission_callback())
         agent_server._push_config()
+
         self._apply_dark_titlebar()
         self._start_server()
         self.root.protocol("WM_DELETE_WINDOW", self._on_close)
@@ -1483,44 +1502,42 @@ class AgentGUI:
                 dialog = tk.Toplevel(gui_ref.root)
                 dialog.title("⚠ 高危系统命令拦截" if cmd == '高危命令拦截' else "⚠ 路径权限请求")
                 dialog.configure(bg=BG)
-                dialog.resizable(False, False)
+                # [修改] 仅锁宽度，纵向放开：超长内容弹窗可手动拉高配合滚动条查看
+                dialog.resizable(False, True)
                 try:
                     dialog.attributes('-topmost', True)
                 except tk.TclError:
                     pass
+                # [新增] 尺寸测量期间全透明（布局中间态不可见；不支持 alpha 时退化为可见）
+                try:
+                    dialog.attributes('-alpha', 0.0)
+                    hidden = True
+                except tk.TclError:
+                    hidden = False
                 dialog.lift()
-                dialog.focus_force()
-                gui_ref.root.update_idletasks()
-                dw, dh = 440, 260
-                rx = gui_ref.root.winfo_x() + (gui_ref.root.winfo_width() - dw) // 2
-                ry = gui_ref.root.winfo_y() + (gui_ref.root.winfo_height() - dh) // 2
-                dialog.geometry(f'{dw}x{dh}+{rx}+{ry}')
-                tk.Label(dialog, text="⚠", bg=BG, fg=YELLOW,
-                         font=('Microsoft YaHei UI', 28)).pack(pady=(14, 2))
-                info = tk.Frame(dialog, bg=HEADER)
-                info.pack(fill=tk.X, padx=16, pady=8)
-                if cmd == '高危命令拦截':
-                    tk.Label(dialog, text="即将执行高危系统命令", bg=BG, fg=TXT, font=FONT_UI_B).pack()
-                    tk.Label(info, text="拦截命令:", bg=HEADER, fg=TXT2, font=FONT_MONO, anchor='w').pack(
-                        fill=tk.X, padx=10, pady=(6, 0))
-                    tk.Label(info, text=f"{filepath}", bg=HEADER, fg=RED, font=FONT_MONO,
-                             anchor='w', wraplength=400).pack(fill=tk.X, padx=10, pady=(0, 6))
-                else:
-                    tk.Label(dialog, text="路径超出工作目录", bg=BG, fg=TXT, font=FONT_UI_B).pack()
-                    tk.Label(info, text=f"指令: {cmd}", bg=HEADER, fg=RED, font=FONT_MONO,
-                             anchor='w').pack(fill=tk.X, padx=10, pady=(2, 2))
-                    tk.Label(info, text=f"目标: {filepath}", bg=HEADER, fg=TXT, font=FONT_MONO,
-                             anchor='w', wraplength=400).pack(fill=tk.X, padx=10)
-                    tk.Label(info, text=f"工作目录: {agent_server.WORK_DIR}", bg=HEADER, fg=TXT2,
-                             font=('Consolas', 9), anchor='w').pack(fill=tk.X, padx=10, pady=(2, 6))
+                # [修改·根源] 删除硬编码 440x260：宽度显式锁定 → Text 换行宽度确定；
+                # 高度按内容实测（下方 displaylines 计数），此处仅为测量期占位
+                W = PERM_DIALOG_WIDTH
+                rx0 = max(0, gui_ref.root.winfo_x() + (gui_ref.root.winfo_width() - W) // 2)
+                ry0 = max(0, gui_ref.root.winfo_y() + (gui_ref.root.winfo_height() - 260) // 2)
+                dialog.geometry(f'{W}x260+{rx0}+{ry0}')
+                # ── 标题区（[修改] 标题上移：视觉顺序 图标 → 标题 → 信息 → 按钮）──
+                tk.Label(dialog, text="⚠", bg=BG, fg=YELLOW, font=('Microsoft YaHei UI', 28)).pack(pady=(14, 2))
+                tk.Label(dialog, text="即将执行高危系统命令" if cmd == '高危命令拦截' else "路径超出工作目录",
+                         bg=BG, fg=TXT, font=FONT_UI_B).pack(pady=(0, 4))
+                # ── 按钮区（[修改] 先 pack 到底：窗口纵向拉伸时按钮钉底、信息区扩展）──
                 bf = tk.Frame(dialog, bg=BG)
-                bf.pack(fill=tk.X, padx=16, pady=(0, 14))
+                bf.pack(side=tk.BOTTOM, fill=tk.X, padx=16, pady=(0, 14))
 
                 def close(val):
                     result[0] = val
                     event.set()
                     dialog.destroy()
 
+                # [微调·相对主片段] 按钮与 close() 提前到高度测量前创建：主片段把按钮
+                # 放在最终 geometry 定型之后，winfo_reqheight 测量时 bf 仍为空框架，
+                # H 会比实际需求矮约一个按钮高（~30px），信息区底部约两行会被裁。
+                # 样式/命令/pack 参数与主片段逐字一致，仅创建时机提前
                 tk.Button(bf, text="✕ 拒绝", command=lambda: close(False), bg='#3d1f1f', fg=RED,
                           activebackground='#4d2525', activeforeground=RED, font=FONT_UI, bd=0,
                           padx=10, pady=6, cursor='hand2').pack(side=tk.LEFT, expand=True, fill=tk.X, padx=(0, 4))
@@ -1531,6 +1548,82 @@ class AgentGUI:
                     tk.Button(bf, text="✓ 始终允许", command=lambda: close('always'), bg='#2a2a1a', fg=BLUE,
                               activebackground='#3a3a2a', activeforeground=BLUE, font=FONT_UI, bd=0,
                               padx=10, pady=6, cursor='hand2').pack(side=tk.LEFT, expand=True, fill=tk.X, padx=(4, 0))
+                # ── 信息区（[重构] Label → 只读 Text：高度随内容自适应且有界封顶）──
+                info = tk.Frame(dialog, bg=HEADER)
+                info.pack(fill=tk.BOTH, expand=True, padx=16, pady=8)
+                info_text = tk.Text(info, bg=HEADER, fg=TXT, font=FONT_MONO, bd=0,
+                                    relief='flat', wrap='word', padx=10, pady=6,
+                                    highlightthickness=0, takefocus=0)
+                info_text.tag_configure('key', foreground=TXT2)    # 字段名
+                info_text.tag_configure('danger', foreground=RED)  # 危险内容
+                info_text.tag_configure('dim', foreground=TXT2, font=('Consolas', 9))  # 次要信息
+                if cmd == '高危命令拦截':
+                    rows = [('拦截命令: ', filepath, 'danger')]
+                else:
+                    rows = [('指令: ', cmd, 'danger'),
+                            ('目标: ', filepath, ''),
+                            ('工作目录: ', agent_server.WORK_DIR, 'dim')]
+                for i, (key, value, vtag) in enumerate(rows):
+                    info_text.insert('end', key, 'key')
+                    if value:
+                        if vtag:
+                            info_text.insert('end', value, vtag)
+                        else:
+                            info_text.insert('end', value)
+                    if i < len(rows) - 1:
+                        info_text.insert('end', '\n')
+                info_text.configure(state='disabled')  # 只读（仍可鼠标选中复制）
+                info_text.pack(fill=tk.BOTH, expand=True)
+                # [新增] Text 请求宽度按目标像素折算（显式 geometry 被忽略时的兜底）
+                if gui_ref._perm_font is None:
+                    gui_ref._perm_font = tkfont.Font(family=FONT_MONO[0], size=FONT_MONO[1])
+                cw = gui_ref._perm_font.measure('0')  # Consolas 等宽，任意字符 advance 相同
+                # 32 = info 外边距(16×2)，20 = Text 内边距(10×2)
+                info_text.configure(width=max(20, (W - 32 - 20) // cw))
+                # [新增] 完整跑一轮事件循环（非 idle：需要 WM 的 Configure 事件送达，
+                # Text 实际宽度定型后 displaylines 换行计数才是精确值）
+                dialog.update()
+                try:
+                    lines = int(info_text.count('1.0', 'end - 1c', 'displaylines'))
+                except (TypeError, ValueError, tk.TclError):
+                    # 计数异常的兜底：按超长处理（宁可出滚动条也不能裁内容）
+                    lines = PERM_DIALOG_MAX_LINES + 1
+                lines = max(1, lines)
+                if lines > PERM_DIALOG_MAX_LINES:
+                    # 超长内容：显示区封顶 + 纵向滚动条（内容完整可审、窗口高度有界）
+                    info_text.configure(height=PERM_DIALOG_MAX_LINES)
+                    sb = tk.Scrollbar(info, orient='vertical', command=info_text.yview,
+                                      bg=BTN, troughcolor=HEADER, bd=0, activebackground=BTN_H)
+                    info_text.configure(yscrollcommand=sb.set)
+                    # 滚动条须先于 Text pack（否则被 expand 的 Text 挤占为零宽）
+                    info_text.pack_forget()
+                    sb.pack(side=tk.RIGHT, fill=tk.Y)
+                    info_text.pack(side=tk.LEFT, fill=tk.BOTH, expand=True)
+                else:
+                    info_text.configure(height=lines)
+                dialog.update_idletasks()
+                H = dialog.winfo_reqheight()
+                # [新增] 屏幕边界防御：极端小屏时压缩显示区高度（内容仍可滚动），不超屏
+                sw = dialog.winfo_screenwidth()
+                sh = dialog.winfo_screenheight()
+                max_h = sh - 80  # 预留任务栏
+                if H > max_h and lines > PERM_DIALOG_MAX_LINES:
+                    line_h = gui_ref._perm_font.metrics('linespace')
+                    over_lines = (H - max_h + line_h - 1) // line_h  # 需砍掉的行数（向上取整）
+                    info_text.configure(height=max(3, PERM_DIALOG_MAX_LINES - over_lines))
+                    dialog.update_idletasks()
+                    H = dialog.winfo_reqheight()
+                H = min(H, max_h)
+                # [新增] 居中于主窗 + 屏幕夹取（主窗贴边时弹窗不出屏）
+                rx = gui_ref.root.winfo_x() + (gui_ref.root.winfo_width() - W) // 2
+                ry = gui_ref.root.winfo_y() + (gui_ref.root.winfo_height() - H) // 2
+                rx = max(0, min(rx, sw - W))
+                ry = max(0, min(ry, sh - H - 40))
+                dialog.minsize(W, H)  # 纵向只能拉大，不允许缩到内容以下
+                dialog.geometry(f'{W}x{H}+{rx}+{ry}')
+                dialog.focus_force()  # [修改] 移到显示前（原位置在窗口映射前，实际不生效）
+                if hidden:
+                    dialog.attributes('-alpha', 1.0)  # 尺寸定型，显示
                 dialog.protocol("WM_DELETE_WINDOW", lambda: close(False))
 
             gui_ref.root.after(1, ask)
@@ -1540,7 +1633,6 @@ class AgentGUI:
                 gui_ref.root.after_idle(
                     lambda: gui_ref.lbl_allow_count.configure(text=f"始终允许: {count} 条"))
             return result[0]
-
         return callback
 
     def _load_gui_config(self):
@@ -1621,8 +1713,7 @@ class AgentGUI:
         self.status_dot.pack(side=tk.LEFT, padx=(10, 4))
         self.status_text = tk.Label(bar, text="服务运行中", bg=HEADER, fg=TXT2, font=FONT_MONO, anchor='w')
         self.status_text.pack(side=tk.LEFT)
-        self.port_text = tk.Label(bar, text="http://127.0.0.1:9966", bg=HEADER, fg=TXT2,
-                                  font=FONT_MONO, anchor='e')
+        self.port_text = tk.Label(bar, text="http://127.0.0.1:9966", bg=HEADER, fg=TXT2, font=FONT_MONO, anchor='e')
         self.port_text.pack(side=tk.RIGHT, padx=10)
 
     def _build_left(self):
@@ -1651,7 +1742,8 @@ class AgentGUI:
                                        command=self._wrap_cmd(self._toggle_permission))
         self.chk_perm.pack(anchor='w', padx=20)
         self._btn(f, "清除始终允许列表", self._clear_always_allow).pack(fill=tk.X, padx=12, pady=2)
-        self.lbl_allow_count = tk.Label(f, text="", bg=PANEL, fg=TXT2, font=('Consolas', 9), anchor='w')
+        self.lbl_allow_count = tk.Label(f, text="", bg=PANEL, fg=TXT2,
+                                        font=('Consolas', 9), anchor='w')
         self.lbl_allow_count.pack(anchor='w', padx=20, pady=(0, 4))
         self._sep(f)
         tk.Label(f, text="📋 文件读取", bg=PANEL, fg=TXT2, font=FONT_UI).pack(anchor='w', padx=16, pady=(2, 2))
@@ -1667,7 +1759,8 @@ class AgentGUI:
                                        activeforeground=TXT, font=FONT_UI,
                                        command=self._wrap_cmd(self._toggle_exec))
         self.chk_exec.pack(anchor='w', padx=20)
-        tk.Label(f, text="exec 终端类型", bg=PANEL, fg=TXT2, font=('Consolas', 9)).pack(anchor='w', padx=20, pady=(6, 0))
+        tk.Label(f, text="exec 终端类型", bg=PANEL, fg=TXT2,
+                 font=('Consolas', 9)).pack(anchor='w', padx=20, pady=(6, 0))
         self.var_shell = tk.StringVar(value=agent_server.shell_type)
         shell_frame = tk.Frame(f, bg=PANEL)
         shell_frame.pack(anchor='w', padx=20, pady=(0, 2))
@@ -1709,7 +1802,8 @@ class AgentGUI:
             self._mem_vars[attr] = (var, vtype)
             tk.Entry(f, textvariable=var, bg=HEADER, fg=TXT, font=('Consolas', 10), bd=0,
                      insertbackground=TXT, highlightthickness=0).pack(fill=tk.X, padx=16)
-            tk.Label(f, text=hint, bg=PANEL, fg=TXT2, font=('Microsoft YaHei UI', 8)).pack(anchor='w', padx=16, pady=(0, 2))
+            tk.Label(f, text=hint, bg=PANEL, fg=TXT2,
+                     font=('Microsoft YaHei UI', 8)).pack(anchor='w', padx=16, pady=(0, 2))
         self._btn(f, "应用参数", self._apply_memory_params).pack(fill=tk.X, padx=12, pady=(8, 2))
         self._btn(f, "恢复默认值", self._reset_memory_params).pack(fill=tk.X, padx=12, pady=2)
 
@@ -1820,9 +1914,9 @@ class AgentGUI:
         self._right_width = new_w
 
     def _make_momentary_btn(self, parent, text, command):
-        btn = tk.Button(parent, text=text, bg=BTN, fg=TXT, activebackground=RED,
-                        activeforeground=TXT, font=FONT_UI, bd=0, padx=12, pady=10,
-                        cursor='hand2', justify='center')
+        btn = tk.Button(parent, text=text, bg=BTN, fg=TXT,
+                        activebackground=RED, activeforeground=TXT, font=FONT_UI,
+                        bd=0, padx=12, pady=10, cursor='hand2', justify='center')
         btn.bind('<ButtonPress-1>', lambda e, b=btn, c=command: self._on_momentary_press(b, c))
         btn.bind('<ButtonRelease-1>', lambda e, b=btn: self._on_momentary_release(b))
         return btn
@@ -1836,8 +1930,9 @@ class AgentGUI:
         self._fade_bg(btn, RED, BTN)
 
     def _make_toggle_btn(self, parent, text, cmd_on, cmd_off):
-        btn = tk.Button(parent, text=text, bg=BTN, fg=TXT, activebackground=BTN_H,
-                        activeforeground=TXT, font=FONT_UI, bd=0, padx=12, pady=10, cursor='hand2')
+        btn = tk.Button(parent, text=text, bg=BTN, fg=TXT,
+                        activebackground=BTN_H, activeforeground=TXT, font=FONT_UI,
+                        bd=0, padx=12, pady=10, cursor='hand2')
         btn._locked = False
         btn.bind('<Button-1>', lambda e, b=btn, on=cmd_on, off=cmd_off: self._on_toggle_click(b, on, off))
         return btn
@@ -1850,7 +1945,7 @@ class AgentGUI:
             cmd_on()
         else:
             cmd_off()
-        self._fade_bg(btn, RED, BTN)
+            self._fade_bg(btn, RED, BTN)
 
     def _fade_bg(self, widget, from_color, to_color, duration_ms=300, steps=10):
         key = id(widget)
