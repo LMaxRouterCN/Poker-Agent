@@ -71,6 +71,51 @@ llm在用内置指令的时候agent系统完全可以处理,完全可控,但如�
 - ~~llm会瞎猜指令,没办法解决,如果llm在第一次对话时拿到了指令列表,之后过100次对话后即使事实上llm已经把指令列表忘干净了,他也依然不会再看一遍指令列表,而是会选择瞎猜~~
    >系统提示词里写明指令查询方法,一般llm最多猜一两次指令名不对就会查指令了,不用太担心,但是到死也不查用法这个问题依然存在,尤其像某些指令打错格式他也有回执只是有部分错误,这种情况llm就不会再查用法,而是一直错着用
 
+---
+
+## 来看看各家为了网页端为了防爬都干了哪些恶心事
+
+完全是为了应对程序化的爬取做的措施,基本不影响人类用户
+
+首先叠甲,这时候有人就要问了:你爬人家还不让人家反爬了?<br>
+不是不让,是他们完全可以用一种更温和,更合理的方式达到相同的限制效果,比如限制并发,限制每日用量,降速,限制上下文,这些都可以降低成本,但他们不这么干,他们不仅给你降速,给你限制上下文,还降智,偷偷换模型,更有甚者偷偷在你的代码里搞破坏,故意破坏你,和你对抗
+
+我没有倒卖,没有并发,没有搞账号池,没有代理多ip,没有伪装浏览器指纹,你就这样搞我?
+
+<details>
+
+<summary>GLM chatglm.cn</summary>
+
+![alt text](image/screenshot-智谱清言.png)
+
+在第一条消息中,
+```
+`$f = Get-ChildItem 'D:\Documents\mcmod\TansHugeTrees' -Filter 'GOAL-PLAN-2026*' | Select-Object -First 1; if ($f) { $t = Get-Content 'C:\Users\LLL95\AppData\Local\Temp\tht-append-v40.txt' -Raw -Encoding UTF8; Add-Content -Path $f.FullName -Value $t -Encoding UTF8; Remove-Item 'C:\Users\LLL95\AppData\Local\Temp\tht-append-v40.txt' -ErrorAction SilentlyContinue; 'APPENDED ' + $t.Length + ' chars to ' + $f.Name } else { 'GOAL-PLAN NOT FOUND' }`
+```
+这条指令的`d-Content -Path $f.FullName -Va`中的`-Path $f.FullName`变成了`-Path$f.FullName`,`-Path $f`中间的空格没了,前端抓了这条指令发给后端执行,直接报错,而且这不是什么格式渲染错误,你把这段文本复制到任何一个markdown渲染器中都是正常的
+
+而第二条消息,删掉指令的前后部分,变成`d-Content -Path $f.FullName -Va`,这时候`-Path $f`中间的空格又回来了
+
+这就证明了chatglm的网页端起码有一套逻辑是识别到这是一条长长的pwsh指令,就偷偷不显示`-Path $f`中间的空格
+
+为什么这是专门干爬虫的措施?
+
+因为如果你点击那个代码块右上角的复制按钮,复制下来的文本是正常的
+
+人类绝对不会看着指令一个一个手打,或者在明显看到有个复制按钮的时候不点击复制按钮,而是依然选择用鼠标选中复制
+
+只有机器会忠实的抓取网页上的文本,不管他对不对都抓下来
+
+但是没事,即使glm在dom上动手脚,我的前端还会通过模拟点击复制按钮来获取代码块中的文本,glm不可能改了这个,因为人类也会这么干
+
+</details>
+
+
+---
+
+**以下是PokerAgent的一些设计细节**
+
+---
 
 # 记忆系统 (Memory System)
 
