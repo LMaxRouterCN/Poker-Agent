@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         PokerAgent
 // @namespace    http://tampermonkey.net/
-// @version      32
+// @version      33
 // @author       LMaxRouterCN
 // @description  PokerAgent的浏览器端核心脚本，提供元素选择、配置管理、调试日志等功能，支持多站点独立配置和自动发送功能。
 // @match        *://*/*
@@ -2092,39 +2092,61 @@
     }
     function _initSSE() {
         if (_sseEventSource) {
-            try { _sseEventSource.abort(); } catch (e) { }
+            try {
+                _sseEventSource.abort();
+            } catch (e) { }
             _sseEventSource = null;
         }
         const c = cfgLoad();
         const streamUrl = c.apiUrl.replace('/agent-exec', '/agent-stream');
-        let _sseBuffer = '';
+        // [修复] SSE 事件可能跨多次 onprogress 增量到达：
+        // - _seenLen: 已读取字符偏移指针（计算增量用）
+        // - _pending: 跨 chunk 缓冲的不完整事件尾部（下次 onprogress 拼接）
+        let _seenLen = 0;
+        let _pending = '';
+        // [新增] 解析缓冲区内所有以 \n\n 分隔的完整事件，最后一段残留存入 _pending
+        const _flushComplete = (buffer) => {
+            const events = buffer.split('\n\n');
+            // 最后一段可能是不完整事件，留给下次 onprogress 或 onload 处理
+            _pending = events.pop() || '';
+            for (const evt of events) {
+                if (!evt.trim() || evt.startsWith(':')) continue;
+                const dataLine = evt.split('\n').find(l => l.startsWith('data:'));
+                if (!dataLine) continue;
+                const jsonStr = dataLine.slice(5).trim();
+                if (!jsonStr) continue;
+                try {
+                    const data = JSON.parse(jsonStr);
+                    _handleSSEData(data);
+                } catch (err) {
+                    log('ERR', `SSE 解析失败: ${err}, 原始: ${jsonStr.substring(0, 100)}`);
+                }
+            }
+        };
         _sseEventSource = GM_xmlhttpRequest({
-            method: 'GET', url: streamUrl,
-            headers: { 'Accept': 'text/event-stream' },
+            method: 'GET',
+            url: streamUrl,
+            headers: {
+                'Accept': 'text/event-stream'
+            },
             timeout: 0,
             onprogress: (resp) => {
-                const newData = resp.responseText.slice(_sseBuffer.length);
-                _sseBuffer = resp.responseText;
-                const events = newData.split('\n\n');
-                for (const evt of events) {
-                    if (!evt.trim() || evt.startsWith(':')) continue;
-                    const dataLine = evt.split('\n').find(l => l.startsWith('data:'));
-                    if (!dataLine) continue;
-                    const jsonStr = dataLine.slice(5).trim();
-                    if (!jsonStr) continue;
-                    try {
-                        const data = JSON.parse(jsonStr);
-                        _handleSSEData(data);
-                    } catch (err) {
-                        log('ERR', `SSE 解析失败: ${err}, 原始: ${jsonStr.substring(0, 100)}`);
-                    }
-                }
+                // 拼接上次残留尾巴 + 本次增量，确保跨边界事件完整解析
+                const newData = _pending + resp.responseText.slice(_seenLen);
+                _seenLen = resp.responseText.length;
+                _flushComplete(newData);
             },
             onload: () => {
+                // 连接关闭前补最后一刀：把残留尾巴（若完整）也解析掉
+                if (_pending.trim()) {
+                    _flushComplete(_pending + '\n\n');
+                }
+                _pending = '';
                 log('INFO', 'SSE 连接正常关闭');
                 _sseEventSource = null;
             },
             onerror: (err) => {
+                _pending = '';
                 log('ERR', `SSE 连接异常断开: ${err.error || ''}`);
                 _sseEventSource = null;
                 _isProcessing = false;
@@ -2133,7 +2155,7 @@
                 log('WARN', 'SSE 连接超时（不应发生）');
             }
         });
-    }
+    }    
     function _handleSSEData(data) {
         if (data.id === 'all') return;
         const task = _taskList.find(t => t.id === data.id);
