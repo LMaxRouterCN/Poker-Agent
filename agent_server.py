@@ -1,6 +1,5 @@
-"""PokerAgent - 本地接应服务 (SSE流式版) v40
-启动方式：
-    python agent_server.py
+"""PokerAgent - 本地接应服务 (SSE流式版) v41
+启动方式： python agent_server.py
 默认监听：http://127.0.0.1:9966
 """
 from flask import Flask, request, jsonify, Response
@@ -13,10 +12,10 @@ import re
 import inspect
 import threading
 import base64
-import difflib  # 用于 -s 模式的模糊匹配策略
-import shutil  # 用于移动文件/目录到回收站
-import time  # 用于回收站时间戳记录
-import locale  # 获取系统默认编码
+import difflib   # 用于 -s 模式的模糊匹配策略
+import shutil    # 用于移动文件/目录到回收站
+import time      # 用于回收站时间戳记录
+import locale    # 获取系统默认编码
 import platform  # 用于判断操作系统
 import uuid
 import queue
@@ -57,9 +56,9 @@ def _detect_powershell():
     return None
 _POWERSHELL_EXE = _detect_powershell()
 # ========== 记忆系统配置 ==========
-MEMORY_TEMP_INITIAL = 100        # 新记忆初始温度（决定新旧记忆的淘汰压力）。
-MEMORY_TEMP_DECAY_RATIO = 0.95   # 每轮衰减比例（保留95%，即衰减5%）。
-MEMORY_TEMP_HEAT_RATIO = 0.5     # 被读取时向初始温度回归的比例（极冷数据飙升）。
+MEMORY_TEMP_INITIAL = 100       # 新记忆初始温度（决定新旧记忆的淘汰压力）。
+MEMORY_TEMP_DECAY_RATIO = 0.95  # 每轮衰减比例（保留95%，即衰减5%）。
+MEMORY_TEMP_HEAT_RATIO = 0.5    # 被读取时向初始温度回归的比例（极冷数据飙升）。
 MEMORY_EXPOSE_WINDOW = 20        # Tag 云暴露的记忆条数（温度Top-N）。
 MEMORY_READ_WINDOW = 2           # memory search 上下额外返回的记忆条数。
 # ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
@@ -129,8 +128,8 @@ def _kill_process_tree(proc):
     if platform.system() == 'Windows':
         try:
             # /F 强制 /T 杀整棵树（含 daemon 子进程）
-            subprocess.run(f'taskkill /F /T /PID {proc.pid}', shell=True,
-                           stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+            subprocess.run(f'taskkill /F /T /PID {proc.pid}',
+                           shell=True, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
         except Exception:
             pass
 # [新增] 任务控制接口（供 GUI 调用）
@@ -186,7 +185,8 @@ def worker_loop():
             emit_task_event({'id': task_id, 'type': 'status', 'status': 'running'})
             try:
                 result = execute_line_streaming(cmd_str, task_id)
-            except TaskAborted:  # [新增] 任务被用户手动中断
+            except TaskAborted:
+                # [新增] 任务被用户手动中断
                 result = None
                 print(f'[Worker] ⛔ 任务 {task_id[:8]} 被用户手动中断')
             except Exception as e:
@@ -436,8 +436,7 @@ def _get_original_path(trash_path):
         return os.path.join(drive, *parts[2:])
     else:
         return os.path.normpath(os.path.join(WORK_DIR, rel_path))
-def _match_text_block(file_lines, old_lines, ignore_case=False, ignore_indent=False,
-                      normalize_ws=False, fuzzy_threshold=None):
+def _match_text_block(file_lines, old_lines, ignore_case=False, ignore_indent=False, normalize_ws=False, fuzzy_threshold=None):
     """
     通用文本块匹配方法，支持组合匹配条件。
     返回匹配的起始索引列表(0-based)。
@@ -491,11 +490,11 @@ def _check_permission(cmd, *paths):
     return None
 def _default_permission_callback(cmd, filepath):
     print(f'\n⚠ 路径超出工作目录!')
-    print(f'  指令: {cmd}')
-    print(f'  目标: {filepath}')
-    print(f'  工作目录: {WORK_DIR}')
+    print(f' 指令: {cmd}')
+    print(f' 目标: {filepath}')
+    print(f' 工作目录: {WORK_DIR}')
     while True:
-        ans = input('  是否允许? [y=允许/n=拒绝/a=本次会话始终允许]: ').strip().lower()
+        ans = input(' 是否允许? [y=允许/n=拒绝/a=本次会话始终允许]: ').strip().lower()
         if ans in ('y', 'yes'):
             return True
         elif ans in ('n', 'no'):
@@ -503,7 +502,7 @@ def _default_permission_callback(cmd, filepath):
         elif ans in ('a', 'always'):
             return 'always'
         else:
-            print('  请输入 y, n 或 a')
+            print(' 请输入 y, n 或 a')
 # 兼容 GUI CLI 模式的壳函数
 def execute_line(line):
     return execute_line_streaming(line, 'cli-manual')
@@ -517,7 +516,7 @@ def execute_line_streaming(line, task_id):
     parts = line.split(None, 1)
     cmd = parts[0].lower()
     arg = parts[1] if len(parts) > 1 else ''
-    arg = arg.replace('“', '"').replace('”', '"')
+    arg = arg.replace('"', '"').replace('"', '"')
     cs_idx = arg.find('【CodeSTART】')
     if cs_idx != -1:
         arg = arg[:cs_idx]
@@ -628,13 +627,13 @@ def execute_line_streaming(line, task_id):
         # 拼接返回：中文标签 + JSON 键值 + 底部实际命令及输出
         _lines = [
             '{',
-            f'  当前工作目录 "work_dir": "{WORK_DIR}",',
-            f'  剪贴板读取模式 "clipboard_mode": {str(clipboard_mode).lower()},',
-            f'  系统命令执行开关 "exec_enabled": {str(exec_enabled).lower()},',
-            f'  终端类型 "shell_type": "{shell_type}",',
-            f'  目录权限限制开关 "permission_enabled": {str(permission_mgr.enabled).lower()},',
-            f'  始终允许列表条目数 "always_allow_count": {len(permission_mgr._always_allow)},',
-            f'  操作系统 "platform": "{platform.system()}"',
+            f' 当前工作目录 "work_dir": "{WORK_DIR}",',
+            f' 剪贴板读取模式 "clipboard_mode": {str(clipboard_mode).lower()},',
+            f' 系统命令执行开关 "exec_enabled": {str(exec_enabled).lower()},',
+            f' 终端类型 "shell_type": "{shell_type}",',
+            f' 目录权限限制开关 "permission_enabled": {str(permission_mgr.enabled).lower()},',
+            f' 始终允许列表条目数 "always_allow_count": {len(permission_mgr._always_allow)},',
+            f' 操作系统 "platform": "{platform.system()}"',
             '',
             f'>{_ps_cmd}',
             _ps_ver,
@@ -652,8 +651,8 @@ def execute_line_streaming(line, task_id):
         block = ''
         if '\x00' in arg:
             arg, block = arg.split('\x00', 1)
-            arg = arg.strip()
-            block = block.strip('\n').replace('TICK3', '```')
+        arg = arg.strip()
+        block = block.strip('\n').replace('TICK3', '```')
         content = arg.replace('TICK3', '```').strip()
         if block:
             content = (content + '\n' + block) if content else block
@@ -717,31 +716,15 @@ def execute_line_streaming(line, task_id):
                 rest = raw_arg[len(first_token):].strip()
                 if not rest:
                     return '错误：memory <id> 覆盖写入需要指定内容。'
-                # 解析 -pin 标志
-                pin = False
-                if rest.strip().endswith(' -pin') or rest.strip() == '-pin':
-                    pin = True
-                    rest = rest.strip()
-                    if rest.endswith(' -pin'):
-                        rest = rest[:-5].strip()
-                    elif rest == '-pin':
-                        rest = ''
-                # 解析 tag: 标签
-                tags = []
-                tag_idx = rest.rfind('tag:')
-                if tag_idx != -1:
-                    content = rest[:tag_idx].strip()
-                    tag_str = rest[tag_idx + 4:].strip()
-                    tags = [t.strip() for t in tag_str.split(',') if t.strip()]
-                else:
-                    content = rest.strip()
+                # [修改] 末尾参数统一走解析器（与新增写入一致，新增 temp:N 支持）
+                content, tags, pin, custom_temp = _parse_memory_params(rest)
                 content = content.replace('TICK3', '```')
                 # [修复] 多行代码块内容并入（空内容判断移到并入之后）
                 if mem_block:
                     content = (content + '\n' + mem_block) if content else mem_block
                 if not content:
                     return '错误：memory <id> 覆盖写入内容为空。'
-                success = memory_engine.overwrite_by_id(mem_id, content, tags, pin)
+                success = memory_engine.overwrite_by_id(mem_id, content, tags, pin, custom_temp)
                 if success:
                     return f'已覆盖写入长期记忆，编号 {mem_id:03d}'
                 else:
@@ -749,30 +732,14 @@ def execute_line_streaming(line, task_id):
             # ID不存在 → fall through 到新增写入模式
         # ── 新增写入模式 ──
         raw = raw_arg.replace('TICK3', '```')
-        # 解析 -pin 标志
-        pin = False
-        if raw.strip().endswith(' -pin') or raw.strip() == '-pin':
-            pin = True
-            raw = raw.strip()
-            if raw.endswith(' -pin'):
-                raw = raw[:-5].strip()
-            elif raw == '-pin':
-                raw = ''
-        # 解析 tag: 标签
-        tags = []
-        tag_idx = raw.rfind('tag:')
-        if tag_idx != -1:
-            content = raw[:tag_idx].strip()
-            tag_str = raw[tag_idx + 4:].strip()
-            tags = [t.strip() for t in tag_str.split(',') if t.strip()]
-        else:
-            content = raw.strip()
+        # [修改] 末尾参数（-pin / temp:N / tag:）统一走解析器，任意顺序组合
+        content, tags, pin, custom_temp = _parse_memory_params(raw)
         # [修复] 多行代码块内容并入（空内容判断移到并入之后）
         if mem_block:
             content = (content + '\n' + mem_block) if content else mem_block
         if not content:
             return '错误：memory 指令内容为空。'
-        mem_id = memory_engine.write_long(content, tags, pin)
+        mem_id = memory_engine.write_long(content, tags, pin, custom_temp)
         return f'已存入长期记忆，编号 {mem_id:03d}'
     elif cmd == 'count':
         if not arg.strip():
@@ -933,7 +900,7 @@ def execute_line_streaming(line, task_id):
                     return f'在目录 {filepath} 中未找到匹配 "{filename_pattern}" 的文件。'
                 output = [f'在目录 {filepath} 中找到 {len(results)} 个匹配 "{filename_pattern}" 的文件：\n']
                 for fpath in results:
-                    output.append(f'  {fpath}')
+                    output.append(f' {fpath}')
                 log_action('FIND', f'{filepath} -> {len(results)} 个文件')
                 return '\n'.join(output)
             except Exception as e:
@@ -1030,10 +997,10 @@ def execute_line_streaming(line, task_id):
                             f_proc = re.sub(r'\s+', ' ', file_lines[best_pos + j].strip()).lower()
                             o_proc = re.sub(r'\s+', ' ', old_lines[j].strip()).lower()
                             if o_proc == f_proc:
-                                diag.append(f'  ✓ {repr(o_proc[:120])}{"（仅前120字符）" if len(o_proc) > 120 else ""}')
+                                diag.append(f'    ✓ {repr(o_proc[:120])}{"（仅前120字符）" if len(o_proc) > 120 else ""}')
                             else:
-                                diag.append(f'  ✗ 旧: {repr(o_proc[:120])}{"（仅前120字符）" if len(o_proc) > 120 else ""}')
-                                diag.append(f'  ✗ 文: {repr(f_proc[:120])}{"（仅前120字符）" if len(o_proc) > 120 else ""}')
+                                diag.append(f'    ✗ 旧: {repr(o_proc[:120])}{"（仅前120字符）" if len(o_proc) > 120 else ""}')
+                                diag.append(f'    ✗ 文: {repr(f_proc[:120])}{"（仅前120字符）" if len(o_proc) > 120 else ""}')
                     return '\n'.join(diag)
                 # 非全量替换时，仅保留第一个匹配
                 if not replace_all and len(matches) > 1:
@@ -1184,7 +1151,7 @@ def execute_line_streaming(line, task_id):
     elif cmd == 'grep':
         # [重构] 标准化 grep：正则匹配 + 标准选项集
         # 用法: grep [选项] "模式" <路径>
-        #       grep [选项] -e "模式1" -e "模式2" <路径>
+        # grep [选项] -e "模式1" -e "模式2" <路径>
         # 选项: -i 忽略大小写 | -v 反向匹配 | -c 仅计数 | -l 仅文件名
         #       -w 全词匹配 | -r 递归目录 | -s 忽略行首缩进
         #       -e 多模式(可多次) | --include 文件名正则过滤 | --exclude 文件名正则排除
@@ -1220,13 +1187,13 @@ def execute_line_streaming(line, task_id):
                 non_opts.append(t)
                 ti += 1
         # ── 标志提取 ──
-        ignore_case = 'i' in flag_set  # 忽略大小写
-        invert_match = 'v' in flag_set  # 反向匹配（输出不匹配的行）
-        count_only = 'c' in flag_set  # 仅输出匹配行数
-        files_only = 'l' in flag_set  # 仅输出含匹配的文件名
-        whole_word = 'w' in flag_set  # 全词匹配（自动包 \b）
-        recursive = 'r' in flag_set  # 递归搜索目录
-        strip_indent = 's' in flag_set  # 匹配前去除行首空白（保留原有功能）
+        ignore_case = 'i' in flag_set    # 忽略大小写
+        invert_match = 'v' in flag_set    # 反向匹配（输出不匹配的行）
+        count_only = 'c' in flag_set      # 仅输出匹配行数
+        files_only = 'l' in flag_set      # 仅输出含匹配的文件名
+        whole_word = 'w' in flag_set      # 全词匹配（自动包 \b）
+        recursive = 'r' in flag_set       # 递归搜索目录
+        strip_indent = 's' in flag_set    # 匹配前去除行首空白（保留原有功能）
         # ── 确定模式与路径 ──
         if patterns:
             # 有 -e：所有 non_opts 视为路径（本工具取第一个）
@@ -1665,15 +1632,15 @@ def execute_line_streaming(line, task_id):
             for name in sorted(entries):
                 full = os.path.join(dirpath, name)
                 if os.path.isdir(full):
-                    lines.append(f'  [DIR] {name}')
+                    lines.append(f' [DIR] {name}')
                 else:
                     size = os.path.getsize(full)
                     if size < 1024:
-                        lines.append(f'  [FILE] {name} ({size} B)')
+                        lines.append(f' [FILE] {name} ({size} B)')
                     elif size < 1024 * 1024:
-                        lines.append(f'  [FILE] {name} ({size / 1024:.1f} KB)')
+                        lines.append(f' [FILE] {name} ({size / 1024:.1f} KB)')
                     else:
-                        lines.append(f'  [FILE] {name} ({size / 1024 / 1024:.1f} MB)')
+                        lines.append(f' [FILE] {name} ({size / 1024 / 1024:.1f} MB)')
             log_action('LIST', dirpath)
             return '\n'.join(lines)
         except FileNotFoundError:
@@ -1721,18 +1688,13 @@ def execute_line_streaming(line, task_id):
                 # PowerShell：列表传参，不走 shell=True，避免二次解析
                 process = subprocess.Popen(
                     [_POWERSHELL_EXE, '-NoProfile', '-NonInteractive', '-Command', arg.strip()],
-                    stdout=subprocess.PIPE,
-                    stderr=subprocess.STDOUT,
-                    cwd=W
+                    stdout=subprocess.PIPE, stderr=subprocess.STDOUT, cwd=W
                 )
             else:
                 # cmd 回退
                 process = subprocess.Popen(
-                    f'cmd /c {arg.strip()}',
-                    shell=True,
-                    stdout=subprocess.PIPE,
-                    stderr=subprocess.STDOUT,
-                    cwd=W
+                    f'cmd /c {arg.strip()}', shell=True,
+                    stdout=subprocess.PIPE, stderr=subprocess.STDOUT, cwd=W
                 )
             # [新增] 注册当前子进程，供 GUI 侧终止
             with _current_process_lock:
@@ -1769,10 +1731,10 @@ def execute_line_streaming(line, task_id):
                         timed_out = True
                         break
                     # [修复] 队列空但主进程已退出 → 切 drain 模式，等读取线程把缓冲区剩余数据吐完
-                    #        （原检查点在公共路径上，会吞掉刚 get 到的行）
+                    # （原检查点在公共路径上，会吞掉刚 get 到的行）
                     if process.poll() is not None:
                         draining = True
-                    continue  # [修复] 关键：回到循环头重新 get，避免 item 未绑定即落出 except 块
+                        continue  # [修复] 关键：回到循环头重新 get，避免 item 未绑定即落出 except 块
                 if item is None:
                     break  # EOF 哨兵：管道彻底关闭（正常情况，daemon 没持有管道）
                 line_out = smart_decode(item).rstrip()
@@ -1812,9 +1774,7 @@ def execute_line_streaming(line, task_id):
         try:
             process = subprocess.Popen(
                 ['python', script],
-                stdout=subprocess.PIPE,
-                stderr=subprocess.STDOUT,
-                cwd=W
+                stdout=subprocess.PIPE, stderr=subprocess.STDOUT, cwd=W
             )
             # [新增] 注册当前子进程，供 GUI 侧终止
             with _current_process_lock:
@@ -1851,7 +1811,7 @@ def execute_line_streaming(line, task_id):
                     # [修复] 队列空但主进程已退出 → 切 drain 模式（原位置会吞刚取到的行）
                     if process.poll() is not None:
                         draining = True
-                    continue  # [修复] 关键：回到循环头重新 get，避免 item 未绑定
+                        continue  # [修复] 关键：回到循环头重新 get，避免 item 未绑定
                 if item is None:
                     break
                 line_out = smart_decode(item).rstrip()
@@ -1862,7 +1822,7 @@ def execute_line_streaming(line, task_id):
                 _kill_process_tree(process)
                 with _current_process_lock:
                     _current_process = None
-                return '命令执行超时（限制:60秒）,命令可能仍在运行中,只是60秒内没有执行完成,具体情况请求助管理员。'
+                return '命令执行超时（限制:60秒）,命令可能仍在运行中,只是60秒内没有执行完成,具体情况请请求助管理员。'
             process.wait()
             with _current_process_lock:
                 _current_process = None
@@ -1922,6 +1882,48 @@ def execute_line_streaming(line, task_id):
         return f'未知指令：{cmd}\n输入 @@help fast 查看可用指令列表。'
 _EXEC_SRC = inspect.getsource(execute_line_streaming)
 KNOWN_CMDS = set(re.findall(r"cmd\s*==\s*'([^']+)'", _EXEC_SRC))
+# [新增] memory 指令末尾修饰参数统一解析器（新增写入 / 覆盖写入共用）
+def _parse_memory_params(raw):
+    """
+    解析 memory 指令末尾修饰参数，支持任意顺序组合：
+      -pin      → 固定记忆
+      temp:N    → 自定义初始温度（N 纯数字，如 temp: 200）
+      tag:a,b,c → 标签
+    从字符串末尾循环剥离，直到末尾无任何匹配参数。
+    行为增强：tag: 可出现多次，多段标签按书写顺序合并（原实现仅取最后一个 tag:）。
+    返回 (content, tags, pin, custom_temp)；custom_temp 未指定为 None。
+    """
+    tags = []
+    pin = False
+    custom_temp = None
+    s = raw.strip()
+    while True:
+        # 1. -pin：必须是独立 token（带前导空格或独占全文），避免误剥 "xxx-pin" 类内容
+        if s == '-pin':
+            pin = True
+            s = ''
+            continue
+        if s.endswith(' -pin'):
+            pin = True
+            s = s[:-5].rstrip()
+            continue
+        # 2. temp:N：末尾匹配，N 纯数字；\b 词边界防止 "atemp:100" 被误剥
+        m = re.search(r'\btemp:\s*(\d+)\s*$', s)
+        if m:
+            custom_temp = int(m.group(1))
+            s = s[:m.start()].rstrip()
+            continue
+        # 3. tag:xxx：rfind 语义（最后一个 tag: 到结尾均为标签串）
+        tag_idx = s.rfind('tag:')
+        if tag_idx != -1:
+            tag_str = s[tag_idx + 4:].strip()
+            new_tags = [t.strip() for t in tag_str.split(',') if t.strip()]
+            # 前插合并：循环从末尾向前剥，前插保持标签书写顺序
+            tags = new_tags + tags
+            s = s[:tag_idx].rstrip()
+            continue
+        break
+    return s, tags, pin, custom_temp
 # ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 # 记忆引擎
 # ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
@@ -1986,14 +1988,16 @@ class MemoryEngine:
                 pass
         return ''
     # ── 长期记忆写入 ──
-    def write_long(self, content, tags, pin=False):
-        """追加写入长期记忆，分配纯数字ID，返回ID"""
+    def write_long(self, content, tags, pin=False, custom_temp=None):
+        """追加写入长期记忆，分配纯数字ID，返回ID
+        [修改] custom_temp: temp:N 指定的初始温度（None=用全局默认）"""
         self._ensure_dir()
         meta = self._load_meta()
         mem_id = meta['next_id']
         meta['next_id'] += 1
-        # 温度：Pin 记忆为 ∞，普通记忆为初始温度
-        temp = '∞' if pin else MEMORY_TEMP_INITIAL
+        # 温度：Pin 记忆为 ∞，普通记忆为自定义或全局初始温度
+        initial_temp = custom_temp if custom_temp is not None else MEMORY_TEMP_INITIAL
+        temp = '∞' if pin else initial_temp
         # 写入 memory.md（追加，带 ID 注释块）
         entry = f"<!-- ID:{mem_id:03d} -->\n{content}\ntag: {', '.join(tags)}\n<!-- END:{mem_id:03d} -->\n"
         with open(self.memory_file, 'a', encoding='utf-8') as f:
@@ -2001,13 +2005,14 @@ class MemoryEngine:
         # 更新 meta
         meta['memory'][str(mem_id)] = {
             'temp': temp,
+            'initial_temp': initial_temp,  # [新增] 记录初始温度，unpin 时恢复用
             'tags': tags,
             'pin': pin,
             'created_at': time.time(),
             'last_accessed': time.time()
         }
         self._save_meta(meta)
-        log_action('MEMORY-WRITE', f'ID:{mem_id:03d} | tags:{tags} | pin:{pin}')
+        log_action('MEMORY-WRITE', f'ID:{mem_id:03d} | tags:{tags} | pin:{pin} | temp:{temp}')
         return mem_id
     def memory_exists(self, mem_id):
         """检查指定ID的记忆是否存在（用于区分覆盖写入和新增写入）"""
@@ -2015,7 +2020,9 @@ class MemoryEngine:
         return str(mem_id) in meta['memory']
     # ── 长期记忆搜索 ──
     def search(self, keyword, window=None):
-        """搜索长期记忆，返回命中全文 + 上下 N 条元数据，触发加热"""
+        """搜索长期记忆，返回命中全文 + 上下 N 条元数据，触发加热
+        [修改] 支持多命中：标签命中优先全量返回；标签零命中再搜内容，内容命中全量返回
+        [修改] 温度显示改为区间：floor(t)~floor(t)+1（Pin 为 ∞）"""
         if window is None:
             window = MEMORY_READ_WINDOW
         if not os.path.exists(self.memory_file):
@@ -2028,38 +2035,47 @@ class MemoryEngine:
         entries = self._parse_memory_file(content)
         if not entries:
             return '长期记忆为空。'
-        # 搜索匹配（优先标签，其次内容）
-        matched_idx = -1
         keyword_lower = keyword.lower()
-        for i, entry in enumerate(entries):
-            if any(keyword_lower in tag.lower() for tag in entry['tags']):
-                matched_idx = i
-                break
-            if keyword_lower in entry['content'].lower():
-                matched_idx = i
-                break
-        if matched_idx == -1:
+        # [修改] 多命中收集：先按标签匹配，收集全部命中
+        matched = [i for i, entry in enumerate(entries)
+                   if any(keyword_lower in tag.lower() for tag in entry['tags'])]
+        match_by = '标签'
+        if not matched:
+            # 标签零命中 → 回退按内容匹配，同样收集全部命中
+            matched = [i for i, entry in enumerate(entries)
+                       if keyword_lower in entry['content'].lower()]
+            match_by = '内容'
+        if not matched:
             return f'未找到匹配 "{keyword}" 的记忆。'
-        # 加热命中的记忆
-        self._heat_memory(entries[matched_idx]['id'])
-        # 构建返回：命中全文 + 上下 N 条元数据
-        lines = [f'按标签搜索得到ID: {entries[matched_idx]["id"]:03d}']
-        start = max(0, matched_idx - window)
-        end = min(len(entries), matched_idx + window + 1)
-        for i in range(start, end):
+        # 加热所有命中的记忆
+        for i in matched:
+            self._heat_memory(entries[i]['id'])
+        # [修改] 温度区间格式化：0.001/0.1/0.3 → 0~1；1.11111 → 1~2；Pin/∞ → ∞
+        def _temp_range(e):
+            if e['pin'] or e['temp'] == '∞':
+                return '∞'
+            t = int(e['temp'])  # 温度恒为正，截断即 floor
+            return f'{t}~{t + 1}'
+        # 展示行集合 = 所有命中项 ±window 的并集（重叠区自动去重）
+        show_rows = set()
+        for i in matched:
+            show_rows.update(range(max(0, i - window), min(len(entries), i + window + 1)))
+        matched_set = set(matched)
+        # 回执头部：命中方式 + 数量 + ID 列表
+        ids_str = ', '.join(f'{entries[i]["id"]:03d}' for i in matched)
+        lines = [f'按{match_by}搜索命中 {len(matched)} 条: {ids_str}', '']
+        for i in sorted(show_rows):
             e = entries[i]
-            temp_str = '∞' if e['pin'] else str(int(e['temp']))
             tags_str = ','.join(e['tags']) if e['tags'] else '无'
-            if i == matched_idx:
-                # 命中项：返回全文
-                lines.append('')
-                lines.append(f"ID: {e['id']:03d} | 温度: {temp_str} | 标签: {tags_str}")
+            if i in matched_set:
+                # 命中项：元数据行 + 全文
+                lines.append(f"ID: {e['id']:03d} | 温度: {_temp_range(e)} | 标签: {tags_str}")
                 lines.append(e['content'])
                 lines.append('')
             else:
-                # 上下文项：仅返回元数据
-                lines.append(f"ID: {e['id']:03d} | 温度: {temp_str} | 标签: {tags_str}")
-        return '\n'.join(lines)
+                # 上下文项：仅元数据
+                lines.append(f"ID: {e['id']:03d} | 温度: {_temp_range(e)} | 标签: {tags_str}")
+        return '\n'.join(lines).rstrip()
     def _parse_memory_file(self, content):
         """解析 memory.md，提取所有记忆块（ID、标签、内容）"""
         entries = []
@@ -2165,15 +2181,18 @@ class MemoryEngine:
             key = str(mem_id)
             if key in meta['memory'] and meta['memory'][key].get('pin'):
                 meta['memory'][key]['pin'] = False
-                meta['memory'][key]['temp'] = MEMORY_TEMP_INITIAL
+                # [修改] 恢复记忆自身的 initial_temp（自定义 temp: 的记忆 unpin 后不丢失），旧数据无记录回退全局默认
+                meta['memory'][key]['temp'] = meta['memory'][key].get('initial_temp', MEMORY_TEMP_INITIAL)
                 unpin_count += 1
         if unpin_count > 0:
             self._save_meta(meta)
             log_action('MEMORY-UNPIN', f'已取消固定 {unpin_count} 条记忆: {ids}')
         return unpin_count
     # ── 按ID覆盖写入 ──
-    def overwrite_by_id(self, mem_id, content, tags, pin=False):
-        """按ID覆盖写入已有记忆的内容和标签，返回是否成功"""
+    def overwrite_by_id(self, mem_id, content, tags, pin=False, custom_temp=None):
+        """按ID覆盖写入已有记忆的内容和标签，返回是否成功
+        [修改] custom_temp: 指定时重置温度并更新 initial_temp
+        [修复] 原有 bug：覆盖写入取消 pin 时温度残留 '∞'（永不衰减的僵尸态）"""
         meta = self._load_meta()
         key = str(mem_id)
         if key not in meta['memory']:
@@ -2181,12 +2200,20 @@ class MemoryEngine:
         # 更新 meta
         meta['memory'][key]['tags'] = tags
         meta['memory'][key]['pin'] = pin
-        if pin:
+        if custom_temp is not None:
+            # 指定了初始温度：记录之；固定态保持 ∞，非固定态温度直接重置
+            meta['memory'][key]['initial_temp'] = custom_temp
+            meta['memory'][key]['temp'] = '∞' if pin else custom_temp
+        elif pin:
             meta['memory'][key]['temp'] = '∞'
+        else:
+            # [修复] 取消 pin 且未指定 temp: → 恢复到该记忆的初始温度（原实现残留 '∞'）
+            if meta['memory'][key].get('temp') == '∞':
+                meta['memory'][key]['temp'] = meta['memory'][key].get('initial_temp', MEMORY_TEMP_INITIAL)
         self._save_meta(meta)
         # 更新 memory.md 中对应块的内容
         self._update_entry_content(mem_id, content, tags)
-        log_action('MEMORY-OVERWRITE', f'ID:{mem_id:03d} | tags:{tags} | pin:{pin}')
+        log_action('MEMORY-OVERWRITE', f'ID:{mem_id:03d} | tags:{tags} | pin:{pin} | temp_arg:{custom_temp}')
         return True
     # ── 辅助方法 ──
     def _parse_ids(self, id_str):
@@ -2207,8 +2234,7 @@ class MemoryEngine:
         try:
             content, _ = smart_read(self.memory_file)
             pattern = re.compile(
-                rf'<!-- ID:{mem_id:03d} -->\n.*?\n<!-- END:{mem_id:03d} -->\n?',
-                re.DOTALL
+                rf'<!-- ID:{mem_id:03d} -->\n.*?\n<!-- END:{mem_id:03d} -->\n?', re.DOTALL
             )
             new_content = pattern.sub('', content)
             with open(self.memory_file, 'w', encoding='utf-8') as f:
@@ -2222,8 +2248,7 @@ class MemoryEngine:
         try:
             file_content, _ = smart_read(self.memory_file)
             pattern = re.compile(
-                rf'<!-- ID:{mem_id:03d} -->\n.*?\n<!-- END:{mem_id:03d} -->',
-                re.DOTALL
+                rf'<!-- ID:{mem_id:03d} -->\n.*?\n<!-- END:{mem_id:03d} -->', re.DOTALL
             )
             new_block = f"<!-- ID:{mem_id:03d} -->\n{content}\ntag: {', '.join(tags)}\n<!-- END:{mem_id:03d} -->"
             new_content = pattern.sub(new_block, file_content)
@@ -2233,34 +2258,44 @@ class MemoryEngine:
             pass
     # ── 获取暴露窗口标签（供前端注入）──
     def get_expose_tags(self):
-        """返回温度 Top-N 记忆的标签集合（暴露窗口裁剪）"""
+        """[修改] 返回 (已固定标签列表, 暴露窗口标签列表)。
+        Pin 记忆的标签全量收集、单独返回，不挤占正常记忆的温度 Top-N 暴露窗口"""
         meta = self._load_meta()
+        pinned_tags = set()
         scored = []
         for key, mem in meta['memory'].items():
             temp = mem.get('temp', MEMORY_TEMP_INITIAL)
-            if temp == '∞':
-                temp = float('inf')
-            scored.append((temp, mem.get('tags', [])))
-        # 按温度降序排序，取前 N 条
+            tags = mem.get('tags', [])
+            if mem.get('pin') or temp == '∞':
+                # 已固定：标签进固定区，不参与温度排序
+                pinned_tags.update(tags)
+            else:
+                scored.append((temp, tags))
+        # 正常记忆按温度降序排序，取前 N 条
         scored.sort(key=lambda x: x[0], reverse=True)
         top_n = scored[:MEMORY_EXPOSE_WINDOW]
-        tags = set()
+        normal_tags = set()
         for _, tag_list in top_n:
-            for tag in tag_list:
-                tags.add(tag)
-        return sorted(tags)
+            normal_tags.update(tag_list)
+        return sorted(pinned_tags), sorted(normal_tags)
     # ── 获取注入内容（供 /agent-memory-inject 接口）──
     def get_inject_content(self):
-        """返回短期记忆全文 + 长期记忆标签云，供前端注入到输入框"""
+        """返回短期记忆全文 + 长期记忆标签云，供前端注入到输入框
+        [修改] 已固定标签单列一行（[已固定:x,x]），与正常暴露窗口标签分区显示"""
         parts = []
         # 短期记忆
         short = self.read_short()
         if short:
             parts.append(f"[短期记忆]\n{short}")
-        # 长期记忆标签云（只暴露温度 Top-N）
-        tags = self.get_expose_tags()
-        if tags:
-            parts.append(f"[长期记忆标签]\n{', '.join(tags)}")
+        # 长期记忆标签云（固定区 + 暴露窗口区）
+        pinned_tags, normal_tags = self.get_expose_tags()
+        if pinned_tags or normal_tags:
+            tag_lines = ['[长期记忆标签]']
+            if pinned_tags:
+                tag_lines.append(f"[已固定:{','.join(pinned_tags)}]")
+            if normal_tags:
+                tag_lines.append(', '.join(normal_tags))
+            parts.append('\n'.join(tag_lines))
         return '\n\n'.join(parts) if parts else ''
 # 全局记忆引擎实例
 memory_engine = MemoryEngine()
@@ -2289,7 +2324,7 @@ class _LogWriter:
     """
     def __init__(self, original_stream, stream_name):
         self._orig = original_stream  # 原始 sys.stdout 或 sys.stderr
-        self._name = stream_name  # 'out' 或 'err'，用于区分来源
+        self._name = stream_name      # 'out' 或 'err'，用于区分来源
     def write(self, s):
         if not s:
             return
@@ -2298,7 +2333,7 @@ class _LogWriter:
         self._orig.flush()  # 立即刷新，防止卡顿
         # 2. 文件持久化（线程安全追加写入）
         # [修改] 改用二进制模式：1) 字节偏移精确可追踪（供 GUI 窗口化回读定位）
-        #                        2) 消除 Windows 文本模式 \n→\r\n 隐式翻译
+        # 2) 消除 Windows 文本模式 \n→\r\n 隐式翻译
         # [行为变更] 日志文件新内容行尾为 LF（历史 CRLF 内容读取方均兼容）
         start_pos = end_pos = None
         with _log_file_lock:
@@ -2313,7 +2348,7 @@ class _LogWriter:
                 start_pos = end_pos = None  # 写入失败静默处理，不能让日志系统搞挂主流程
         # 3. 推送到 GUI（事件驱动核心）
         # [修改] 消息附带本次写入的字节偏移区间 (stream_name, text, start, end)
-        #        GUI 据此建立 内存行 ↔ 文件字节区间 的精确映射，支撑滑动窗口回读
+        # GUI 据此建立 内存行 ↔ 文件字节区间 的精确映射，支撑滑动窗口回读
         if _gui_log_queue:
             try:
                 # 使用 put_nowait 避免阻塞 worker 线程
@@ -2342,7 +2377,7 @@ def agent_stream():
                 evt = {'id': tid, 'type': 'status', 'status': entry['status']}
                 if entry['status'] == 'done' and entry['result']:
                     evt['result'] = entry['result']
-                q.put(f"data: {json.dumps(evt, ensure_ascii=False)}\n\n")
+                    q.put(f"data: {json.dumps(evt, ensure_ascii=False)}\n\n")
                 # 只对未完成任务回放日志（done 的任务结果已含全部信息）
                 if entry['status'] != 'done':
                     for log_line in entry['logs']:
@@ -2404,8 +2439,8 @@ def agent_exec():
                         idx = bln.lower().find('【/codeend】')
                         if idx != -1:
                             block.append(bln[:idx])
-                        peek += 1
-                        break
+                            peek += 1
+                            break
                     block.append(bln)
                     peek += 1
                 blocks.append('\n'.join(block).strip('\n'))
@@ -2557,10 +2592,10 @@ if __name__ == '__main__':
     permission_mgr.set_callback(_default_permission_callback)
     _push_config()
     print(f'========================================')
-    print(f' PokerAgent 本地服务已启动 (SSE流式版)')
-    print(f' 监听地址：http://127.0.0.1:9966')
-    print(f' 工作目录：{WORK_DIR}')
-    print(f' 帮助文档：{HELP_FILE}')
-    print(f' 操作日志：{LOG_FILE}')
+    print(f'  PokerAgent 本地服务已启动 (SSE流式版)')
+    print(f'  监听地址：http://127.0.0.1:9966')
+    print(f'  工作目录：{WORK_DIR}')
+    print(f'  帮助文档：{HELP_FILE}')
+    print(f'  操作日志：{LOG_FILE}')
     print(f'========================================')
     app.run(host='127.0.0.1', port=9966, debug=False, threaded=True)
