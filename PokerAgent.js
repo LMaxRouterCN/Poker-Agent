@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         PokerAgent
 // @namespace    http://tampermonkey.net/
-// @version      35
+// @version      36
 // @author       LMaxRouterCN
 // @description  PokerAgent的浏览器端核心脚本，提供元素选择、配置管理、调试日志等功能，支持多站点独立配置和自动发送功能。
 // @match        *://*/*
@@ -17,7 +17,6 @@
 // ==/UserScript==
 
 //UI风格:黑灰白黄红橙绿,主黑金配色
-
 (function () {
     'use strict';
 
@@ -59,11 +58,7 @@
 
     function _loadStore() {
         let store;
-        try {
-            store = GM_getValue(STORE_KEY, null);
-        } catch (_) {
-            store = null;
-        }
+        try { store = GM_getValue(STORE_KEY, null); } catch (_) { store = null; }
         if (!store) {
             return {
                 whitelist: ['https://chatglm.cn/'],
@@ -77,9 +72,7 @@
         return _migrateStore(store);
     }
 
-    function _saveStore(store) {
-        GM_setValue(STORE_KEY, store);
-    }
+    function _saveStore(store) { GM_setValue(STORE_KEY, store); }
 
     function _migrateStore(store) {
         const clearOld = (cfg) => {
@@ -234,18 +227,13 @@
 
     function _stopAgent() {
         _pollConfigActive = false;
-        if (_pollTimer) {
-            clearInterval(_pollTimer);
-            _pollTimer = null;
-        }
+        if (_pollTimer) { clearInterval(_pollTimer); _pollTimer = null; }
         _destroyAutoSendToggle();
         _isProcessing = false;
         _cmdQueue = [];
         _taskList = [];
         if (_sseEventSource) {
-            try {
-                _sseEventSource.abort();
-            } catch (e) { }
+            try { _sseEventSource.abort(); } catch (e) { }
             _sseEventSource = null;
         }
         log('INFO', '⏹ Agent 已停止');
@@ -254,11 +242,7 @@
     let _enableMenuIds = [];
 
     function _registerEnableMenus() {
-        _enableMenuIds.forEach(id => {
-            try {
-                GM_unregisterMenuCommand(id);
-            } catch (e) { }
-        });
+        _enableMenuIds.forEach(id => { try { GM_unregisterMenuCommand(id); } catch (e) { } });
         _enableMenuIds = [];
         const current = _getEnableState();
         const modes = ['disabled', 'always', 'session', 'page'];
@@ -493,11 +477,10 @@
      * 4. 元素选择器
      * ================================================================ */
     const PICKER_IDS = new Set([
-        'agent-pick-dim', 'agent-pick-hl', 'agent-pick-lock-hl', 'agent-pick-tip',
-        'agent-pick-bar', 'agent-panel', 'agent-debug', 'agent-auto-send-toggle',
-        'ag-level-panel', 'ag-calibrate-bar'
+        'agent-pick-dim', 'agent-pick-hl', 'agent-pick-lock-hl',
+        'agent-pick-tip', 'agent-pick-bar', 'agent-panel', 'agent-debug',
+        'agent-auto-send-toggle', 'ag-level-panel', 'ag-calibrate-bar'
     ]);
-
     let _pickActive = false, _pickType = '';
     let _pickHL, _pickTip, _pickBar, _pickDim;
     let _pickLockHL = null;
@@ -523,51 +506,39 @@
         return false;
     }
 
-    function _stripClassHash(c) {
-        return c.replace(/[_-][a-f0-9]{5,8}$/i, '');
-    }
+    function _stripClassHash(c) { return c.replace(/[_-][a-f0-9]{5,8}$/i, ''); }
 
     function genSelector(el) {
         if (!el || el === document.body || el === document.documentElement) return '';
         if (el.id && !/\d/.test(el.id)) {
             const sel = '#' + CSS.escape(el.id);
-            try {
-                if (document.querySelectorAll(sel).length === 1) return sel;
-            } catch (_) { }
+            try { if (document.querySelectorAll(sel).length === 1) return sel; } catch (_) { }
         }
         for (const attr of ['data-testid', 'data-test-id', 'data-role', 'data-cy']) {
             const val = el.getAttribute(attr);
             if (val) {
                 const sel = `${el.tagName.toLowerCase()}[${attr}="${CSS.escape(val)}"]`;
-                try {
-                    if (document.querySelectorAll(sel).length === 1) return sel;
-                } catch (_) { }
+                try { if (document.querySelectorAll(sel).length === 1) return sel; } catch (_) { }
             }
         }
         const role = el.getAttribute('role');
         if (role) {
             const sel = `${el.tagName.toLowerCase()}[role="${CSS.escape(role)}"]`;
-            try {
-                if (document.querySelectorAll(sel).length === 1) return sel;
-            } catch (_) { }
+            try { if (document.querySelectorAll(sel).length === 1) return sel; } catch (_) { }
         }
         if (el.className && typeof el.className === 'string') {
             const allCls = el.className.trim().split(/\s+/).filter(c => c);
             const cleanCls = allCls.filter(c => !_isPureHashClass(c) && !/^(_|-{2})/.test(c) && !/^(is|has|can|should)/.test(c) && !/[_-][a-f0-9]{5,8}$/i.test(c));
             if (cleanCls.length) {
                 const sel = `${el.tagName.toLowerCase()}.${cleanCls.map(c => CSS.escape(c)).join('.')}`;
-                try {
-                    if (document.querySelectorAll(sel).length === 1) return sel;
-                } catch (_) { }
+                try { if (document.querySelectorAll(sel).length === 1) return sel; } catch (_) { }
             }
             const hashCls = allCls.filter(c => !_isPureHashClass(c) && !/^(_|-{2})/.test(c) && !/^(is|has|can|should)/.test(c) && /[_-][a-f0-9]{5,8}$/i.test(c));
             if (hashCls.length) {
                 const stripped = hashCls.map(c => _stripClassHash(c)).filter(s => s.length >= 3);
                 if (stripped.length) {
                     const sel = `${el.tagName.toLowerCase()}${stripped.map(s => `[class*="${CSS.escape(s)}"]`).join('')}`;
-                    try {
-                        if (document.querySelectorAll(sel).length === 1) return sel;
-                    } catch (_) { }
+                    try { if (document.querySelectorAll(sel).length === 1) return sel; } catch (_) { }
                 }
             }
         }
@@ -575,10 +546,7 @@
         let cur = el;
         while (cur && cur !== document.body && cur !== document.documentElement && segs.length < 5) {
             let seg = cur.tagName.toLowerCase();
-            if (cur.id && !/\d/.test(cur.id)) {
-                segs.unshift('#' + CSS.escape(cur.id));
-                break;
-            }
+            if (cur.id && !/\d/.test(cur.id)) { segs.unshift('#' + CSS.escape(cur.id)); break; }
             if (cur.className && typeof cur.className === 'string') {
                 const cls = cur.className.trim().split(/\s+/)
                     .filter(c => c && !_isPureHashClass(c) && !/^(_|-{2})/.test(c) && !/^(is|has|can|should)/.test(c))
@@ -593,9 +561,7 @@
             cur = cur.parentElement;
         }
         const sel = segs.join(' > ');
-        try {
-            if (document.querySelectorAll(sel).length === 1) return sel;
-        } catch (_) { }
+        try { if (document.querySelectorAll(sel).length === 1) return sel; } catch (_) { }
         return sel;
     }
 
@@ -606,20 +572,11 @@
         _lockedBaseEl = null;
         _domStack = [];
         hidePanel();
-        _pickDim = document.createElement('div');
-        _pickDim.id = 'agent-pick-dim';
-        document.body.appendChild(_pickDim);
-        _pickHL = document.createElement('div');
-        _pickHL.id = 'agent-pick-hl';
-        document.body.appendChild(_pickHL);
-        _pickLockHL = document.createElement('div');
-        _pickLockHL.id = 'agent-pick-lock-hl';
-        document.body.appendChild(_pickLockHL);
-        _pickTip = document.createElement('div');
-        _pickTip.id = 'agent-pick-tip';
-        document.body.appendChild(_pickTip);
-        _pickBar = document.createElement('div');
-        _pickBar.id = 'agent-pick-bar';
+        _pickDim = document.createElement('div'); _pickDim.id = 'agent-pick-dim'; document.body.appendChild(_pickDim);
+        _pickHL = document.createElement('div'); _pickHL.id = 'agent-pick-hl'; document.body.appendChild(_pickHL);
+        _pickLockHL = document.createElement('div'); _pickLockHL.id = 'agent-pick-lock-hl'; document.body.appendChild(_pickLockHL);
+        _pickTip = document.createElement('div'); _pickTip.id = 'agent-pick-tip'; document.body.appendChild(_pickTip);
+        _pickBar = document.createElement('div'); _pickBar.id = 'agent-pick-bar';
         _pickBar.innerHTML = `🎯 选择 <span class="ag-target">${TYPE_LABEL[type]}</span> | <span style="font-size:12px;opacity:0.7">左键↑ 右键↓ Shift+点击确认</span>`;
         document.body.appendChild(_pickBar);
         document.addEventListener('mousemove', _onMove, true);
@@ -681,9 +638,7 @@
             return `img${alt ? ' ' + alt : ''}${src ? ' src=…/' + src : ''}`;
         }
         let text = '';
-        for (const node of el.childNodes) {
-            if (node.nodeType === Node.TEXT_NODE) text += node.textContent;
-        }
+        for (const node of el.childNodes) { if (node.nodeType === Node.TEXT_NODE) text += node.textContent; }
         text = text.replace(/\s+/g, ' ').trim().slice(0, 60);
         if (text) return `${tag}: "${text}"`;
         return tag;
@@ -693,10 +648,8 @@
         const r = el.getBoundingClientRect();
         _pickHL.style.display = 'block';
         Object.assign(_pickHL.style, {
-            left: (r.left - 2) + 'px',
-            top: (r.top - 2) + 'px',
-            width: (r.width + 4) + 'px',
-            height: (r.height + 4) + 'px'
+            left: (r.left - 2) + 'px', top: (r.top - 2) + 'px',
+            width: (r.width + 4) + 'px', height: (r.height + 4) + 'px'
         });
         const sel = genSelector(el);
         const digest = _getElementDigest(el);
@@ -730,10 +683,8 @@
         const r = _lockedBaseEl.getBoundingClientRect();
         _pickLockHL.style.display = 'block';
         Object.assign(_pickLockHL.style, {
-            left: (r.left - 2) + 'px',
-            top: (r.top - 2) + 'px',
-            width: (r.width + 4) + 'px',
-            height: (r.height + 4) + 'px'
+            left: (r.left - 2) + 'px', top: (r.top - 2) + 'px',
+            width: (r.width + 4) + 'px', height: (r.height + 4) + 'px'
         });
     }
 
@@ -741,19 +692,15 @@
         if (_pickHL && _pickedEl) {
             const r = _pickedEl.getBoundingClientRect();
             Object.assign(_pickHL.style, {
-                left: (r.left - 2) + 'px',
-                top: (r.top - 2) + 'px',
-                width: (r.width + 4) + 'px',
-                height: (r.height + 4) + 'px'
+                left: (r.left - 2) + 'px', top: (r.top - 2) + 'px',
+                width: (r.width + 4) + 'px', height: (r.height + 4) + 'px'
             });
         }
         if (_pickLockHL && _lockedBaseEl) {
             const r = _lockedBaseEl.getBoundingClientRect();
             Object.assign(_pickLockHL.style, {
-                left: (r.left - 2) + 'px',
-                top: (r.top - 2) + 'px',
-                width: (r.width + 4) + 'px',
-                height: (r.height + 4) + 'px'
+                left: (r.left - 2) + 'px', top: (r.top - 2) + 'px',
+                width: (r.width + 4) + 'px', height: (r.height + 4) + 'px'
             });
         }
     }
@@ -772,10 +719,7 @@
         }
         const chain = [];
         let cur = _lockedBaseEl;
-        while (cur && cur !== document.documentElement) {
-            chain.unshift(cur);
-            cur = cur.parentElement;
-        }
+        while (cur && cur !== document.documentElement) { chain.unshift(cur); cur = cur.parentElement; }
         if (chain.length > 0 && chain[0] !== document.documentElement && chain[0].parentElement === document.documentElement) chain.unshift(document.documentElement);
         let html = '<div class="ag-level-head"><span>📐 层级结构 (点击选择)</span><button id="ag-level-close">✕</button></div><div class="ag-level-body">';
         chain.forEach((el, i) => {
@@ -797,15 +741,9 @@
         _levelPanel.style.left = left + 'px';
         _levelPanel.style.top = top + 'px';
         _levelPanel.style.display = 'flex';
-        _levelPanel.querySelector('#ag-level-close').onclick = (e) => {
-            e.stopPropagation();
-            _levelPanel.style.display = 'none';
-        };
+        _levelPanel.querySelector('#ag-level-close').onclick = (e) => { e.stopPropagation(); _levelPanel.style.display = 'none'; };
         _levelPanel.querySelectorAll('.ag-level-item').forEach(item => {
-            item.onclick = (e) => {
-                e.stopPropagation();
-                _confirmSelection(chain[+item.dataset.idx]);
-            };
+            item.onclick = (e) => { e.stopPropagation(); _confirmSelection(chain[+item.dataset.idx]); };
         });
     }
 
@@ -813,14 +751,8 @@
         if (_levelPanel && _levelPanel.style.display !== 'none' && _levelPanel.contains(e.target)) return;
         e.stopPropagation();
         e.preventDefault();
-        if (_levelPanel && _levelPanel.style.display !== 'none') {
-            _levelPanel.style.display = 'none';
-            return;
-        }
-        if (e.target.id === 'ag-show-levels') {
-            _showLevelPanel();
-            return;
-        }
+        if (_levelPanel && _levelPanel.style.display !== 'none') { _levelPanel.style.display = 'none'; return; }
+        if (e.target.id === 'ag-show-levels') { _showLevelPanel(); return; }
         if (e.shiftKey || e.ctrlKey) {
             if (_pickedEl) _confirmSelection(_pickedEl);
             else {
@@ -869,10 +801,7 @@
         if (_levelPanel && _levelPanel.style.display !== 'none' && _levelPanel.contains(e.target)) return;
         e.stopPropagation();
         e.preventDefault();
-        if (_levelPanel && _levelPanel.style.display !== 'none') {
-            _levelPanel.style.display = 'none';
-            return;
-        }
+        if (_levelPanel && _levelPanel.style.display !== 'none') { _levelPanel.style.display = 'none'; return; }
         if (!_pickedEl) return;
         const target = _targetAt(e.clientX, e.clientY);
         if (!target || !_lockedBaseEl.contains(target)) {
@@ -920,10 +849,7 @@
             let currentKws = (c.cleanIgnoreClassKeywords || '').split(',').map(s => s.trim()).filter(s => s);
             let added = [];
             classes.forEach(cls => {
-                if (!currentKws.includes(cls)) {
-                    currentKws.push(cls);
-                    added.push(cls);
-                }
+                if (!currentKws.includes(cls)) { currentKws.push(cls); added.push(cls); }
             });
             cfgSaveRuntime({ cleanIgnoreClassKeywords: currentKws.join(',') });
             log('OK', `已添加Class关键词: ${added.join(', ')}`);
@@ -931,10 +857,7 @@
             return;
         }
         const sel = genSelector(el);
-        if (!sel) {
-            log('ERR', '无法生成选择器');
-            return;
-        }
+        if (!sel) { log('ERR', '无法生成选择器'); return; }
         const c = cfgLoad();
         if (_pickType === 'chat') c.selChatContainer = sel;
         if (_pickType === 'input') c.selInputBox = sel;
@@ -959,16 +882,8 @@
     }
 
     function _onKey(e) {
-        if (e.key === 'Escape') {
-            e.stopPropagation();
-            e.preventDefault();
-            pickerExit();
-        }
-        if (e.key === 'Enter' && _pickedEl) {
-            e.stopPropagation();
-            e.preventDefault();
-            _confirmSelection(_pickedEl);
-        }
+        if (e.key === 'Escape') { e.stopPropagation(); e.preventDefault(); pickerExit(); }
+        if (e.key === 'Enter' && _pickedEl) { e.stopPropagation(); e.preventDefault(); _confirmSelection(_pickedEl); }
     }
 
     /* ================================================================
@@ -1045,14 +960,12 @@
         const inWhitelist = !!site;
         const hasSiteCfg = site && store.perSite && store.perSite[site];
         const source = _getConfigSource();
-
         let editCfg;
         if (_editTarget === 'defaults') {
             editCfg = { ...SITE_DEFAULTS, ...(store.defaults || {}) };
         } else {
             editCfg = { ...SITE_DEFAULTS, ...(store.perSite?.[_editTarget] || {}) };
         }
-
         const titleText = _editTarget === 'defaults' ? '🔧 Poker Agent 配置 — 默认设置' : `🔧 Poker Agent 配置 — ${_editTarget} 独立设置`;
         const saveText = _editTarget === 'defaults' ? '💾 保存默认配置' : `💾 保存独立配置`;
         const siteDisplay = site || location.hostname;
@@ -1074,8 +987,8 @@
         }
 
         _panel.innerHTML = `
-            <div id="agent-panel-head"><b>${titleText}</b><button id="agent-panel-close">✕</button></div>
-            <div id="agent-panel-body">
+        <div id="agent-panel-head"><b>${titleText}</b><button id="agent-panel-close">✕</button></div>
+        <div id="agent-panel-body">
             <div class="ag-site-info">
                 <div class="ag-site-row"><span class="ag-site-label">当前网站:</span><span class="ag-site-value">${esc(siteDisplay)}</span><span class="ag-site-badge ${badgeClass}">${badgeText}</span></div>
                 <div class="ag-site-row"><span class="ag-site-label">当前使用:</span><span class="ag-site-value" style="color:#818cf8">${esc(sourceDisplay)}</span></div>
@@ -1121,7 +1034,9 @@
                     </div>
                     <div class="ag-field" id="ag-calibrate-field" style="margin-top:6px; padding:8px; background:#232436; border:1px solid #2a2a2a; display:${(editCfg.selSendButton || editCfg.selSendButtonContainer) ? 'block' : 'none'};">
                         <div style="font-size:12px; color:#a1a1aa; margin-bottom:6px">捕获按钮的各种形态，手动标记【忙碌】(AI输出时)和【空闲】态。</div>
-                        <div class="ag-row"><div id="ag-calibrate-status" style="flex:1; font-size:11px; color:#52525b"> 忙碌:${(editCfg.sendBtnBusyFingerprints || []).length}个 | 空闲:${(editCfg.sendBtnIdleFingerprints || []).length}个 | 可发送:${(editCfg.sendBtnSendableFingerprints || []).length}个 </div><button class="ag-btn ag-btn-p" id="ag-start-calibrate">${(editCfg.sendBtnBusyFingerprints || []).length > 0 ? '重新校准' : '开始校准'}</button></div>
+                        <div class="ag-row"><div id="ag-calibrate-status" style="flex:1; font-size:11px; color:#52525b">
+                            忙碌:${(editCfg.sendBtnBusyFingerprints || []).length}个 | 空闲:${(editCfg.sendBtnIdleFingerprints || []).length}个 | 可发送:${(editCfg.sendBtnSendableFingerprints || []).length}个
+                        </div><button class="ag-btn ag-btn-p" id="ag-start-calibrate">${(editCfg.sendBtnBusyFingerprints || []).length > 0 ? '重新校准' : '开始校准'}</button></div>
                     </div>
                 </div>
                 <div class="ag-field" style="margin-top:12px;padding-top:10px;border-top:1px solid #2a2a2a">
@@ -1197,24 +1112,18 @@
                 </div>
             </div>
             <div class="ag-foot"><button class="ag-btn ag-btn-g" id="ag-cancel">取消</button><button class="ag-btn ag-btn-p" id="ag-save">${saveText}</button></div>
-            </div>
+        </div>
         `;
 
         _panel.querySelector('#agent-panel-close').onclick = hidePanel;
         _panel.querySelector('#ag-cancel').onclick = hidePanel;
-
         _panel.querySelector('#ag-debug-toggle').onchange = (e) => {
             const s = _loadStore();
             s.debugMode = e.target.checked;
             _saveStore(s);
-            if (e.target.checked) {
-                showDebug();
-                log('INFO', '调试模式已开启');
-            } else {
-                if (_debugPanel) _debugPanel.style.display = 'none';
-            }
+            if (e.target.checked) { showDebug(); log('INFO', '调试模式已开启'); }
+            else { if (_debugPanel) _debugPanel.style.display = 'none'; }
         };
-
         const wlInput = _panel.querySelector('#ag-wl-new');
         const doAdd = () => {
             const v = wlInput.value.trim();
@@ -1235,16 +1144,9 @@
                 _renderPanel();
             };
         });
-
-        _panel.querySelector('#ag-edit-defaults').onclick = () => {
-            _editTarget = 'defaults';
-            _renderPanel();
-        };
+        _panel.querySelector('#ag-edit-defaults').onclick = () => { _editTarget = 'defaults'; _renderPanel(); };
         if (inWhitelist && hasSiteCfg) {
-            _panel.querySelector('#ag-edit-site').onclick = () => {
-                _editTarget = site;
-                _renderPanel();
-            };
+            _panel.querySelector('#ag-edit-site').onclick = () => { _editTarget = site; _renderPanel(); };
         }
         if (inWhitelist && !hasSiteCfg) {
             _panel.querySelector('#ag-create-site').onclick = () => {
@@ -1271,7 +1173,6 @@
                 _renderPanel();
             };
         }
-
         _panel.querySelector('#ag-pick-chat').onclick = () => pickerEnter('chat');
         _panel.querySelector('#ag-pick-answer').onclick = () => pickerEnter('answer');
         _panel.querySelector('#ag-pick-code-content').onclick = () => pickerEnter('code-content');
@@ -1280,12 +1181,10 @@
         _panel.querySelector('#ag-pick-send').onclick = () => pickerEnter('send');
         _panel.querySelector('#ag-pick-send-container').onclick = () => pickerEnter('send-container');
         _panel.querySelector('#ag-pick-clean-keyword').onclick = () => pickerEnter('clean-class');
-
         // [新增] 提取链路测试按钮
         _panel.querySelector('#ag-test-answer').onclick = (e) => _runExtractTest('answer', e.currentTarget);
         _panel.querySelector('#ag-test-code-content').onclick = (e) => _runExtractTest('code-content', e.currentTarget);
         _panel.querySelector('#ag-test-code-copy-btn').onclick = (e) => _runExtractTest('code-copy-btn', e.currentTarget);
-
         if (editCfg.selSendButton || editCfg.selSendButtonContainer) {
             _panel.querySelector('#ag-start-calibrate').onclick = () => {
                 if (!editCfg.selSendButton && !editCfg.selSendButtonContainer) {
@@ -1295,7 +1194,6 @@
                 _startCalibration();
             };
         }
-
         const posBtns = _panel.querySelectorAll('.ag-pos-btn');
         posBtns.forEach(btn => {
             if (btn.dataset.pos === editCfg.autoSendTogglePos) btn.classList.add('active');
@@ -1304,7 +1202,6 @@
                 btn.classList.add('active');
             };
         });
-
         // 绑定选择器输入事件和匹配提示
         // [修复] 原数组项 'code-copy-button' 与面板实际 id (ag-s-code-copy-btn / ag-m-code-copy-btn)
         // 不一致，querySelector 返回 null 后 addEventListener 抛 TypeError，
@@ -1327,15 +1224,12 @@
             });
             _showMatch(editCfg[key], `ag-m-${t}`);
         });
-
         _renderRules(editCfg.textCleanRules || []);
-
         _panel.querySelector('#ag-add-rule').onclick = () => {
             const current = _collectRulesFromDOM();
             current.push({ find: '', replace: '', isRegex: false, isUnicode: false, enabled: true });
             _renderRules(current);
         };
-
         _panel.querySelector('#ag-rule-list').onclick = (e) => {
             if (e.target.classList.contains('rule-del')) {
                 const item = e.target.closest('.ag-rule-item');
@@ -1345,7 +1239,6 @@
                 _renderRules(current);
             }
         };
-
         _panel.querySelector('#ag-save').onclick = () => {
             const s = _loadStore();
             s.debugMode = _panel.querySelector('#ag-debug-toggle').checked;
@@ -1390,16 +1283,11 @@
 
     function _showMatch(sel, id) {
         const el = _panel.querySelector('#' + id);
-        if (!sel) {
-            el.innerHTML = '<div class="ag-match ag-m-none">未设置</div>';
-            return;
-        }
+        if (!sel) { el.innerHTML = '<div class="ag-match ag-m-none">未设置</div>'; return; }
         try {
             const n = document.querySelectorAll(sel).length;
-            el.innerHTML = n === 0
-                ? '<div class="ag-match ag-m-fail">✘ 未匹配</div>'
-                : n === 1
-                    ? '<div class="ag-match ag-m-ok">✔ 精确匹配 1 个</div>'
+            el.innerHTML = n === 0 ? '<div class="ag-match ag-m-fail">✘ 未匹配</div>'
+                : n === 1 ? '<div class="ag-match ag-m-ok">✔ 精确匹配 1 个</div>'
                     : `<div class="ag-match ag-m-ok">✔ 匹配 ${n} 个</div>`;
         } catch (_) {
             el.innerHTML = '<div class="ag-match ag-m-fail">✘ 语法错误</div>';
@@ -1480,19 +1368,16 @@
     async function _runExtractTest(type, anchor) {
         const c = _buildLiveTestCfg();
         const pop = (title, text) => _showTestPop(anchor, title, text);
-
         if (type === 'answer') {
             const loc = _locateLastAnswer(c);
             if (loc.err) return pop('🧪 AI回答元素测试', loc.err);
             const logs = [];
             const text = await getCleanText(loc.el, c, logs);
             const logText = logs.map(([lv, msg]) => `[${lv}] ${msg}`).join('\n');
-            return pop('🧪 AI回答元素测试',
-                `${loc.note}📊 命中 ${loc.count} 个回答元素，处理最后一个\n` +
+            return pop('🧪 AI回答元素测试', `${loc.note}📊 命中 ${loc.count} 个回答元素，处理最后一个\n` +
                 `━━━ 提取链路日志 ━━━\n${logText || '(无日志)'}\n` +
                 `━━━ 最终文本 (${text.length} 字符) ━━━\n${text}`);
         }
-
         if (type === 'code-content') {
             if (!c.selCodeContentElement) return pop('🧪 代码内容元素测试', '❌ 未填写代码内容元素选择器');
             const loc = _locateLastAnswer(c);
@@ -1507,7 +1392,6 @@
             });
             return pop('🧪 代码内容元素测试', out);
         }
-
         if (type === 'code-copy-btn') {
             if (!c.selCodeCopyButton) return pop('🧪 复制按钮测试', '❌ 未填写代码复制按钮选择器');
             if (!c.selCodeContentElement) return pop('🧪 复制按钮测试', '❌ 复制按钮依赖代码内容元素定位范围，请先填写代码内容元素选择器');
@@ -1518,14 +1402,18 @@
             if (codeEls.length === 0) return pop('🧪 复制按钮测试', '❌ 代码内容元素未命中，无法定位复制按钮范围');
             let out = `${loc.note}📊 最后一个回答内命中 ${codeEls.length} 个代码块，逐个点击复制按钮拦截…`;
             for (let i = 0; i < codeEls.length; i++) {
-                const copyBtn = codeEls[i].querySelector(c.selCodeCopyButton);
+                // [修改] 与运行时同步改用 _findCopyButton，支持头部栏按钮 + 归属校验
+                const found = _findCopyButton(codeEls[i], c.selCodeCopyButton, c.selCodeContentElement, loc.el);
                 out += `\n\n━━━ 代码块 [${i + 1}/${codeEls.length}] ━━━\n`;
-                if (!copyBtn) {
-                    out += `⚠ 未找到复制按钮 (选择器: "${c.selCodeCopyButton}")`;
+                if (!found || !found.btn) {
+                    out += (found && found.blocked)
+                        ? `⚠ 找到候选按钮但归属校验拦截（该层含多个代码元素，可能属于相邻代码块）`
+                        : `⚠ 未找到复制按钮 (选择器: "${c.selCodeCopyButton}")`;
                     continue;
                 }
+                if (found.depth > 0) out += `📍 按钮位于代码元素外第 ${found.depth} 层（块头部栏结构）\n`;
                 try {
-                    const captured = await _interceptCopy(copyBtn);
+                    const captured = await _interceptCopy(found.btn);
                     if (captured && captured.trim().length > 0) {
                         out += `✅ 拦截成功 (${captured.length} 字符)\n${captured}`;
                     } else {
@@ -1645,6 +1533,32 @@
         return p;
     }
 
+    // [新增] 在代码块范围内查找复制按钮。
+    // 按钮常挂在与代码内容平级的块头部栏（如 top-outer/top 结构，不在内容元素
+    // 内部），故先查代码元素内部（原行为），未命中再逐层向外，以所属回答元素
+    // 为硬上界（防止爬出去抓到其他回答的按钮）。
+    // 每层命中候选后做归属校验：该层子树内的代码内容元素必须恰好 1 个（当前块），
+    // 否则视为候选属于相邻代码块，放弃——与运行时"每个命中即一个代码块"的语义一致。
+    // 返回 {btn, depth}（depth=0 表示按钮在内容元素内部）| {blocked:true}（候选越界被拦）| null（范围内无匹配）
+    function _findCopyButton(codeEl, btnSel, codeSel, scopeEl) {
+        const inner = codeEl.querySelector(btnSel);
+        if (inner) return { btn: inner, depth: 0 };
+        let cur = codeEl.parentElement;
+        let depth = 1;
+        while (cur) {
+            const cand = cur.querySelector(btnSel);
+            if (cand) {
+                return (cur.querySelectorAll(codeSel).length === 1)
+                    ? { btn: cand, depth }
+                    : { blocked: true };
+            }
+            if (cur === scopeEl) break; // 回答元素为上界，不再向外
+            cur = cur.parentElement;
+            depth++;
+        }
+        return null;
+    }
+
     /**
      * 获取清理后的文本
      * 优先级：复制按钮 > 代码内容元素 > 默认DOM
@@ -1655,7 +1569,6 @@
     async function getCleanText(el, cfg, logBuf) {
         // [新增] 日志缓冲写入器：写入调用方提供的缓冲数组，未提供则丢弃
         const _log = (lv, msg) => { if (logBuf) logBuf.push([lv, msg]); };
-
         const clone = el.cloneNode(true);
         const codeBlocks = [];
 
@@ -1663,7 +1576,6 @@
         if (cfg.selCodeContentElement) {
             const liveCodeEls = el.querySelectorAll(cfg.selCodeContentElement);
             const cloneCodeEls = clone.querySelectorAll(cfg.selCodeContentElement);
-
             // [日志] 代码元素选择器入口：未命中 / 数量竞态 / 正常命中
             if (liveCodeEls.length === 0) {
                 _log('INFO', `📦 代码元素选择器 "${cfg.selCodeContentElement}" 未命中任何元素，跳过代码提取，走DOM兜底`);
@@ -1672,7 +1584,6 @@
                 _log('WARN', `📦 代码元素命中数量竞态: 原文 ${liveCodeEls.length} 个 ≠ 克隆 ${cloneCodeEls.length} 个，跳过本轮代码提取，走DOM兜底`);
             } else {
                 _log('INFO', `📦 代码元素选择器 "${cfg.selCodeContentElement}" 命中 ${liveCodeEls.length} 个代码块`);
-
                 for (let i = 0; i < liveCodeEls.length; i++) {
                     const liveEl = liveCodeEls[i];
                     let codeText = '';
@@ -1680,15 +1591,17 @@
 
                     // 策略1: 尝试点击复制按钮拦截 (最高优先级)
                     if (cfg.selCodeCopyButton) {
-                        const btn = liveEl.querySelector(cfg.selCodeCopyButton);
-                        if (btn) {
+                        // [修改] 按钮查找改为 _findCopyButton：支持按钮挂在块头部栏
+                        // （与内容元素平级的外层结构）的场景，带归属校验防串块
+                        const found = _findCopyButton(liveEl, cfg.selCodeCopyButton, cfg.selCodeContentElement, el);
+                        if (found && found.btn) {
                             try {
                                 // [修改] 拦截逻辑提取为 _interceptCopy 共用函数，行为不变
-                                const captured = await _interceptCopy(btn);
+                                const captured = await _interceptCopy(found.btn);
                                 if (captured && captured.trim().length > 0) {
                                     codeText = captured;
-                                    // [日志] 策略1成功
-                                    _log('OK', `📋 ${tag} 复制按钮拦截成功 (${captured.length} 字符)`);
+                                    // [日志] 策略1成功（depth>0 表示按钮在内容元素外的头部栏）
+                                    _log('OK', `📋 ${tag} 复制按钮拦截成功${found.depth > 0 ? ` (按钮位于代码元素外第${found.depth}层)` : ''} (${captured.length} 字符)`);
                                 } else {
                                     // [日志] 策略1失败：区分超时未触发事件与剪贴板内容为空
                                     const reason = captured === null
@@ -1703,8 +1616,11 @@
                                 _log('WARN', `📋 ${tag} 复制按钮拦截异常: ${err.message}，回退到元素文本读取`);
                             }
                         } else {
-                            // [日志] 配置了复制按钮选择器但代码块内找不到按钮
-                            _log('WARN', `📋 ${tag} 未找到复制按钮 (选择器: "${cfg.selCodeCopyButton}")，回退到元素文本读取`);
+                            // [日志] 未找到按钮：区分"范围内无匹配"与"候选越界被归属校验拦截"
+                            const reason = (found && found.blocked)
+                                ? '候选按钮所在层级含多个代码元素（可能属于相邻代码块），归属校验拦截'
+                                : `未找到复制按钮 (选择器: "${cfg.selCodeCopyButton}")`;
+                            _log('WARN', `📋 ${tag} ${reason}，回退到元素文本读取`);
                         }
                     } else {
                         // [日志] 未配置复制按钮，策略1整体跳过
@@ -1809,7 +1725,6 @@
             }
             return result;
         }
-
         // [日志] 无代码块，DOM兜底出口
         _log('INFO', `ℹ️ 纯DOM兜底提取完成 (${rawText.length} 字符)`);
         return rawText;
@@ -1876,11 +1791,9 @@
         if (_isCalibrating) return;
         _isCalibrating = true;
         hidePanel();
-
         const bar = document.createElement('div');
         bar.id = 'ag-calibrate-bar';
         document.body.appendChild(bar);
-
         const cards = document.createElement('div');
         cards.id = 'ag-calibrate-cards';
         cards.style.display = 'none';
@@ -1889,14 +1802,12 @@
         cards.style.height = 'calc(min(220px, 45vw) * 1.5)';
         document.body.appendChild(cards);
         _makeDraggable(cards);
-
         const c = cfgLoad();
         let capturedMap = new Map();
         let selectedBusy = new Set(c.sendBtnBusyFingerprints || []);
         let selectedIdle = new Set(c.sendBtnIdleFingerprints || []);
         let selectedSendable = new Set(c.sendBtnSendableFingerprints || []);
         let checkInterval = null;
-
         const renderBar = (msg) => {
             const mode = c.verifyMode || 'single';
             const canFinish = selectedBusy.size > 0;
@@ -1919,7 +1830,6 @@
             });
             cards.innerHTML = listHtml || '<div style="color:#52525b;font-size:12px;text-align:center;padding:16px 0">等待按钮状态变化...</div>';
             cards.style.display = 'flex';
-
             bar.innerHTML = `
                 <div style="font-size:13px;color:#d4d4d8;text-align:center">${msg}</div>
                 <div style="display:flex;gap:8px;align-items:center">
@@ -1928,7 +1838,6 @@
                 </div>
             `;
             bar.style.display = 'flex';
-
             bar.querySelector('#ag-cal-stop').onclick = () => stopCalibration();
             if (canFinish) {
                 bar.querySelector('#ag-cal-finish').onclick = () => {
@@ -1941,7 +1850,6 @@
                     stopCalibration();
                 };
             }
-
             cards.querySelectorAll('.ag-cal-tag').forEach(btn => {
                 btn.onclick = (e) => {
                     e.stopPropagation();
@@ -1964,7 +1872,6 @@
                 };
             });
         };
-
         const stopCalibration = () => {
             if (checkInterval) clearInterval(checkInterval);
             bar.remove();
@@ -1972,9 +1879,7 @@
             _isCalibrating = false;
             showPanel();
         };
-
         renderBar('👇 请在下方正常聊天，脚本会自动捕获按钮的不同状态。<br><b style="color:#f472b6">【忙碌】=停止生成 | 【空闲】=AI说完 | 【可发送】=可以发送消息</b>');
-
         checkInterval = setInterval(() => {
             const fp = _getSendBtnFingerprint();
             if (!fp) return;
@@ -1982,8 +1887,7 @@
                 if (!capturedMap.has(fp)) {
                     capturedMap.set(fp, {
                         html: `<span style="color:#ef4444;font-size:12px">⚠ 元素不存在 (${fp === 'CONTAINER_MISSING' ? '容器' : '按钮'})</span>`,
-                        bg: '#1a1a1a',
-                        color: '#ef4444'
+                        bg: '#1a1a1a', color: '#ef4444'
                     });
                     log('INFO', `捕获状态: ${fp} (#${capturedMap.size})`);
                     renderBar('👇 继续操作，或标记已捕获的状态后点击完成。<br><b style="color:#f472b6">【忙碌】=停止生成 | 【空闲】=AI说完 | 【可发送】=可以发送消息</b>');
@@ -2060,10 +1964,7 @@
         return new Promise(resolve => {
             const c = cfgLoad();
             const sendableList = c.sendBtnSendableFingerprints || [];
-            if (sendableList.length === 0) {
-                resolve();
-                return;
-            }
+            if (sendableList.length === 0) { resolve(); return; }
             log('INFO', '👀 等待可发送状态...');
             let elapsed = 0;
             const interval = 200;
@@ -2180,10 +2081,7 @@
         _isProcessing = true;
         log('INFO', `⏳ 挂起等待 AI 彻底输出完毕... (队列: ${_cmdQueue.length} 条)`);
         await _waitForLLMFinish();
-        if (_cmdQueue.length === 0) {
-            _isProcessing = false;
-            return;
-        }
+        if (_cmdQueue.length === 0) { _isProcessing = false; return; }
         const _seen = new Set();
         const batch = _cmdQueue.filter(cmd => {
             const k = cmd.replace(/\s+/g, '');
@@ -2204,11 +2102,7 @@
                 if (!str) return str;
                 return str.replace(/\\u([0-9a-fA-F]{4})|\\u\{([0-9a-fA-F]{1,6})\}|U\+([0-9a-fA-F]{4,6})/g, (match, p1, p2, p3) => {
                     const hex = p1 || p2 || p3;
-                    try {
-                        return String.fromCodePoint(parseInt(hex, 16));
-                    } catch (e) {
-                        return match;
-                    }
+                    try { return String.fromCodePoint(parseInt(hex, 16)); } catch (e) { return match; }
                 });
             };
             c.textCleanRules.forEach(rule => {
@@ -2223,10 +2117,7 @@
                     if (rule.isRegex) {
                         const regex = new RegExp(findStr, 'g');
                         const newCmd = cmdBatch.replace(regex, replaceStr);
-                        if (newCmd !== cmdBatch) {
-                            cmdBatch = newCmd;
-                            cleanCount++;
-                        }
+                        if (newCmd !== cmdBatch) { cmdBatch = newCmd; cleanCount++; }
                     } else {
                         if (cmdBatch.includes(findStr)) {
                             cmdBatch = cmdBatch.split(findStr).join(replaceStr);
@@ -2394,22 +2285,10 @@
             for (let i = 0; i < byteChars.length; i++) byteArr[i] = byteChars.charCodeAt(i);
             const ext = filename.split('.').pop().toLowerCase();
             const mimeMap = {
-                'js': 'text/javascript',
-                'ts': 'text/typescript',
-                'html': 'text/html',
-                'css': 'text/css',
-                'json': 'application/json',
-                'md': 'text/markdown',
-                'py': 'text/x-python',
-                'txt': 'text/plain',
-                'xml': 'text/xml',
-                'csv': 'text/csv',
-                'java': 'text/x-java-source',
-                'gradle': 'text/plain',
-                'properties': 'text/plain',
-                'toml': 'text/plain',
-                'yml': 'text/yaml',
-                'yaml': 'text/yaml'
+                'js': 'text/javascript', 'ts': 'text/typescript', 'html': 'text/html', 'css': 'text/css',
+                'json': 'application/json', 'md': 'text/markdown', 'py': 'text/x-python', 'txt': 'text/plain',
+                'xml': 'text/xml', 'csv': 'text/csv', 'java': 'text/x-java-source', 'gradle': 'text/plain',
+                'properties': 'text/plain', 'toml': 'text/plain', 'yml': 'text/yaml', 'yaml': 'text/yaml'
             };
             const file = new File([byteArr], filename, { type: mimeMap[ext] || 'text/plain' });
             input.focus();
@@ -2474,20 +2353,16 @@
 
     function _initSSE() {
         if (_sseEventSource) {
-            try {
-                _sseEventSource.abort();
-            } catch (e) { }
+            try { _sseEventSource.abort(); } catch (e) { }
             _sseEventSource = null;
         }
         const c = cfgLoad();
         const streamUrl = c.apiUrl.replace('/agent-exec', '/agent-stream');
-
         // [修复] SSE 事件可能跨多次 onprogress 增量到达：
         // - _seenLen: 已读取字符偏移指针（计算增量用）
         // - _pending: 跨 chunk 缓冲的不完整事件尾部（下次 onprogress 拼接）
         let _seenLen = 0;
         let _pending = '';
-
         // [新增] 解析缓冲区内所有以 \n\n 分隔的完整事件，最后一段残留存入 _pending
         const _flushComplete = (buffer) => {
             const events = buffer.split('\n\n');
@@ -2507,7 +2382,6 @@
                 }
             }
         };
-
         _sseEventSource = GM_xmlhttpRequest({
             method: 'GET',
             url: streamUrl,
@@ -2558,9 +2432,7 @@
         _renderTaskBlock();
         if (_taskList.length > 0 && _taskList.every(t => t.status === 'done')) {
             if (_sseEventSource) {
-                try {
-                    _sseEventSource.abort();
-                } catch (e) { }
+                try { _sseEventSource.abort(); } catch (e) { }
                 _sseEventSource = null;
             }
             _finalizeAndSend();
@@ -2711,14 +2583,9 @@
     function _trySendByEnter(input) {
         ['keydown', 'keypress', 'keyup'].forEach(evtType => {
             input.dispatchEvent(new KeyboardEvent(evtType, {
-                key: 'Enter',
-                code: 'Enter',
-                keyCode: 13,
-                which: 13,
+                key: 'Enter', code: 'Enter', keyCode: 13, which: 13,
                 charCode: evtType === 'keypress' ? 13 : 0,
-                bubbles: true,
-                cancelable: true,
-                composed: true
+                bubbles: true, cancelable: true, composed: true
             }));
         });
     }
@@ -2743,10 +2610,7 @@
                     resolve();
                 }
             }, interval);
-            const safety = setTimeout(() => {
-                clearInterval(t);
-                resolve();
-            }, maxWait);
+            const safety = setTimeout(() => { clearInterval(t); resolve(); }, maxWait);
         });
     }
 
@@ -2759,12 +2623,7 @@
     function _initAutoSendToggle() {
         _destroyAutoSendToggle();
         let c;
-        try {
-            c = cfgLoad();
-        } catch (e) {
-            console.error('[Agent] cfgLoad异常:', e);
-            return;
-        }
+        try { c = cfgLoad(); } catch (e) { console.error('[Agent] cfgLoad异常:', e); return; }
         if (!c.showAutoSendToggle || (!c.selSendButton && !c.selSendButtonContainer)) return;
         const mode = c.autoSendMode || 'click';
         const freq = parseInt(c.memoryInjectFrequency);
@@ -2800,7 +2659,6 @@
             </div>
         `;
         document.body.appendChild(_toggleEl);
-
         _toggleEl.querySelectorAll('.ag-as-opt').forEach(opt => {
             opt.onclick = (e) => {
                 e.stopPropagation();
@@ -2813,7 +2671,6 @@
                 log('INFO', `发送模式切换为: ${modeLabels[newMode] || newMode}`);
             };
         });
-
         // [新增] 记忆注入频率交互：头部点击收起/展开，选项即选即存并收起
         const memHead = _toggleEl.querySelector('#ag-as-mem-head');
         const memBody = _toggleEl.querySelector('#ag-as-mem-body');
@@ -2840,9 +2697,7 @@
             if (v > 0) applyFreq(v);
         };
         _toggleEl.querySelectorAll('.ag-as-mem-opt').forEach(o => o.classList.toggle('active', parseInt(o.dataset.freq) === (parseInt(freq) || 0)));
-
         _toggleEl.onclick = (e) => e.stopPropagation();
-
         setTimeout(() => {
             _updateTogglePosition();
             _updateSliderPos();
@@ -2950,14 +2805,12 @@
             log('WARN', `初始配置同步失败(不影响运行): ${e.message}`);
         }
         _pollConfig();
-
         _lastAnswerEl = null;
         _lastAnswerCount = 0;
         _currentRoundSent.clear();
         _lastScannedLen = 0;
         _noAnswerCount = 0;
         _initAutoSendToggle();
-
         const c = cfgLoad();
         const selector = c.selChatContainer;
         if (!selector) {
@@ -2977,7 +2830,6 @@
             setTimeout(initAgent, 5000);
             return;
         }
-
         const answerSel = c.selAnswerItem || '.answer';
         _knownAnswers = [...currentContainer.querySelectorAll(answerSel)];
         _lastAnswerEl = null;
@@ -2985,13 +2837,11 @@
         _currentRoundSent.clear();
         _lastScannedLen = 0;
         log('OK', `✅ 监听已启动！回答元素选择器: "${answerSel}"`);
-
         _pollTimer = setInterval(async () => { // setInterval回调改为async
             try {
                 _heartbeatCounter++;
                 const freshContainer = document.querySelector(selector);
                 if (!freshContainer) return;
-
                 if (freshContainer !== currentContainer) {
                     log('WARN', '🚨 检测到聊天容器被替换，重置状态...');
                     currentContainer = freshContainer;
@@ -3005,7 +2855,6 @@
                     _initAutoSendToggle();
                     return;
                 }
-
                 const answers = [...currentContainer.querySelectorAll(answerSel)];
                 if (answers.length === 0) {
                     _noAnswerCount++;
@@ -3020,7 +2869,6 @@
                     }
                     _noAnswerCount = 0;
                 }
-
                 if (_knownAnswers.length > 0 && !_knownAnswers.some(el => new Set(answers).has(el))) {
                     _lastAnswerEl = null;
                     _lastAnswerCount = 0;
@@ -3033,12 +2881,9 @@
                     log('WARN', '🚨 对话被清空，重置状态...');
                 }
                 _knownAnswers = answers;
-
                 if (_heartbeatCounter % 20 === 0) log('INFO', `💓 心跳 | 队列${_cmdQueue.length}条 | 锁定:${_isProcessing} | 回答:${answers.length}个`);
-
                 if (answers.length === 0) return;
                 const lastAnswer = answers[answers.length - 1];
-
                 if (answers.length !== _lastAnswerCount) {
                     if (answers.length === _lastAnswerCount + 1) {
                         // [新增] 恰好 +1 = 真实对话回合（≥2 视为历史批量重载，不计）
@@ -3055,13 +2900,11 @@
                 } else if (lastAnswer !== _lastAnswerEl) {
                     _lastAnswerEl = lastAnswer;
                 }
-
                 const rawLen = lastAnswer.textContent.length;
                 if (rawLen <= _lastScannedLen && _currentRoundSent.size > 0) {
                     return;
                 }
                 _lastScannedLen = rawLen;
-
                 const re = /【cmd】([\s\S]*?)【\/cmd】/g;
                 // [修改] 提取日志改为事务性缓冲：流式输出期间每轮轮询都会重新提取，
                 // 中间轮次的提取日志没有观测价值且大量刷屏，仅当本轮实际捕获到
