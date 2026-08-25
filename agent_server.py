@@ -1,4 +1,5 @@
-"""PokerAgent - 本地接应服务 (SSE流式版) v42
+"""
+PokerAgent - 本地接应服务 (SSE流式版) v43
 启动方式： python agent_server.py
 默认监听：http://127.0.0.1:9966
 """
@@ -12,10 +13,10 @@ import re
 import inspect
 import threading
 import base64
-import difflib   # 用于 -s 模式的模糊匹配策略
-import shutil    # 用于移动文件/目录到回收站
-import time      # 用于回收站时间戳记录
-import locale    # 获取系统默认编码
+import difflib  # 用于 -s 模式的模糊匹配策略
+import shutil  # 用于移动文件/目录到回收站
+import time  # 用于回收站时间戳记录
+import locale  # 获取系统默认编码
 import platform  # 用于判断操作系统
 import uuid
 import queue
@@ -56,23 +57,23 @@ def _detect_powershell():
     return None
 _POWERSHELL_EXE = _detect_powershell()
 # ========== 记忆系统配置 ==========
-MEMORY_TEMP_INITIAL = 100      # 新记忆初始温度（决定新旧记忆的淘汰压力）。
+MEMORY_TEMP_INITIAL = 100  # 新记忆初始温度（决定新旧记忆的淘汰压力）。
 MEMORY_TEMP_DECAY_RATIO = 0.95  # 每轮衰减比例（保留95%，即衰减5%）。
-MEMORY_TEMP_HEAT_RATIO = 0.5    # 被读取时向初始温度回归的比例（极冷数据飙升）。
-MEMORY_EXPOSE_WINDOW = 20       # Tag 云暴露的记忆条数（温度Top-N）。
-MEMORY_READ_WINDOW = 2          # memory search 上下额外返回的记忆条数。
+MEMORY_TEMP_HEAT_RATIO = 0.5  # 被读取时向初始温度回归的比例（极冷数据飙升）。
+MEMORY_EXPOSE_WINDOW = 20  # Tag 云暴露的记忆条数（温度Top-N）。
+MEMORY_READ_WINDOW = 2  # memory search 上下额外返回的记忆条数。
 # ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 # 任务队列与 SSE 流式架构
 # ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 task_queue = queue.Queue()
 # [新增] 任务控制共享状态（GUI 按钮 → Worker 线程）
-_current_process = None          # 当前正在执行的子进程引用（exec/run）
+_current_process = None  # 当前正在执行的子进程引用
 _current_process_lock = threading.Lock()
 _pause_event = threading.Event()  # set=运行中, clear=暂停
-_pause_event.set()                # 初始为运行状态
-_kill_mode = None                 # None / 'discard' / 'done'
+_pause_event.set()  # 初始为运行状态
+_kill_mode = None  # None / 'discard' / 'done'
 _kill_mode_lock = threading.Lock()
-_current_task_id = None           # 当前正在执行的任务ID
+_current_task_id = None  # 当前正在执行的任务ID
 # [新增] 全局中断信号：request_kill 时 set，worker 取新任务前 clear
 _abort_event = threading.Event()
 # [新增] 任务中断异常：在任何检查点命中时抛出，worker_loop 统一捕获
@@ -82,12 +83,12 @@ def _check_abort():
     """检查中断信号，命中则抛出 TaskAborted（在耗时操作间调用）"""
     if _abort_event.is_set():
         raise TaskAborted()
-sse_clients = []          # 存放所有连接的 SSE 客户端队列
+sse_clients = []  # 存放所有连接的 SSE 客户端队列
 _sse_lock = threading.Lock()  # 保护 sse_clients 的锁
 # ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 # 任务状态注册表（解决 SSE 晚订阅竞态：新客户端连接时回放历史状态）
 # ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
-_task_registry = {}   # task_id -> {'status':..., 'logs':[...], 'result':...}
+_task_registry = {}  # task_id -> {'status':..., 'logs':[...], 'result':...}
 _task_registry_lock = threading.Lock()
 def emit_task_event(evt):
     """更新任务注册表并推送给所有已连接的 SSE 客户端（SSE 侧自动剥离 ANSI 颜色码）"""
@@ -185,8 +186,7 @@ def worker_loop():
             emit_task_event({'id': task_id, 'type': 'status', 'status': 'running'})
             try:
                 result = execute_line_streaming(cmd_str, task_id)
-            except TaskAborted:
-                # [新增] 任务被用户手动中断
+            except TaskAborted:  # [新增] 任务被用户手动中断
                 result = None
                 print(f'[Worker] ⛔ 任务 {task_id[:8]} 被用户手动中断')
             except Exception as e:
@@ -326,7 +326,8 @@ def load_config():
     except Exception as e:
         print(f'[Agent] 配置加载失败，使用默认值: {e}')
 def _push_config():
-    save_config()  # 每次配置变更时持久化
+    save_config()
+    # 每次配置变更时持久化
     _config_changed.set()
 def log_action(action, detail=''):
     import datetime
@@ -436,8 +437,7 @@ def _get_original_path(trash_path):
         return os.path.join(drive, *parts[2:])
     else:
         return os.path.normpath(os.path.join(WORK_DIR, rel_path))
-def _match_text_block(file_lines, old_lines, ignore_case=False, ignore_indent=False,
-                      normalize_ws=False, fuzzy_threshold=None):
+def _match_text_block(file_lines, old_lines, ignore_case=False, ignore_indent=False, normalize_ws=False, fuzzy_threshold=None):
     """
     通用文本块匹配方法，支持组合匹配条件。
     返回匹配的起始索引列表(0-based)。
@@ -628,13 +628,13 @@ def execute_line_streaming(line, task_id):
         # 拼接返回：中文标签 + JSON 键值 + 底部实际命令及输出
         _lines = [
             '{',
-            f'  当前工作目录       "work_dir": "{WORK_DIR}",',
-            f'  剪贴板读取模式     "clipboard_mode": {str(clipboard_mode).lower()},',
-            f'  系统命令执行开关   "exec_enabled": {str(exec_enabled).lower()},',
-            f'  终端类型           "shell_type": "{shell_type}",',
-            f'  目录权限限制开关   "permission_enabled": {str(permission_mgr.enabled).lower()},',
-            f'  始终允许列表条目数 "always_allow_count": {len(permission_mgr._always_allow)},',
-            f'  操作系统           "platform": "{platform.system()}"',
+            f'  当前工作目录        "work_dir": "{WORK_DIR}",',
+            f'  剪贴板读取模式      "clipboard_mode": {str(clipboard_mode).lower()},',
+            f'  系统命令执行开关    "exec_enabled": {str(exec_enabled).lower()},',
+            f'  终端类型            "shell_type": "{shell_type}",',
+            f'  目录权限限制开关    "permission_enabled": {str(permission_mgr.enabled).lower()},',
+            f'  始终允许列表条目数  "always_allow_count": {len(permission_mgr._always_allow)},',
+            f'  操作系统            "platform": "{platform.system()}"',
             '',
             f'>{_ps_cmd}',
             _ps_ver,
@@ -652,8 +652,8 @@ def execute_line_streaming(line, task_id):
         block = ''
         if '\x00' in arg:
             arg, block = arg.split('\x00', 1)
-            arg = arg.strip()
-            block = block.strip('\n').replace('TICK3', '```')
+        arg = arg.strip()
+        block = block.strip('\n').replace('TICK3', '```')
         content = arg.replace('TICK3', '```').strip()
         if block:
             content = (content + '\n' + block) if content else block
@@ -670,8 +670,8 @@ def execute_line_streaming(line, task_id):
         mem_block = ''
         if '\x00' in raw_arg:
             raw_arg, mem_block = raw_arg.split('\x00', 1)
-            raw_arg = raw_arg.strip()
-            mem_block = mem_block.strip('\n').replace('TICK3', '```')
+        raw_arg = raw_arg.strip()
+        mem_block = mem_block.strip('\n').replace('TICK3', '```')
         # [修改] 仅 block 无 inline 参数时也放行（原来是直接报缺参数）
         if not raw_arg and not mem_block:
             return '错误：memory 指令缺少参数。发送 @@help memory 获取指令详细用法'
@@ -916,6 +916,7 @@ def execute_line_streaming(line, task_id):
             return '错误：缺少文件路径。发送 @@help replace 获取指令详细用法'
         filepath = safe_path(W, tokens[0])
         flags = tokens[1:] if len(tokens) > 1 else []
+        # 解析行号范围 -l
         line_range = None
         for idx_f, flag in enumerate(flags):
             if flag == '-l' and idx_f + 1 < len(flags):
@@ -938,7 +939,7 @@ def execute_line_streaming(line, task_id):
         ignore_case = '-i' in flags
         replace_all = '-a' in flags
         ignore_indent = '-s' in flags  # 忽略每行首尾空格和缩进
-        normalize_ws = '-w' in flags    # 空白归一化
+        normalize_ws = '-w' in flags  # 空白归一化
         # 解析模糊匹配参数 -f 或 -f-0.8
         fuzzy_threshold = None
         for flag in flags:
@@ -998,10 +999,10 @@ def execute_line_streaming(line, task_id):
                             f_proc = re.sub(r'\s+', ' ', file_lines[best_pos + j].strip()).lower()
                             o_proc = re.sub(r'\s+', ' ', old_lines[j].strip()).lower()
                             if o_proc == f_proc:
-                                diag.append(f'    ✓ {repr(o_proc[:120])}{"（仅前120字符）" if len(o_proc) > 120 else ""}')
+                                diag.append(f'  ✓ {repr(o_proc[:120])}{"（仅前120字符）" if len(o_proc) > 120 else ""}')
                             else:
-                                diag.append(f'    ✗ 旧: {repr(o_proc[:120])}{"（仅前120字符）" if len(o_proc) > 120 else ""}')
-                                diag.append(f'      文: {repr(f_proc[:120])}{"（仅前120字符）" if len(o_proc) > 120 else ""}')
+                                diag.append(f'  ✗ 旧: {repr(o_proc[:120])}{"（仅前120字符）" if len(o_proc) > 120 else ""}')
+                                diag.append(f'    文: {repr(f_proc[:120])}{"（仅前120字符）" if len(o_proc) > 120 else ""}')
                     return '\n'.join(diag)
                 # 非全量替换时，仅保留第一个匹配
                 if not replace_all and len(matches) > 1:
@@ -1152,19 +1153,19 @@ def execute_line_streaming(line, task_id):
     elif cmd == 'grep':
         # [重构] 标准化 grep：正则匹配 + 标准选项集
         # 用法: grep [选项] "模式" <路径>
-        #        grep [选项] -e "模式1" -e "模式2" <路径>
+        #       grep [选项] -e "模式1" -e "模式2" <路径>
         # 选项: -i 忽略大小写 | -v 反向匹配 | -c 仅计数 | -l 仅文件名
-        #        -w 全词匹配 | -r 递归目录 | -s 忽略行首缩进
-        #        -e 多模式(可多次) | --include 文件名正则过滤 | --exclude 文件名正则排除
+        #       -w 全词匹配 | -r 递归目录 | -s 忽略行首缩进
+        #       -e 多模式(可多次) | --include 文件名正则过滤 | --exclude 文件名正则排除
         tokens = parse_args_with_quotes(arg)
         if not tokens:
             return '错误：缺少参数。发送 @@help grep 获取指令详细用法'
         # ── 解析选项与参数 ──
-        flag_set = set()        # 单字符标志集合（支持 -ivr 合并写法）
-        patterns = []           # -e 显式指定的模式列表
+        flag_set = set()  # 单字符标志集合（支持 -ivr 合并写法）
+        patterns = []  # -e 显式指定的模式列表
         include_pattern = None  # --include 文件名过滤正则（字符串）
         exclude_pattern = None  # --exclude 文件名排除正则（字符串）
-        non_opts = []           # 非选项参数（模式 / 路径）
+        non_opts = []  # 非选项参数（模式 / 路径）
         ti = 0
         while ti < len(tokens):
             t = tokens[ti]
@@ -1188,13 +1189,13 @@ def execute_line_streaming(line, task_id):
                 non_opts.append(t)
                 ti += 1
         # ── 标志提取 ──
-        ignore_case = 'i' in flag_set       # 忽略大小写
-        invert_match = 'v' in flag_set      # 反向匹配（输出不匹配的行）
-        count_only = 'c' in flag_set         # 仅输出匹配行数
-        files_only = 'l' in flag_set         # 仅输出含匹配的文件名
-        whole_word = 'w' in flag_set         # 全词匹配（自动包 \b）
-        recursive = 'r' in flag_set          # 递归搜索目录
-        strip_indent = 's' in flag_set       # 匹配前去除行首空白（保留原有功能）
+        ignore_case = 'i' in flag_set  # 忽略大小写
+        invert_match = 'v' in flag_set  # 反向匹配（输出不匹配的行）
+        count_only = 'c' in flag_set  # 仅输出匹配行数
+        files_only = 'l' in flag_set  # 仅输出含匹配的文件名
+        whole_word = 'w' in flag_set  # 全词匹配（自动包 \b）
+        recursive = 'r' in flag_set  # 递归搜索目录
+        strip_indent = 's' in flag_set  # 匹配前去除行首空白（保留原有功能）
         # ── 确定模式与路径 ──
         if patterns:
             # 有 -e：所有 non_opts 视为路径（本工具取第一个）
@@ -1633,7 +1634,7 @@ def execute_line_streaming(line, task_id):
             for name in sorted(entries):
                 full = os.path.join(dirpath, name)
                 if os.path.isdir(full):
-                    lines.append(f'  [DIR]  {name}')
+                    lines.append(f'  [DIR] {name}')
                 else:
                     size = os.path.getsize(full)
                     if size < 1024:
@@ -1668,10 +1669,17 @@ def execute_line_streaming(line, task_id):
     elif cmd == 'exec':
         if not exec_enabled:
             return '错误：exec 指令已被管理员禁用。'
+        # [新增] 代码块格式支持：exec 后跟【CodeSTART】/```代码块时，代码块内容即要执行的命令
+        # 内联文本与代码块同时存在时以代码块为准（内联丢弃）；不做 TICK3 替换，保证命令逐字保真
+        if '\x00' in arg:
+            arg = arg.split('\x00', 1)[1]
         if not arg.strip():
             return '错误：缺少命令。发送 @@help exec 获取指令详细用法'
         # [新增] 危险命令拦截与弹窗确认
-        dangerous_patterns = re.compile(r'\b(del|rd|rm|rmdir|format|erase|diskpart|mkfs)\b', re.IGNORECASE)
+        # [修改] 补漏：新增 ri（Remove-Item 别名）、shred、remove-item 及 PowerShell 磁盘破坏性命令
+        # （clear-disk / initialize-disk / remove-partition；format 的词边界已天然覆盖 Format-Volume）
+        # 注：ri 可能对含 "ri" 独立词的路径误报，但误报仅多一次确认弹窗，成本可接受
+        dangerous_patterns = re.compile(r'\b(del|rd|rm|rmdir|ri|shred|format|erase|diskpart|mkfs|remove-item|clear-disk|initialize-disk|remove-partition)\b', re.IGNORECASE)
         if dangerous_patterns.search(arg):
             if permission_mgr._callback:
                 # 触发 GUI 弹窗或 CLI 询问
@@ -1694,8 +1702,8 @@ def execute_line_streaming(line, task_id):
             else:
                 # cmd 回退
                 process = subprocess.Popen(
-                    f'cmd /c {arg.strip()}', shell=True,
-                    stdout=subprocess.PIPE, stderr=subprocess.STDOUT, cwd=W
+                    f'cmd /c {arg.strip()}',
+                    shell=True, stdout=subprocess.PIPE, stderr=subprocess.STDOUT, cwd=W
                 )
             # [新增] 注册当前子进程，供 GUI 侧终止
             with _current_process_lock:
@@ -1841,7 +1849,9 @@ def execute_line_streaming(line, task_id):
                 _kill_process_tree(process)
                 with _current_process_lock:
                     _current_process = None
-                return '命令执行超时（限制:60秒）,命令可能仍在运行中,只是60秒内没有执行完成,具体情况请请求助管理员。'
+                # [修改] 文案修正：超时路径已调用 _kill_process_tree 强杀进程树，
+                # 原文案"命令可能仍在运行中"与实际行为不符
+                return '命令执行超时（限制:60秒），进程树已被强制终止。'
             process.wait()
             with _current_process_lock:
                 _current_process = None
@@ -1862,19 +1872,19 @@ def execute_line_streaming(line, task_id):
             with urllib.request.urlopen(req, timeout=15) as resp:
                 raw_bytes = resp.read()
                 content_type = resp.headers.get('Content-Type', '')
-                charset = 'utf-8'
-                m = re.search(r'charset=([a-zA-Z0-9\-]+)', content_type, re.I)
-                if m:
-                    charset = m.group(1)
+            charset = 'utf-8'
+            m = re.search(r'charset=([a-zA-Z0-9\-]+)', content_type, re.I)
+            if m:
+                charset = m.group(1)
+            try:
+                body = raw_bytes.decode(charset)
+            except (UnicodeDecodeError, LookupError):
                 try:
-                    body = raw_bytes.decode(charset)
-                except (UnicodeDecodeError, LookupError):
-                    try:
-                        body = raw_bytes.decode('utf-8')
-                    except UnicodeDecodeError:
-                        body = raw_bytes.decode('gbk', errors='replace')
-                log_action('GET', url)
-                return body
+                    body = raw_bytes.decode('utf-8')
+                except UnicodeDecodeError:
+                    body = raw_bytes.decode('gbk', errors='replace')
+            log_action('GET', url)
+            return body
         except urllib.error.HTTPError as e:
             return f'HTTP 错误：{e.code} {e.reason}'
         except Exception as e:
@@ -1905,9 +1915,9 @@ KNOWN_CMDS = set(re.findall(r"cmd\s*==\s*'([^']+)'", _EXEC_SRC))
 def _parse_memory_params(raw):
     """
     解析 memory 指令末尾修饰参数，支持任意顺序组合：
-      -pin     → 固定记忆
-      temp:N   → 自定义初始温度（N 纯数字，如 temp:200）
-      tag:a,b,c → 标签
+      -pin       → 固定记忆
+      temp:N     → 自定义初始温度（N 纯数字，如 temp:200）
+      tag:a,b,c  → 标签
     从字符串末尾循环剥离，直到末尾无任何匹配参数。
     行为增强：tag: 可出现多次，多段标签按书写顺序合并（原实现仅取最后一个 tag:）。
     返回 (content, tags, pin, custom_temp)；custom_temp 未指定为 None。
@@ -2345,7 +2355,7 @@ class _LogWriter:
     """
     def __init__(self, original_stream, stream_name):
         self._orig = original_stream  # 原始 sys.stdout 或 sys.stderr
-        self._name = stream_name      # 'out' 或 'err'，用于区分来源
+        self._name = stream_name  # 'out' 或 'err'，用于区分来源
     def write(self, s):
         if not s:
             return
@@ -2354,7 +2364,7 @@ class _LogWriter:
         self._orig.flush()  # 立即刷新，防止卡顿
         # 2. 文件持久化（线程安全追加写入）
         # [修改] 改用二进制模式：1) 字节偏移精确可追踪（供 GUI 窗口化回读定位）
-        #                        2) 消除 Windows 文本模式 \n→\r\n 隐式翻译
+        #                          2) 消除 Windows 文本模式 \n→\r\n 隐式翻译
         # [行为变更] 日志文件新内容行尾为 LF（历史 CRLF 内容读取方均兼容）
         start_pos = end_pos = None
         with _log_file_lock:
@@ -2369,7 +2379,7 @@ class _LogWriter:
                 start_pos = end_pos = None  # 写入失败静默处理，不能让日志系统搞挂主流程
         # 3. 推送到 GUI（事件驱动核心）
         # [修改] 消息附带本次写入的字节偏移区间 (stream_name, text, start, end)
-        #        GUI 据此建立 内存行 ↔ 文件字节区间 的精确映射，支撑滑动窗口回读
+        # GUI 据此建立 内存行 ↔ 文件字节区间 的精确映射，支撑滑动窗口回读
         if _gui_log_queue:
             try:
                 # 使用 put_nowait 避免阻塞 worker 线程
@@ -2398,7 +2408,7 @@ def agent_stream():
             evt = {'id': tid, 'type': 'status', 'status': entry['status']}
             if entry['status'] == 'done' and entry['result']:
                 evt['result'] = entry['result']
-                q.put(f"data: {json.dumps(evt, ensure_ascii=False)}\n\n")
+            q.put(f"data: {json.dumps(evt, ensure_ascii=False)}\n\n")
             # 只对未完成任务回放日志（done 的任务结果已含全部信息）
             if entry['status'] != 'done':
                 for log_line in entry['logs']:
@@ -2460,9 +2470,6 @@ def agent_exec():
                         idx = bln.lower().find('【/codeend】')
                         if idx != -1:
                             block.append(bln[:idx])
-                            peek += 1
-                            break
-                        block.append(bln)
                         peek += 1
                         break
                     block.append(bln)
@@ -2496,7 +2503,8 @@ def agent_exec():
         cmd = parts[0].lower()
         arg = parts[1] if len(parts) > 1 else ''
         # 处理多行指令
-        if cmd in ('create', 'append', 'replace', 'insert', 'find', 'deleteline', 'remember', 'memory'):
+        # [修改] 新增 exec：支持 "exec + 代码块" 格式，代码块内容即要执行的命令
+        if cmd in ('create', 'append', 'replace', 'insert', 'find', 'deleteline', 'remember', 'memory', 'exec'):
             # deleteline 如果带 -l 是单行
             if cmd == 'deleteline' and '-l' in arg:
                 task_id = str(uuid.uuid4())
@@ -2525,7 +2533,7 @@ def agent_exec():
                         log_action('ENQUEUE', f'ID: {task_id} | CMD: {final_cmd}')
                         i = next_i
                         continue
-                elif cmd in ('create', 'append', 'insert', 'find', 'remember', 'memory'):
+                elif cmd in ('create', 'append', 'insert', 'find', 'remember', 'memory', 'exec'):  # [修改] 新增 exec
                     # 这些指令只需要一个内容块
                     final_cmd = f"{cmd} {arg}\x00{blocks[0]}"
                     task_id = str(uuid.uuid4())
