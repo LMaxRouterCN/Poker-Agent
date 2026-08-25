@@ -54,7 +54,7 @@
 #### mkdir
 作用：创建目录（支持多级创建） - 输入信息：目录路径 - 返回信息：操作结果
 #### exec
-作用：执行系统命令（终端可能是 PowerShell 或 CMD，需先确认） - 输入信息：系统命令 - 返回信息：命令执行的输出
+作用：执行系统命令（终端可能是 PowerShell 或 CMD，需先确认，支持【CodeSTART】代码块格式执行多行命令） - 输入信息：系统命令（单行内联或代码块格式） - 返回信息：命令执行的输出
 #### run
 作用：运行 Python 脚本 - 输入信息：Python脚本路径 - 返回信息：脚本运行的输出
 #### get
@@ -481,7 +481,25 @@ Hello World!
 ---
 
 ### exec <系统命令>
-执行系统命令，返回输出。
+执行系统命令，返回输出。支持两种命令格式。
+**命令格式（两种）：**
+1. **单行内联**：`exec <命令>`。
+2. **代码块格式**：exec 独占一行，命令内容用【CodeSTART】和【/CodeEND】代码块包裹。
+示例（代码块格式，多行 PowerShell 命令）：
+【cmd】exec
+【CodeSTART】
+```
+$files = Get-ChildItem -Recurse -File
+$files | Sort-Object Length -Descending | Select-Object -First 10 Name, Length
+```
+【/CodeEND】
+【/cmd】
+建议始终使用代码块格式,因为有的时候某些特殊字符会在单行模式下破坏内容
+**代码块格式说明：**
+- 内联文本与代码块同时存在时，以代码块为准，内联部分被忽略
+- 代码块内容原样作为命令执行，**不做 TICK3 还原**（TICK3 规定仅适用于写入文件的内容），不要在 exec 代码块内使用 TICK3
+- 多行命令仅在 PowerShell 终端下可靠执行，CMD 终端请改用单行命令
+**危险命令确认**：命令中包含删除/格式化类关键词（del、rd、rm、ri、Remove-Item、format、erase、diskpart、mkfs、shred、Clear-Disk、Initialize-Disk、Remove-Partition）时，会先请求用户确认，被拒绝则不执行。
 **终端类型：** exec 使用的系统终端由后端配置决定，回退链为：
 1. PowerShell 7+（pwsh）— 优先
 2. Windows PowerShell 5.x（powershell）— 未安装 pwsh 时回退
