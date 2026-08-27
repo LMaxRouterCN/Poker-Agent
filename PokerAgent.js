@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         PokerAgent
 // @namespace    http://tampermonkey.net/
-// @version      42
+// @version      43
 // @author       LMaxRouterCN
 // @description  PokerAgent的浏览器端核心脚本，提供元素选择、配置管理、调试日志等功能，支持多站点独立配置和自动发送功能。
 // @match        *://*/*
@@ -3179,6 +3179,9 @@
             });
         });
         _domObserver.observe(document.body, { childList: true, subtree: true, characterData: true });
+              // 【新增】初始扫描：页面刷新后聊天记录里已存在的现成指令属于"存量"，DOM不变则监听永不触发。
+        // 建立监听后立即主动扫一次，抓取存量指令。fire-and-forget，不阻塞initAgent返回
+        _scanAnswers(currentContainer, answerSel);
     }
 
     function esc(s) {
