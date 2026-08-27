@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name PokerAgent
 // @namespace http://tampermonkey.net/
-// @version 38
+// @version 39
 // @author LMaxRouterCN
 // @description PokerAgent的浏览器端核心脚本，提供元素选择、配置管理、调试日志等功能，支持多站点独立配置和自动发送功能。
 // @match *://*/*
@@ -1693,7 +1693,6 @@
                             _log('WARN', `📋 ${tag} ${reason}，回退到元素文本读取`);
                         }
                     } else {
-                        const reason = (cfg.selCodeCopyButton && opts && opts.skipCopyBtn) ? '运行时无副作用模式，跳过复制按钮点击' : '未配置复制按钮选择器';
                         _log('INFO', `📋 ${tag} ${reason}，直接读取元素文本`);
                     }
 
@@ -2184,7 +2183,7 @@
                 log('INFO', `✨ 已应用 ${cleanCount} 条自定义清洗规则`);
             }
         }
-        log('INFO', `🚀 AI已说完，发送至本地后端...`);
+        log('INFO', `🚀 捕获完整指令，立即发送至本地服务...`);
         GM_xmlhttpRequest({
             method: 'POST',
             url: c.apiUrl,
@@ -2913,9 +2912,9 @@
             if (answers.length === 0) {
                 _noAnswerCount++;
                 if (_noAnswerCount === 5) {
-                    log('WARN', `⚠️ 已连续 5 次轮询未找到回答元素 ("${answerSel}")`);
+                    log('WARN', `⚠️ 已连续 5 次扫描未找到回答元素 ("${answerSel}")`);
                 } else if (_noAnswerCount >= 10 && _noAnswerCount % 10 === 0) {
-                    log('WARN', `⚠️ 已连续 ${_noAnswerCount} 次轮询未找到回答元素 ("${answerSel}")，请检查选择器配置`);
+                    log('WARN', `⚠️ 已连续 ${_noAnswerCount} 次扫描未找到回答元素 ("${answerSel}")，请检查选择器配置`);
                 }
             } else {
                 if (_noAnswerCount > 0) {
@@ -2962,7 +2961,7 @@
             const rawLen = lastAnswer.textContent.length;
             if (rawLen <= _lastScannedLen && _currentRoundSent.size > 0) return;
 
-            if (!lastAnswer.textContent.includes('【cmd】')) {
+            if (!lastAnswer.textContent.includes('【/cmd】')) {
                 _lastScannedLen = rawLen;
                 return;
             }
@@ -2970,7 +2969,7 @@
             _lastScannedLen = rawLen;
             const re = /【cmd】([\s\S]*?)【\/cmd】/g;
             const textLogs = [];
-            const text = await getCleanText(lastAnswer, c, textLogs, { skipCopyBtn: true });
+            const text = await getCleanText(lastAnswer, c, textLogs);
             re.lastIndex = 0;
             const newCmds = [];
             let m;
