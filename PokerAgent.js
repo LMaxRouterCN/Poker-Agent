@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         PokerAgent
 // @namespace    http://tampermonkey.net/
-// @version      45
+// @version      46
 // @author       LMaxRouterCN
 // @description  PokerAgent的浏览器端核心脚本，提供元素选择、配置管理、调试日志等功能，支持多站点独立配置和自动发送功能。
 // @match        *://*/*
@@ -1927,30 +1927,57 @@
     }
   
     /**
-     * 【修复A】发送按钮指纹事件观察器：监听指纹取值基准(容器或按钮)的变化即回调。
-     * 无锚点时退化为body级childList监听，锚点出现即命中。
-     * 覆盖指纹全部输入源：class/style/disabled/aria-*\/子节点结构/内部文本。
-     * 父节点仅挂childList：兜底"本体被整体替换/移除"导致的观察失联盲区。
-     * @returns {Function} 停止观察(幂等安全)
+     * 【修复H】发送按钮指纹事件观察器：监听指纹取值基准(容器或按钮)的变化即回调。
+     * 观察拓扑三层（解决定向观察器"锚点异父重建"失联盲区——原版锚点被移到不同父节点后，
+     * 本体与父观察器双双哑火，_waitForLLMFinish可永久悬挂并锁死_isProcessing）：
+     * ①保底层(body级childList+subtree)：锚点无论移除还是异父重建，摘除/插入动作必然在
+     *   文档树留下结构mutation，本层永不失联。只挂childList不挂attributes：
+     *   属性变化由定向层低延迟捕捉，避免body级全量属性监听把任意属性抖动放大成全树事件。
+     * ②定向层(锚点本体+父节点)：属性/文本/子节点变化的主力路径，锚点漂移时整体重建。
+     * ③漂移检测：每次事件校验querySelector结果是否仍为定向层锚定节点，漂移即重挂。
+     *   闭环：漂移必先经"摘除"→摘除必触发保底层→检测必有机会执行。
+     * evaluate闭包每次重新querySelector，重挂后自动跟随新锚点。
+     * @returns {Function} 停止观察(回收保底层+当前定向层全部观察器，幂等安全)
      */
     function _observeSendBtnFingerprint(onChange) {
       const c = cfgLoad();
       const targetSel = c.selSendButtonContainer || c.selSendButton;
-      const el = targetSel ? document.querySelector(targetSel) : null;
       let stopped = false;
-      const stops = [];
-      const make = (node, opts) => {
-        const mo = new MutationObserver(() => { if (!stopped) onChange(); });
-        mo.observe(node, opts);
-        stops.push(() => { try { mo.disconnect(); } catch (e) { } });
-      };
-      if (el) {
-        make(el, { attributes: true, attributeFilter: ['class', 'style', 'disabled', 'aria-disabled', 'aria-label'], childList: true, characterData: true, subtree: true });
-        if (el.parentElement) make(el.parentElement, { childList: true }); // 兜底本体被整体替换/移除
-      } else {
-        make(document.body || document.documentElement, { childList: true, subtree: true });
+      const baseStops = [];    // 【修复H】保底观察器句柄（生命周期=停止函数）
+      let directedStops = [];  // 【修复H】定向观察器句柄（锚点漂移时整体重建）
+      let watchedEl = null;    // 【修复H】定向层当前锚定节点（漂移检测基准）
+      function queryAnchor() {
+        if (!targetSel) return null;
+        try { return document.querySelector(targetSel); } catch (e) { return null; }
       }
-      return () => { stopped = true; stops.forEach(s => s()); };
+      function make(node, opts, bucket) {
+        const mo = new MutationObserver(() => { if (!stopped) handler(); });
+        mo.observe(node, opts);
+        bucket.push(() => { try { mo.disconnect(); } catch (e) { } });
+      }
+      function attachDirected() {
+        directedStops.forEach(s => s()); // 回收旧定向层
+        directedStops = [];
+        watchedEl = queryAnchor();
+        if (!watchedEl) return; // 锚点暂缺：仅保底层值守；重现时结构mutation触发handler→自动重挂
+        make(watchedEl, { attributes: true, attributeFilter: ['class', 'style', 'disabled', 'aria-disabled', 'aria-label'], childList: true, characterData: true, subtree: true }, directedStops);
+        if (watchedEl.parentElement) make(watchedEl.parentElement, { childList: true }, directedStops); // 兜底本体被整体替换
+      }
+      function handler() {
+        if (stopped) return;
+        // 【修复H】漂移检测：每次事件校验锚点归属。检测成本=一次querySelector(微秒级)，
+        // 流式期间数十Hz触发，无感。锚点未漂移时直接放行onChange
+        if (queryAnchor() !== watchedEl) attachDirected();
+        onChange();
+      }
+      // 装配（function声明提升，make/attachDirected/handler互相引用无TDZ风险）
+      make(document.body || document.documentElement, { childList: true, subtree: true }, baseStops); // ①保底层
+      attachDirected(); // ②定向层装配
+      return () => {
+        stopped = true;
+        baseStops.forEach(s => s());
+        directedStops.forEach(s => s());
+      };
     }
   
     /**
