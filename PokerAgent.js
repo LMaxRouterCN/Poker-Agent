@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         PokerAgent
 // @namespace    http://tampermonkey.net/
-// @version      44
+// @version      45
 // @author       LMaxRouterCN
 // @description  PokerAgent的浏览器端核心脚本，提供元素选择、配置管理、调试日志等功能，支持多站点独立配置和自动发送功能。
 // @match        *://*/*
@@ -226,6 +226,7 @@
   
     function _stopAgent() {
       _initToken++; // 【新增·改动2】作废所有在途初始化与重试（原逻辑拦不住挂起中的initAgent苏醒）
+      if (_containerWaitStop) { _containerWaitStop(); _containerWaitStop = null; } // 【新增·修复E】停止时清理容器等待观察器
       _pollConfigActive = false;
       // 【删·改动2】原 _pollTimer clearInterval 死代码
       if (_domObserver) { _domObserver.disconnect(); _domObserver = null; }
@@ -866,6 +867,11 @@
       const key = KEY_MAP[_pickType];
       if (!key) { log('ERR', `未知选择类型: ${_pickType}`); return; }
       cfgSaveRuntime({ [key]: sel });
+      // 【新增·修复B】Agent因缺容器未启动时，旧版靠5s轮询兜底拾取新配置；轮询删除后需显式接管。
+      // 仅在"未启动"(_domObserver为空)时重启：运行中重启会清去重表→历史指令重放
+      if (_getEnableState() !== 'disabled' && !_domObserver) {
+        initAgent();
+      }
       log('OK', `已选择 [${TYPE_LABEL[_pickType]}]:${sel}`);
       const ctxChain = [];
       let cur = el;
@@ -1083,7 +1089,7 @@
               </div>
               <div class="ag-row">
                 <label style="font-size:12px;color:#a0a0a0;white-space:nowrap">放行前额外延时</label>
-                <input class="ag-inp" id="ag-wait-delay" type="number" value="${editCfg.waitDelayAfterDone || 500}" style="width:80px" />
+                <input class="ag-inp" id="ag-wait-delay" type="number" value="${editCfg.waitDelayAfterDone ?? 500}" style="width:80px" />
               </div>
               <div class="ag-field" style="margin-top:8px">
                 <label>回执验证重试次数</label>
@@ -1484,6 +1490,7 @@
     let _roundCount = 0;
     let _lastMemoryInjectRound = 0;
     let _domObserver = null;
+    let _containerWaitStop = null; // 【新增·修复E】容器等待观察器句柄
     let _initToken = 0;     // 【新增·改动2】初始化令牌：每次initAgent自增；旧链在挂起恢复点自检后作废
     let _pollConfigSeq = 0; // 【新增·改动2】轮询链令牌：与_initToken配对，旧轮询链自杀
     let _scanScheduled = false;
@@ -1920,49 +1927,54 @@
     }
   
     /**
-     * 【新增·改动14】发送按钮指纹事件观察器：监听指纹取值基准(容器或按钮)的变化即回调。
+     * 【修复A】发送按钮指纹事件观察器：监听指纹取值基准(容器或按钮)的变化即回调。
+     * 无锚点时退化为body级childList监听，锚点出现即命中。
      * 覆盖指纹全部输入源：class/style/disabled/aria-*\/子节点结构/内部文本。
      * 父节点仅挂childList：兜底"本体被整体替换/移除"导致的观察失联盲区。
      * @returns {Function} 停止观察(幂等安全)
      */
-
     function _observeSendBtnFingerprint(onChange) {
       const c = cfgLoad();
       const targetSel = c.selSendButtonContainer || c.selSendButton;
       const el = targetSel ? document.querySelector(targetSel) : null;
-      if (!el) return () => { }; // 无锚点：调用方首评自会按MISSING判定
       let stopped = false;
-      const mo = new MutationObserver(() => { if (!stopped) onChange(); });
-      mo.observe(el, {
-        attributes: true,
-        attributeFilter: ['class', 'style', 'disabled', 'aria-disabled', 'aria-label'],
-        childList: true, characterData: true, subtree: true
-      });
-      let moParent = null;
-      if (el.parentElement) {
-        moParent = new MutationObserver(() => { if (!stopped) onChange(); });
-        moParent.observe(el.parentElement, { childList: true }); // 只报直接子节点增删：本体被替换时仍有事件
-      }
-      return () => {
-        stopped = true;
-        try { mo.disconnect(); } catch (e) { }
-        if (moParent) { try { moParent.disconnect(); } catch (e) { } }
+      const stops = [];
+      const make = (node, opts) => {
+        const mo = new MutationObserver(() => { if (!stopped) onChange(); });
+        mo.observe(node, opts);
+        stops.push(() => { try { mo.disconnect(); } catch (e) { } });
       };
+      if (el) {
+        make(el, { attributes: true, attributeFilter: ['class', 'style', 'disabled', 'aria-disabled', 'aria-label'], childList: true, characterData: true, subtree: true });
+        if (el.parentElement) make(el.parentElement, { childList: true }); // 兜底本体被整体替换/移除
+      } else {
+        make(document.body || document.documentElement, { childList: true, subtree: true });
+      }
+      return () => { stopped = true; stops.forEach(s => s()); };
     }
   
     /**
-     * 【新增·改动14】通用指纹条件等待：满足predicate即resolve。事件驱动，零轮询。
+     * 【修复C】通用指纹条件等待：满足predicate即resolve，可带超时。事件驱动，零轮询。
+     * 返回predicate判定结果(超时为false)。内部统一settle回收观察器和watchdog。
      */
-    function _waitFingerprint(predicate) {
+    function _waitFingerprint(predicate, timeoutMs) {
       return new Promise(resolve => {
         let settled = false;
         let stop = null;
-        const settle = () => { if (settled) return; settled = true; if (stop) stop(); resolve(); };
+        let watchdog = null;
+        const settle = (val) => {
+          if (settled) return;
+          settled = true;
+          if (stop) stop();
+          if (watchdog) clearTimeout(watchdog);
+          resolve(val);
+        };
         const evaluate = () => {
           let ok = false;
-          try { ok = !!predicate(_getSendBtnFingerprint()); } catch (e) { ok = true; } // 指纹异常按放行处理(原版此处会悬挂)
-          if (ok) settle();
+          try { ok = !!predicate(_getSendBtnFingerprint()); } catch (e) { ok = true; } // 指纹异常按放行处理
+          if (ok) settle(true);
         };
+        if (timeoutMs > 0) watchdog = setTimeout(() => settle(false), timeoutMs);
         stop = _observeSendBtnFingerprint(evaluate);
         evaluate(); // 先判一次：条件可能已满足
       });
@@ -2162,17 +2174,13 @@
     }
   
     async function _waitForSendable() {
-      // 【改·改动14】200ms轮询 → 事件驱动观察器；保留原版30s看门狗(状态机异常时强制放行，语义不变)
+      // 【修复C】使用带超时的_waitFingerprint，移除Promise.race泄漏观察器
       const c = cfgLoad();
       const sendableList = c.sendBtnSendableFingerprints || [];
       if (sendableList.length === 0) return;
       log('INFO', '👀 等待可发送状态...(事件驱动)');
-      const WATCHDOG = 30000; // 看门狗：沿用原版硬超时，属安全阀非业务延时
-      let hit = false;
-      await Promise.race([
-        _waitFingerprint(fp => { if (fp && sendableList.includes(fp)) { hit = true; return true; } return false; }),
-        new Promise(r => setTimeout(r, WATCHDOG))
-      ]);
+      const WATCHDOG = 30000; // 看门狗：安全阀非业务延时
+      const hit = await _waitFingerprint(fp => !!fp && sendableList.includes(fp), WATCHDOG);
       if (hit) log('INFO', '🟢 检测到可发送状态');
       else log('WARN', `⚠️ 等待可发送状态超时(${WATCHDOG}ms)，强制继续`);
     }
@@ -2432,7 +2440,7 @@
           responseType: 'arraybuffer',
           timeout: 0, // 大文件不限时，与SSE长连接同款约定
           onload(r) {
-            if (r.status === 200 && r.response && r.response.byteLength > 0) {
+            if (r.status === 200 && r.response) { // 【修复G】去掉byteLength>0：0字节文件合法
               resolve(new Uint8Array(r.response)); // 【改·改动8】直返字节，不再base64往返
             } else {
               log('ERR', `文件下载失败 HTTP ${r.status}`);
@@ -2784,7 +2792,14 @@
      * ================================================================ */
   
     let _toggleEl = null;
-    // 【删·改动16】let _togglePosTimer = null; （定位轮询已移除）
+    let _togglePosRaf = 0; // 【新增·修复D】rAF合并句柄
+  
+    function _scheduleToggleUpdate() {
+      // 【新增·修复D】布局读合并：全局观察器每mutation批次+scroll capture逐帧触发定位，
+      // 每次两连发getBoundingClientRect强制布局。rAF收敛到每帧最多一次，事件驱动性质不变。
+      if (_togglePosRaf) return;
+      _togglePosRaf = requestAnimationFrame(() => { _togglePosRaf = 0; _updateTogglePosition(); });
+    }
   
     function _initAutoSendToggle() {
       _destroyAutoSendToggle();
@@ -2867,8 +2882,8 @@
       // 【改·改动16】500ms定位轮询 → 事件驱动三通道：
       // ①借道initAgent的全局_domObserver(零新增观察成本) ②窗口resize ③任意滚动(capture)
       // 残余盲区：纯CSS transform动画的视觉位移不触发DOM事件(布局逻辑不受影响，接受)
-      window.addEventListener('resize', _updateTogglePosition);
-      document.addEventListener('scroll', _updateTogglePosition, true);
+      window.addEventListener('resize', _scheduleToggleUpdate);
+      document.addEventListener('scroll', _scheduleToggleUpdate, true);
       setTimeout(() => { _updateTogglePosition(); _updateSliderPos(); }, 100);
     }
   
@@ -2923,9 +2938,9 @@
     }
   
     function _destroyAutoSendToggle() {
-      // 【删·改动16】_togglePosTimer轮询清理(轮询已移除)
-      window.removeEventListener('resize', _updateTogglePosition); // 【新增·改动16】随事件注册成对移除
-      document.removeEventListener('scroll', _updateTogglePosition, true); // 【新增·改动16】
+      if (_togglePosRaf) { cancelAnimationFrame(_togglePosRaf); _togglePosRaf = 0; } // 【新增·修复D】
+      window.removeEventListener('resize', _scheduleToggleUpdate); // 【改·修复D】成对移除
+      document.removeEventListener('scroll', _scheduleToggleUpdate, true); // 【改·修复D】
       if (_toggleEl) { _toggleEl.remove(); _toggleEl = null; }
     }
   
@@ -3083,6 +3098,7 @@
   
     async function initAgent() {
       const token = ++_initToken; // 【改·改动2】领取令牌（原先重入无任何防护，会双轮询链+观察器泄漏）
+      if (_containerWaitStop) { _containerWaitStop(); _containerWaitStop = null; } // 【新增·修复E】清理旧容器等待观察器
       log('DEBUG', `🔄 initAgent #${token}`); // 【新增·改动2】令牌日志，便于确认并发时旧链作废
       if (_domObserver) { _domObserver.disconnect(); _domObserver = null; }
       // 【删·改动2】原 _pollTimer clearInterval 死代码
@@ -3113,7 +3129,7 @@
       if (!currentContainer) {
         // 【改·改动13】5秒重试轮询 → 事件驱动：挂监听等容器出现，出现即自动重启(令牌守卫防旧链复活)
         log('WARN', `找不到容器 ${selector}，已挂监听，出现后自动启动`);
-        _waitSelector(selector, () => { if (token === _initToken) initAgent(); });
+        _containerWaitStop = _waitSelector(selector, () => { _containerWaitStop = null; if (token === _initToken) initAgent(); });
         return;
       }
       const answerSel = c.selAnswerItem || '.answer';
@@ -3124,7 +3140,7 @@
       _cmdScanCursor = 0;
       log('OK', `✅ 监听已启动！回答元素选择器: "${answerSel}"`);
       _domObserver = new MutationObserver((mutations) => {
-        _updateTogglePosition(); // 【新增·改动16】浮窗随动：借道全局观察器(内部有防自激写守卫，不会引发mutation风暴)
+        _scheduleToggleUpdate(); // 【改·修复D】浮窗随动：借道全局观察器(内部有防自激写守卫，不会引发mutation风暴)
         for (const mutation of mutations) {
           if (mutation.target && PICKER_IDS.has(mutation.target.id)) return;
           let el = mutation.target;
@@ -3154,4 +3170,3 @@
     }
     // 【删·改动5】escAttr 函数删除（与 esc 等价，冗余；_renderRules 两处调用已改为 esc）
   })();
-  
