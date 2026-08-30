@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         PokerAgent
 // @namespace    http://tampermonkey.net/
-// @version      46
+// @version      47
 // @author       LMaxRouterCN
 // @description  PokerAgent的浏览器端核心脚本，提供元素选择、配置管理、调试日志等功能，支持多站点独立配置和自动发送功能。
 // @match        *://*/*
@@ -22,11 +22,11 @@
 
 (function () {
     'use strict';
-  
+
     /* ================================================================
      * 1. 存储与配置
      * ================================================================ */
-  
+
     const SITE_DEFAULTS = {
       apiUrl: 'http://127.0.0.1:9966/agent-exec',
       selChatContainer: '',
@@ -56,22 +56,22 @@
       autoSendMode: 'click',
       memoryInjectFrequency: 1
     };
-  
+
     const DEFAULTS = {
       whitelist: ['https://chatglm.cn/'],
       debugMode: false,
       ...SITE_DEFAULTS
     };
-  
+
     const STORE_KEY = 'low_cost_agent_config_v4';
-  
+
     let _storeCache = null;      // 【新增·改动12】存储内存缓存：热路径(每mutation/每log一次cfgLoad)免GM读+迁移+三层合并
     let _storeCacheDirty = true; // 【新增·改动12】写时失效：本页写同步更新缓存，他页写由值变更监听置脏
     // 【新增·改动12】跨标签页配置同步(事件驱动)：他页保存时置脏本地缓存，下次读取重载
     if (typeof GM_addValueChangeListener === 'function') {
       GM_addValueChangeListener(STORE_KEY, (key, oldVal, newVal, remote) => { if (remote) _storeCacheDirty = true; });
     }
-  
+
     function _loadStore() {
       // 【改·改动12】缓存命中短路：未置脏直接复用；迁移(_migrateStore)只随失效执行，不再每读一遍
       if (_storeCache && !_storeCacheDirty) return _storeCache;
@@ -91,13 +91,13 @@
       _storeCacheDirty = false;
       return store;
     }
-  
+
     function _saveStore(store) {
       GM_setValue(STORE_KEY, store);
       _storeCache = store;      // 【新增·改动12】写穿缓存：同引用同步，写后读一致
       _storeCacheDirty = false;
     }
-  
+
     function _migrateStore(store) {
       const clearOld = (cfg) => {
         if (cfg.sendBtnIdleFingerprint !== undefined && cfg.sendBtnIdleFingerprint !== '') {
@@ -152,19 +152,19 @@
       }
       return newStore;
     }
-  
+
     function _matchSite() {
       const store = _loadStore();
       return store.whitelist.find(p => location.href.startsWith(p)) || null;
     }
-  
+
     function _getConfigSource() {
       const store = _loadStore();
       const site = _matchSite();
       if (site && store.perSite && store.perSite[site]) return site;
       return 'defaults';
     }
-  
+
     function cfgLoad() {
       const store = _loadStore();
       const site = _matchSite();
@@ -175,9 +175,9 @@
       }
       return merged;
     }
-  
+
     // 【删·改动17】cfgSave() 整函数删除：全项目零调用点（已核实）
-  
+
     function cfgSaveRuntime(partial) {
       const store = _loadStore();
       const source = _getConfigSource();
@@ -191,18 +191,18 @@
       }
       _saveStore(store);
     }
-  
+
     const isWhitelisted = () => cfgLoad().whitelist.some(p => location.href.startsWith(p));
-  
+
     /* ================================================================
      * 1.5 启用状态管理
      * ================================================================ */
-  
+
     const ENABLE_MODE_KEY = 'pokeragent_enable_mode';
     const PAGE_SESSION_KEY = '__PokerAgent_PageEnabled__';
     let _sessionEnabled = false;
     let _pollConfigActive = false;
-  
+
     function _getEnableState() {
       if (_sessionEnabled) return 'session';
       if (sessionStorage.getItem(PAGE_SESSION_KEY) === '1') return 'page';
@@ -210,7 +210,7 @@
       if (globalMode === 'always') return 'always';
       return 'disabled';
     }
-  
+
     function _setEnableState(state) {
       _sessionEnabled = false;
       GM_setValue(ENABLE_MODE_KEY, 'disabled');
@@ -221,9 +221,9 @@
         case 'page': sessionStorage.setItem(PAGE_SESSION_KEY, '1'); break;
       }
     }
-  
+
     const ENABLE_LABELS = { disabled: '不启用', always: '默认启用', session: '此次会话启用', page: '当前页面启用' };
-  
+
     function _stopAgent() {
       _initToken++; // 【新增·改动2】作废所有在途初始化与重试（原逻辑拦不住挂起中的initAgent苏醒）
       if (_containerWaitStop) { _containerWaitStop(); _containerWaitStop = null; } // 【新增·修复E】停止时清理容器等待观察器
@@ -239,9 +239,9 @@
       if (_sseEventSource) { try { _sseEventSource.abort(); } catch (e) { } _sseEventSource = null; }
       log('INFO', '⏹ Agent 已停止');
     }
-  
+
     let _enableMenuIds = [];
-  
+
     function _registerEnableMenus() {
       _enableMenuIds.forEach(id => { try { GM_unregisterMenuCommand(id); } catch (e) { } });
       _enableMenuIds = [];
@@ -253,7 +253,7 @@
         _enableMenuIds.push(id);
       });
     }
-  
+
     function _switchEnableState(mode) {
       const current = _getEnableState();
       if (current === mode) return;
@@ -271,11 +271,11 @@
       }
       _registerEnableMenus();
     }
-  
+
     /* ================================================================
      * 2. 样式注入
      * ================================================================ */
-  
+
     GM_addStyle(`
     #agent-panel{position:fixed;top:50%;left:50%;transform:translate(-50%,-50%);width:min(540px,92vw);max-height:82vh;overflow-y:auto;background:#0a0a0a;color:#d4d4d4;border:1px solid #2a2a2a;border-radius:0;box-shadow:0 24px 80px rgba(0,0,0,.55);z-index:2147483647;font:14px/1.5 system-ui,sans-serif}
     #agent-panel *{box-sizing:border-box;margin:0;padding:0}
@@ -423,14 +423,14 @@
     #ag-test-pop-body::-webkit-scrollbar-thumb{background:#2a2a2a}
     #ag-test-pop::-webkit-resizer{background:#0a0a0a linear-gradient(135deg,transparent 50%,#facc15 50%)}
     `);
-  
+
     /* ================================================================
      * 3. 调试日志系统
      * ================================================================ */
-  
+
     let _debugPanel = null;
     let _debugBody = null;
-  
+
     function initDebugUI() {
       if (_debugPanel) return;
       _debugPanel = document.createElement('div');
@@ -449,17 +449,17 @@
       _debugPanel.querySelector('#ag-dbg-close').onclick = () => _debugPanel.style.display = 'none';
       _debugPanel.querySelector('#ag-dbg-clear').onclick = () => _debugBody.innerHTML = '';
     }
-  
+
     function showDebug() {
       if (!_debugPanel) initDebugUI();
       _debugPanel.style.display = 'flex';
     }
-  
+
     function _truncate(str, maxDisplay = 200, keepLen = 100) {
       str = String(str);
       return str.length > maxDisplay ? str.substring(0, keepLen) + `... (共 ${str.length} 字符)` : str;
     }
-  
+
     function log(type, msg) {
       const c = cfgLoad();
       console.log(`[Agent-${type}] ${msg}`);
@@ -473,17 +473,17 @@
       _debugBody.appendChild(div);
       _debugBody.scrollTop = _debugBody.scrollHeight;
     }
-  
+
     /* ================================================================
      * 4. 元素选择器
      * ================================================================ */
-  
+
     const PICKER_IDS = new Set([
       'agent-pick-dim', 'agent-pick-hl', 'agent-pick-lock-hl', 'agent-pick-tip',
       'agent-pick-bar', 'agent-panel', 'agent-debug', 'agent-auto-send-toggle',
       'ag-level-panel', 'ag-calibrate-bar'
     ]);
-  
+
     let _pickActive = false, _pickType = '';
     let _pickHL, _pickTip, _pickBar, _pickDim;
     let _pickLockHL = null;
@@ -491,20 +491,20 @@
     let _pickedEl = null;
     let _domStack = [];
     let _levelPanel = null;
-  
+
     const TYPE_LABEL = {
       chat: '聊天记录容器', input: '输入框', send: '发送按钮', 'send-container': '发送按钮容器',
       answer: 'AI回答元素', 'clean-class': '清理元素Class', 'code-content': '代码内容元素', 'code-copy-button': '代码复制按钮'
     };
-  
+
     function _isPureHashClass(c) {
       if (/^[a-f0-9]{5,}$/i.test(c)) return true;
       if (/^(css|sc|emotion|styled)-[a-z0-9]{4,}$/i.test(c)) return true;
       return false;
     }
-  
+
     function _stripClassHash(c) { return c.replace(/[_-][a-f0-9]{5,8}$/i, ''); }
-  
+
     function genSelector(el) {
       if (!el || el === document.body || el === document.documentElement) return '';
       if (el.id && !/\d/.test(el.id)) {
@@ -561,7 +561,7 @@
       try { if (document.querySelectorAll(sel).length === 1) return sel; } catch (_) { }
       return sel;
     }
-  
+
     function pickerEnter(type) {
       _pickActive = true;
       _pickType = type;
@@ -592,7 +592,7 @@
       document.addEventListener('scroll', _syncHighlightPositions, true);
       window.addEventListener('resize', _syncHighlightPositions);
     }
-  
+
     function pickerExit() {
       _pickActive = false;
       _pickType = '';
@@ -610,7 +610,7 @@
       _levelPanel = null;
       showPanel();
     }
-  
+
     function _targetAt(x, y) {
       let el = document.elementFromPoint(x, y);
       while (el && el.shadowRoot) {
@@ -621,7 +621,7 @@
       while (el && PICKER_IDS.has(el.id)) el = el.parentElement;
       return el;
     }
-  
+
     function _onMove(e) {
       e.stopPropagation();
       if (!_pickedEl) {
@@ -631,7 +631,7 @@
         _updateLockHL();
       }
     }
-  
+
     function _getElementDigest(el) {
       const tag = el.tagName.toLowerCase();
       if (['input', 'textarea', 'select'].includes(tag)) {
@@ -651,7 +651,7 @@
       if (text) return `${tag}: "${text}"`;
       return tag;
     }
-  
+
     function _highlightEl(el, mouseX, mouseY) {
       const r = el.getBoundingClientRect();
       _pickHL.style.display = 'block';
@@ -682,14 +682,14 @@
       _pickTip.style.left = Math.min(mouseX + 14, innerWidth - 510) + 'px';
       _pickTip.style.top = (mouseY + 22) + 'px';
     }
-  
+
     function _updateLockHL() {
       if (!_pickLockHL || !_lockedBaseEl) return;
       const r = _lockedBaseEl.getBoundingClientRect();
       _pickLockHL.style.display = 'block';
       Object.assign(_pickLockHL.style, { left: (r.left - 2) + 'px', top: (r.top - 2) + 'px', width: (r.width + 4) + 'px', height: (r.height + 4) + 'px' });
     }
-  
+
     function _syncHighlightPositions() {
       if (_pickHL && _pickedEl) {
         const r = _pickedEl.getBoundingClientRect();
@@ -700,9 +700,9 @@
         Object.assign(_pickLockHL.style, { left: (r.left - 2) + 'px', top: (r.top - 2) + 'px', width: (r.width + 4) + 'px', height: (r.height + 4) + 'px' });
       }
     }
-  
+
     function _hideLockHL() { if (_pickLockHL) _pickLockHL.style.display = 'none'; }
-  
+
     function _showLevelPanel() {
       if (!_lockedBaseEl) return;
       if (!_levelPanel) {
@@ -740,7 +740,7 @@
         item.onclick = (e) => { e.stopPropagation(); _confirmSelection(chain[+item.dataset.idx]); };
       });
     }
-  
+
     function _onClick(e) {
       if (_levelPanel && _levelPanel.style.display !== 'none' && _levelPanel.contains(e.target)) return;
       e.stopPropagation(); e.preventDefault();
@@ -786,7 +786,7 @@
       _highlightEl(_pickedEl, e.clientX, e.clientY);
       _updateBarInfo();
     }
-  
+
     function _onCtx(e) {
       if (_levelPanel && _levelPanel.style.display !== 'none' && _levelPanel.contains(e.target)) return;
       e.stopPropagation(); e.preventDefault();
@@ -817,12 +817,12 @@
         log('WARN', '已在最底层，无法回退');
       }
     }
-  
+
     function _updateBarInfo() {
       if (!_pickBar || !_pickedEl) return;
       _pickBar.innerHTML = `🎯 当前层级: <span style="color:#86efac">${_domStack.length}</span> (${_pickedEl.tagName.toLowerCase()}) | <span style="font-size:12px;opacity:0.7">左键↑ 右键↓ Shift+点击确认</span>`;
     }
-  
+
     function _confirmSelection(el) {
       // 【新增·改动10】ShadowDOM守卫：选择器生成器无法表达穿越Shadow边界的路径，
       // 保存的配置在外层querySelectorAll中必然命中不了——提前拦截，避免存入死配置
@@ -885,18 +885,19 @@
       log('INFO', `目标元素详情: <${el.tagName.toLowerCase()}>, class="${el.className}", id="${el.id}"`);
       pickerExit();
     }
-  
+
     function _onKey(e) {
       if (e.key === 'Escape') { e.stopPropagation(); e.preventDefault(); pickerExit(); }
       if (e.key === 'Enter' && _pickedEl) { e.stopPropagation(); e.preventDefault(); _confirmSelection(_pickedEl); }
     }
-  
+
     /* ================================================================
      * 5. 配置面板
      * ================================================================ */
-  
+
     let _panel = null;
-  
+    let _editTarget = 'defaults';
+
     function showPanel() {
       if (!_panel) {
         _panel = document.createElement('div');
@@ -911,9 +912,9 @@
       _renderPanel();
       _panel.style.display = 'block';
     }
-  
+
     function hidePanel() { if (_panel) _panel.style.display = 'none'; }
-  
+
     function _renderRules(rules) {
       const list = _panel.querySelector('#ag-rule-list');
       if (!list) return;
@@ -936,7 +937,7 @@
         </div>
       `).join('');
     }
-  
+
     function _collectRulesFromDOM() {
       const items = _panel.querySelectorAll('.ag-rule-item');
       const rules = [];
@@ -951,7 +952,7 @@
       });
       return rules;
     }
-  
+
     function _renderPanel() {
       const store = _loadStore();
       const site = _matchSite();
@@ -1328,7 +1329,7 @@
         if (s.debugMode) showDebug();
       };
     }
-  
+
     function _showMatch(sel, id) {
       const el = _panel.querySelector('#' + id);
       if (!sel) { el.innerHTML = '<div class="ag-match ag-m-none">未设置</div>'; return; }
@@ -1339,13 +1340,13 @@
             : `<div class="ag-match ag-m-ok">✔ 匹配 ${n} 个</div>`;
       } catch (_) { el.innerHTML = '<div class="ag-match ag-m-fail">✘ 语法错误</div>'; }
     }
-  
+
     /* ================================================================
      * 5.5 提取链路测试 (🧪 按钮调试用悬浮框)
      * ================================================================ */
-  
+
     let _testPop = null;
-  
+
     function _showTestPop(anchorBtn, title, text) {
       if (!_testPop) {
         _testPop = document.createElement('div');
@@ -1374,7 +1375,7 @@
         _testPop.style.top = top + 'px';
       }
     }
-  
+
     function _buildLiveTestCfg() {
       const c = cfgLoad();
       c.selChatContainer = _panel.querySelector('#ag-s-chat').value.trim();
@@ -1383,11 +1384,11 @@
       c.selCodeCopyButton = _panel.querySelector('#ag-s-code-copy-btn').value.trim();
       return c;
     }
-  
+
     function _queryAllSafe(root, sel) {
       try { return [...root.querySelectorAll(sel)]; } catch (e) { return null; }
     }
-  
+
     function _locateLastAnswer(c) {
       let scope = document;
       let note = '';
@@ -1402,7 +1403,7 @@
       if (answers.length === 0) return { err: `❌ 回答选择器 "${c.selAnswerItem}" 未命中任何元素` };
       return { el: answers[answers.length - 1], note, count: answers.length };
     }
-  
+
     async function _runExtractTest(type, anchor) {
       const c = _buildLiveTestCfg();
       const pop = (title, text) => _showTestPop(anchor, title, text);
@@ -1461,11 +1462,11 @@
         return pop('🧪 复制按钮测试', out);
       }
     }
-  
+
     /* ================================================================
      * 6. Agent 核心逻辑
      * ================================================================ */
-  
+
     let _clipboardMode = false;
     let _permissionEnabled = true;
     let _isProcessing = false;
@@ -1474,17 +1475,17 @@
     let _isCalibrating = false;
     let _dispatchRetryCount = 0;
     const MAX_DISPATCH_RETRIES = 3;
-  
+
     const TASK_START = '\n<|im_start|>pokeragent-system\n=== Poker Agent Task ===\n';
     const TASK_END = '\n=== Poker Agent Task End ===\n<|im_end|>\n';
-  
+
     function _agentEndpoint(path) {
       // 【新增·改动7】端点统一派生：七处散落的 apiUrl.replace('/agent-exec', ...) 收敛到单一出口。
       // apiUrl 配置格式向后兼容(仍填完整exec地址)，仅剥离尾部后拼显式路径
       const base = cfgLoad().apiUrl.replace(/\/agent-exec\/?$/, '');
       return base + path;
     }
-  
+
     let _taskList = [];
     let _sseEventSource = null;
     let _roundCount = 0;
@@ -1503,7 +1504,7 @@
     let _noAnswerCount = 0;
     let _cmdScanCursor = 0; // 指令扫描游标（lastAnswer.textContent 字符坐标）：最后一个已消费【/cmd】的结束位置
     let _sessionEpoch = 0;  // 会话代际：仅 会话清空 / initAgent 时自增；作废所有在途扫描
-  
+
     function _pollConfig(seq) { // 【改·改动2】签名加令牌参数
       if (!_pollConfigActive || seq !== _pollConfigSeq) return; // 【改·改动2】令牌不匹配即自杀，防双轮询链
       const pollUrl = _agentEndpoint('/agent-config-poll'); // 【改·改动7】
@@ -1538,7 +1539,7 @@
         }
       });
     }
-  
+
     function _syncInitialConfig() {
       return new Promise(resolve => {
         GM_xmlhttpRequest({
@@ -1560,7 +1561,7 @@
         });
       });
     }
-  
+
     /* ================================================================
      * 6.0 剪贴板总闸门（常驻Hook · 唯一可信出口）
      * 原理：无论页面用何种姿势复制（execCommand选区 / writeText / write富格式），
@@ -1569,17 +1570,17 @@
      *   且copy事件内getData()恒为空串，属双重死路，永不复活。
      * - 平时零开销：无消费者时纯直通转发；广播仅在等待收割时发生。
      * ================================================================ */
-  
+
     let _clipHooksInstalled = false; // 幂等哨兵：防止initAgent反复调用造成包装套娃
     let _clipConsumers = [];         // 一次性消费者队列：等待收割的本次请求们
     let _gateEverFired = false;      // 【新增·改动9】闸门是否成功广播过：用于拦截超时时判定环境异常
-  
+
     /** 【新增】复制拦截窗口统一读取：0为合法值(只拦同步链、不等待异步回包)，仅未设置/非法值回落默认800 */
     function _getClipInterceptTimeout() {
       const t = parseInt(cfgLoad().copyInterceptTimeout);
       return isNaN(t) ? 800 : Math.max(0, t);
     }
-  
+
     /** 向所有在候消费者广播剪贴板载荷；广播即清场(一次性)，空白负载不过闸 */
     function _broadcastClipboard(text) {
       if (!text || !String(text).trim()) return; // 空白内容：不惊动消费者(空代码块由上方超时回退兜底)
@@ -1590,7 +1591,7 @@
         try { consume(String(text)); } catch (e) { /* 单点异常不连坐 */ }
       });
     }
-  
+
     /** 安装三口总闸门：startAgent时执行一次。全程使用unsafeWindow确保作用域命中页面真实环境 */
     function _installClipboardHooks() {
       if (_clipHooksInstalled) return; // 幂等闸：包装套娃会导致广播双发
@@ -1636,7 +1637,7 @@
       }
       log('INFO', '🛃 剪贴板总闸门已常驻布防 (execCommand/writeText/write)');
     }
-  
+
     function _gateSelfTest() {
       // 【新增·改动9】闸门自检：临时以"只广播不透传"模式替换闸门，触发一次隐藏选区copy，
       // 验证 选区→闸门→广播→消费者 全链路。不调用origExec → 真实剪贴板零污染，结束原样还原。
@@ -1678,7 +1679,7 @@
         log('WARN', `🧪 自检异常(不影响正常功能): ${e.message}`);
       }
     }
-  
+
     /* 拦截流程重构：由"装卸补丁的收费站"降级为纯订阅消费者 */
     function _interceptCopy(btn) {
       return new Promise(resolve => {
@@ -1704,7 +1705,7 @@
         btn.click(); // 唯一动源：其余交给总闸门
       });
     }
-  
+
     function _findCopyButton(codeEl, btnSel, codeSel, scopeEl) {
       const inner = codeEl.querySelector(btnSel);
       if (inner) return { btn: inner, depth: 0 };
@@ -1721,7 +1722,7 @@
       }
       return null;
     }
-  
+
     /**
      * 按 rawText 字符偏移物理截断克隆 DOM：删除 offset 之前的所有内容。
      * 坐标基准成立前提：cloneNode(true) 后、清理前，clone.textContent === el.textContent
@@ -1751,7 +1752,7 @@
       // 防御：offset ≥ 全文长度（正常时序触发不到）——等价于清空
       while (clone.firstChild) clone.firstChild.remove();
     }
-  
+
     async function getCleanText(el, cfg, logBuf, opts) {
       const _log = (lv, msg) => { if (logBuf) logBuf.push([lv, msg]); };
       const clone = el.cloneNode(true);
@@ -1896,7 +1897,7 @@
       _log('INFO', `ℹ️ 纯DOM兜底提取完成 (${rawText.length} 字符)`);
       return rawText;
     }
-  
+
     function _getSendBtnFingerprint() {
       const c = cfgLoad();
       if (c.selSendButtonContainer) {
@@ -1925,7 +1926,7 @@
       const ariaLabel = el.getAttribute('aria-label') || '';
       return `${el.tagName}|${style}|${cls}|${innerTag}|${disabled}|${ariaDisabled}|${ariaLabel}`;
     }
-  
+
     /**
      * 【修复H】发送按钮指纹事件观察器：监听指纹取值基准(容器或按钮)的变化即回调。
      * 观察拓扑三层（解决定向观察器"锚点异父重建"失联盲区——原版锚点被移到不同父节点后，
@@ -1979,7 +1980,7 @@
         directedStops.forEach(s => s());
       };
     }
-  
+
     /**
      * 【修复C】通用指纹条件等待：满足predicate即resolve，可带超时。事件驱动，零轮询。
      * 返回predicate判定结果(超时为false)。内部统一settle回收观察器和watchdog。
@@ -2006,7 +2007,7 @@
         evaluate(); // 先判一次：条件可能已满足
       });
     }
-  
+
     function _makeDraggable(el, handle) {
       const trigger = handle || el;
       trigger.addEventListener('mousedown', (e) => {
@@ -2032,7 +2033,7 @@
         e.preventDefault();
       });
     }
-  
+
     function _startCalibration() {
       if (_isCalibrating) return;
       _isCalibrating = true;
@@ -2169,7 +2170,7 @@
       }
       captureCurrent(); // 【新增·改动15】观察器只报变化，首态需主动采样
     }
-  
+
     async function _waitForLLMFinish() {
       // 【改·改动14】200ms轮询 → 事件驱动观察器。覆盖改动4位置1：0值延时语义已吸收(0=立即放行，仅NaN回落500)
       const c = cfgLoad();
@@ -2199,7 +2200,7 @@
       log('INFO', `⏳ 等待延时 ${delay}ms...`);
       await new Promise(r => setTimeout(r, delay));
     }
-  
+
     async function _waitForSendable() {
       // 【修复C】使用带超时的_waitFingerprint，移除Promise.race泄漏观察器
       const c = cfgLoad();
@@ -2211,9 +2212,9 @@
       if (hit) log('INFO', '🟢 检测到可发送状态');
       else log('WARN', `⚠️ 等待可发送状态超时(${WATCHDOG}ms)，强制继续`);
     }
-  
+
     const _TICK_ROUNDS_STORE = 'pokeragent_tick_rounds';
-  
+
     function _fireMemoryTick(answerCount) {
       const roundKey = location.href + '#' + answerCount;
       const keys = GM_getValue(_TICK_ROUNDS_STORE, []);
@@ -2230,14 +2231,14 @@
         ontimeout() { }
       });
     }
-  
+
     function _pruneTickRounds() {
       const keys = GM_getValue(_TICK_ROUNDS_STORE, []);
       const prefix = location.href + '#';
       const kept = keys.filter(k => !k.startsWith(prefix));
       if (kept.length !== keys.length) GM_setValue(_TICK_ROUNDS_STORE, kept);
     }
-  
+
     async function _injectMemoryIfNeeded() {
       const c = cfgLoad();
       const freq = parseInt(c.memoryInjectFrequency) || 0;
@@ -2284,7 +2285,7 @@
         });
       });
     }
-  
+
     async function _checkAndDispatch() {
       if (_isProcessing || _cmdQueue.length === 0) return;
       _isProcessing = true;
@@ -2300,7 +2301,7 @@
       await _injectMemoryIfNeeded();
       _dispatch(batch);
     }
-  
+
     function _dispatch(cmdBatch) {
       const c = cfgLoad();
       if (c.textCleanRules && Array.isArray(c.textCleanRules) && c.textCleanRules.length > 0) {
@@ -2387,7 +2388,7 @@
         }
       });
     }
-  
+
     async function _decodeClipboardFile(resultText) {
       // 【改·改动8】解析逻辑原样保留，仅返回结构改字段：{ filename, size, bytes, beforeMarker }
       // 删除 text/base64 字段——全项目无任何消费点(已核实)；旧格式 text 仅用于日志字数统计
@@ -2454,7 +2455,7 @@
         }
       }
     }
-  
+
     function _downloadFileFromAgent(fileId) {
       // 【改·改动8】XHR→GM_xmlhttpRequest：①绕开页面CORS(全脚本唯一走页面XHR的例外就此消灭)
       // ②规避Chrome PNA对 https页面→localhost 的预检限制 ③arraybuffer直取字节，
@@ -2479,7 +2480,7 @@
         });
       });
     }
-  
+
     async function _doPasteFile(input, filename, fileSize, bytes) { // 【改·改动8】入参b64Data→bytes(Uint8Array)
       try {
         // 【删·改动8】atob+逐字节循环：上游已直供字节
@@ -2502,7 +2503,7 @@
         log('ERR', `文件粘贴失败: ${err.message}`);
       }
     }
-  
+
     function _renderTaskBlock() {
       const c = cfgLoad();
       const input = document.querySelector(c.selInputBox);
@@ -2545,7 +2546,7 @@
       const finalText = prefix + block + suffix;
       _directInput(input, finalText, false);
     }
-  
+
     function _buildExpectedInputFromTaskList() {
       let block = TASK_START;
       _taskList.forEach((task, idx) => {
@@ -2567,7 +2568,7 @@
       block += TASK_END;
       return block;
     }
-  
+
     function _initSSE() {
       if (_sseEventSource) { try { _sseEventSource.abort(); } catch (e) { } _sseEventSource = null; }
       const streamUrl = _agentEndpoint('/agent-stream'); // 【改·改动7】
@@ -2615,7 +2616,7 @@
         ontimeout: () => { log('WARN', 'SSE 连接超时（不应发生）'); }
       });
     }
-  
+
     function _handleSSEData(data) {
       if (data.id === 'all') return;
       const task = _taskList.find(t => t.id === data.id);
@@ -2634,7 +2635,7 @@
         _tryFinalSend();
       }
     }
-  
+
     async function _tryFinalSend() {
       if (!_tasksFinished) return;
       const epoch = _sessionEpoch; // 【新增·改动11】会话代际快照：期间清空对话/initAgent/停止则全流程作废
@@ -2731,7 +2732,7 @@
       _tasksFinished = false;
       _checkAndDispatch();
     }
-  
+
     function _trySendByClick() {
       const c = cfgLoad();
       if (c.selSendButtonContainer) {
@@ -2753,7 +2754,7 @@
       log('INFO', '👆 点击发送按钮发送');
       return true;
     }
-  
+
     function _executeSend(input) {
       const c = cfgLoad();
       const mode = c.autoSendMode || 'click';
@@ -2777,7 +2778,7 @@
           break;
       }
     }
-  
+
     function _directInput(input, text) { // 【改·改动17】移除append参数：全部调用传false，分支为死代码（多余实参JS静默忽略，调用点无需改动）
       input.focus();
       if (input.tagName === 'TEXTAREA' || input.tagName === 'INPUT') {
@@ -2791,13 +2792,13 @@
         document.execCommand('insertText', false, text);
       }
     }
-  
+
     function _trySendByEnter(input) {
       ['keydown', 'keypress', 'keyup'].forEach(evtType => {
         input.dispatchEvent(new KeyboardEvent(evtType, { key: 'Enter', code: 'Enter', keyCode: 13, which: 13, charCode: evtType === 'keypress' ? 13 : 0, bubbles: true, cancelable: true, composed: true }));
       });
     }
-  
+
     function _smartWait(input, opts = {}) {
       const { expectValue, checkDOM = false, maxWait = 3000, interval = 50, stableNeed = 3 } = opts;
       return new Promise(resolve => {
@@ -2813,21 +2814,21 @@
         const safety = setTimeout(() => { clearInterval(t); resolve(); }, maxWait);
       });
     }
-  
+
     /* ================================================================
      * 6.5 发送模式选择器
      * ================================================================ */
-  
+
     let _toggleEl = null;
     let _togglePosRaf = 0; // 【新增·修复D】rAF合并句柄
-  
+
     function _scheduleToggleUpdate() {
       // 【新增·修复D】布局读合并：全局观察器每mutation批次+scroll capture逐帧触发定位，
       // 每次两连发getBoundingClientRect强制布局。rAF收敛到每帧最多一次，事件驱动性质不变。
       if (_togglePosRaf) return;
       _togglePosRaf = requestAnimationFrame(() => { _togglePosRaf = 0; _updateTogglePosition(); });
     }
-  
+
     function _initAutoSendToggle() {
       _destroyAutoSendToggle();
       let c;
@@ -2913,12 +2914,12 @@
       document.addEventListener('scroll', _scheduleToggleUpdate, true);
       setTimeout(() => { _updateTogglePosition(); _updateSliderPos(); }, 100);
     }
-  
+
     function _memFreqLabel(freq) {
       const n = parseInt(freq);
       return (!n || n <= 0) ? '关闭' : `每${n}轮`;
     }
-  
+
     function _updateSliderPos() {
       if (!_toggleEl) return;
       const c = cfgLoad();
@@ -2935,7 +2936,7 @@
       const top = optRect.top - railRect.top + optRect.height / 2 - 5;
       thumb.style.top = top + 'px';
     }
-  
+
     function _updateTogglePosition() {
       if (!_toggleEl) return;
       const c = cfgLoad();
@@ -2963,22 +2964,22 @@
       if (_toggleEl.style.left !== left + 'px') _toggleEl.style.left = left + 'px';
       if (_toggleEl.style.top !== top + 'px') _toggleEl.style.top = top + 'px';
     }
-  
+
     function _destroyAutoSendToggle() {
       if (_togglePosRaf) { cancelAnimationFrame(_togglePosRaf); _togglePosRaf = 0; } // 【新增·修复D】
       window.removeEventListener('resize', _scheduleToggleUpdate); // 【改·修复D】成对移除
       document.removeEventListener('scroll', _scheduleToggleUpdate, true); // 【改·修复D】
       if (_toggleEl) { _toggleEl.remove(); _toggleEl = null; }
     }
-  
+
     /* ================================================================
      * 7. 启动入口
      * ================================================================ */
-  
+
     GM_registerMenuCommand('⚙️ Agent 配置面板', showPanel);
     GM_registerMenuCommand('🧪 剪贴板闸门自检', _gateSelfTest); // 【新增·改动9】按需自检：零剪贴板污染
     _registerEnableMenus();
-  
+
     if (_getEnableState() !== 'disabled') {
       if (isWhitelisted()) _installClipboardHooks(); // 【新增】启用于白名单站点：document-start抢位，确保早于页面bundle
       if (cfgLoad().debugMode) setTimeout(initDebugUI, 500);
@@ -2986,7 +2987,7 @@
       if (document.readyState === 'loading') document.addEventListener('DOMContentLoaded', start);
       else start();
     }
-  
+
     async function _scanAnswers(currentContainer, answerSel) {
       try {
         _heartbeatCounter++;
@@ -3105,7 +3106,7 @@
         console.error('[Agent-ERR] 扫描异常:', err);
       }
     }
-  
+
     /**
      * 【新增·改动13】选择器出现监听：元素已在则立即回调，否则挂body观察器等它出现。事件驱动，零轮询。
      * @returns {Function} 取消等待
@@ -3122,7 +3123,7 @@
       mo.observe(document.body || document.documentElement, { childList: true, subtree: true });
       return () => { try { mo.disconnect(); } catch (e) { } };
     }
-  
+
     async function initAgent() {
       const token = ++_initToken; // 【改·改动2】领取令牌（原先重入无任何防护，会双轮询链+观察器泄漏）
       if (_containerWaitStop) { _containerWaitStop(); _containerWaitStop = null; } // 【新增·修复E】清理旧容器等待观察器
@@ -3188,7 +3189,7 @@
       // 建立监听后立即主动扫一次，抓取存量指令。fire-and-forget，不阻塞initAgent返回
       _scanAnswers(currentContainer, answerSel);
     }
-  
+
     function esc(s) {
       // 【改·改动5】补齐引号转义：esc的产物同时用于元素文本和HTML属性(title="...")两种场景
       const d = document.createElement('div');
