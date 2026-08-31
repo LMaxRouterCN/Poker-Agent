@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         PokerAgent
 // @namespace    http://tampermonkey.net/
-// @version      47
+// @version      48
 // @author       LMaxRouterCN
 // @description  PokerAgent的浏览器端核心脚本，提供元素选择、配置管理、调试日志等功能，支持多站点独立配置和自动发送功能。
 // @match        *://*/*
@@ -226,11 +226,14 @@
 
     function _stopAgent() {
       _initToken++; // 【新增·改动2】作废所有在途初始化与重试（原逻辑拦不住挂起中的initAgent苏醒）
+      ++_sessionEpoch; // 【新增·修复J】停止也推进会话代际：在途扫描苏醒后被守卫丢弃（防僵尸入列+派发）。
+      // 认领：改动11的🪦守卫注释写着"停止/重初始化"，但stop路径从未推进epoch——
+      // 守卫对stop一直是死代码，我在v45/v46两轮复审都没发现，此行补上闭环
       if (_containerWaitStop) { _containerWaitStop(); _containerWaitStop = null; } // 【新增·修复E】停止时清理容器等待观察器
       _pollConfigActive = false;
       // 【删·改动2】原 _pollTimer clearInterval 死代码
       if (_domObserver) { _domObserver.disconnect(); _domObserver = null; }
-      _scanScheduled = false;
+      _scanPending = false; // 【改·修复J】勿重置_scanRunning：旧泵在途会自然排空，强行清零会放出第二泵重现并发
       _tasksFinished = false;
       _destroyAutoSendToggle();
       _isProcessing = false;
@@ -1494,7 +1497,8 @@
     let _containerWaitStop = null; // 【新增·修复E】容器等待观察器句柄
     let _initToken = 0;     // 【新增·改动2】初始化令牌：每次initAgent自增；旧链在挂起恢复点自检后作废
     let _pollConfigSeq = 0; // 【新增·改动2】轮询链令牌：与_initToken配对，旧轮询链自杀
-    let _scanScheduled = false;
+    let _scanPending = false; // 【改·修复J】待处理mutation批次标志（替代_scanScheduled）
+    let _scanRunning = false; // 【新增·修复J】扫描串行锁：覆盖整个异步扫描周期直至泵排空
     let _tasksFinished = false;
     let _lastAnswerEl = null;
     let _lastAnswerCount = 0;
@@ -1585,11 +1589,12 @@
     function _broadcastClipboard(text) {
       if (!text || !String(text).trim()) return; // 空白内容：不惊动消费者(空代码块由上方超时回退兜底)
       _gateEverFired = true; // 【新增·改动9】
-      const snapshot = _clipConsumers; // 快照后立即清空：保证仅首达者收割，防重复派发
-      _clipConsumers = [];
-      snapshot.forEach(consume => {
-        try { consume(String(text)); } catch (e) { /* 单点异常不连坐 */ }
-      });
+      // 【改·修复K】FIFO单投递：一份载荷只交付给最早入队的消费者。合法流程等待者恒≤1
+      // （修复J后扫描串行，块间提取本就先后执行）；若意外并发（如面板🧪测试撞上扫描），
+      // 单投递保证各等待者要么拿到自己的载荷、要么超时回退读元素文本——而非全体收到
+      // 同一份张冠李戴的内容。旧版全体广播正是本次指令内容错乱的直接推手
+      const consume = _clipConsumers.shift();
+      if (consume) { try { consume(String(text)); } catch (e) { /* 单点异常不连坐 */ } }
     }
 
     /** 安装三口总闸门：startAgent时执行一次。全程使用unsafeWindow确保作用域命中页面真实环境 */
@@ -3130,7 +3135,7 @@
       log('DEBUG', `🔄 initAgent #${token}`); // 【新增·改动2】令牌日志，便于确认并发时旧链作废
       if (_domObserver) { _domObserver.disconnect(); _domObserver = null; }
       // 【删·改动2】原 _pollTimer clearInterval 死代码
-      _scanScheduled = false;
+      _scanPending = false; // 【改·修复J】勿重置_scanRunning：旧泵在途会自然排空，强行清零会放出第二泵重现并发
       _installClipboardHooks(); // 【新增】总闸门随Agent启停：幂等，重复调用无事
       _pollConfigActive = true;
       _pollConfigSeq = token; // 【新增·改动2】本轮轮询链绑定令牌
@@ -3167,6 +3172,25 @@
       _currentRoundSent.clear();
       _cmdScanCursor = 0;
       log('OK', `✅ 监听已启动！回答元素选择器: "${answerSel}"`);
+      // 【新增·修复J】扫描串行泵：mutation只置位，泵循环逐批消化，互斥覆盖整个异步扫描周期。
+      // 旧版微任务里即清_scanScheduled，扫描await期间（点复制按钮/回执渲染引发的新mutation）
+      // 互斥已失效——页面水合期的mutation风暴放出一批并发扫描，叠加密钥交叉投递产生垃圾指令。
+      // v44靠document-idle+1.5s启动延时掩盖了该竞态，改动13删除延时后暴露
+      const requestScan = () => {
+        _scanPending = true;
+        if (_scanRunning) return; // 在途泵会带走新置位的批次
+        _scanRunning = true;
+        queueMicrotask(async () => {
+          try {
+            while (_scanPending) {
+              _scanPending = false;
+              await _scanAnswers(currentContainer, answerSel);
+            }
+          } finally {
+            _scanRunning = false;
+          }
+        });
+      };
       _domObserver = new MutationObserver((mutations) => {
         _scheduleToggleUpdate(); // 【改·修复D】浮窗随动：借道全局观察器(内部有防自激写守卫，不会引发mutation风暴)
         for (const mutation of mutations) {
@@ -3177,17 +3201,12 @@
             el = el.parentElement;
           }
         }
-        if (_scanScheduled) return;
-        _scanScheduled = true;
-        queueMicrotask(() => {
-          _scanScheduled = false;
-          _scanAnswers(currentContainer, answerSel);
-        });
+        requestScan();
       });
       _domObserver.observe(document.body, { childList: true, subtree: true, characterData: true });
       // 【新增】初始扫描：页面刷新后聊天记录里已存在的现成指令属于"存量"，DOM不变则监听永不触发。
       // 建立监听后立即主动扫一次，抓取存量指令。fire-and-forget，不阻塞initAgent返回
-      _scanAnswers(currentContainer, answerSel);
+      requestScan(); // 【改·修复J】存量扫描也走泵，杜绝初始扫描与mutation扫描并发
     }
 
     function esc(s) {
