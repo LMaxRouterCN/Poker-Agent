@@ -2533,7 +2533,19 @@ def agent_exec():
                         log_action('ENQUEUE', f'ID: {task_id} | CMD: {final_cmd}')
                         i = next_i
                         continue
-                elif cmd in ('create', 'append', 'insert', 'find', 'remember', 'memory', 'exec'):  # [修改] 新增 exec
+                elif cmd == 'exec':
+                    # [修改] exec 升级为多代码块：每个块独立入队 = 独立任务 = 独立 PowerShell 进程，
+                    # 无状态共享、不拼接。单块行为与旧版完全一致；无块时本分支不进入，
+                    # 由末尾单行逻辑兜底（此时 arg 即命令本身）
+                    for block in blocks:
+                        final_cmd = f"exec {arg}\x00{block}"
+                        task_id = str(uuid.uuid4())
+                        task_queue.put({'id': task_id, 'cmd': final_cmd})
+                        task_ids.append(task_id)
+                        log_action('ENQUEUE', f'ID: {task_id} | CMD: {final_cmd}')
+                    i = next_i
+                    continue
+                elif cmd in ('create', 'append', 'insert', 'find', 'remember', 'memory'):
                     # 这些指令只需要一个内容块
                     final_cmd = f"{cmd} {arg}\x00{blocks[0]}"
                     task_id = str(uuid.uuid4())
