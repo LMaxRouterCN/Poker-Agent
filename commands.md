@@ -485,7 +485,10 @@ Hello World!
 **命令格式（两种）：**
 1. **单行内联**：`exec <命令>`。
 2. **代码块格式**：exec 独占一行，命令内容用【CodeSTART】和【/CodeEND】代码块包裹。
-示例（代码块格式，多行 PowerShell 命令）：
+代码块格式下，按提供的块**数量**区分两种行为：
+- **单代码块**：整个块的内容作为一个多行脚本，在**同一个进程**中按顺序执行，块内各行可共享变量。
+- **多代码块**：每个块成为**独立任务**，各自启动**独立进程**依次串行执行，块与块之间**无状态共享、不拼接**，且各自产生一条独立回执。单个块失败不影响后续块。
+示例（单代码块：同一进程，共享变量）：
 【cmd】exec
 【CodeSTART】
 ```
@@ -494,34 +497,50 @@ $files | Sort-Object Length -Descending | Select-Object -First 10 Name, Length
 ```
 【/CodeEND】
 【/cmd】
+示例（多代码块：两个独立进程先后执行，第二个块拿不到第一个块的变量）：
+【cmd】exec
+【CodeSTART】
+```
+python --version
+```
+【/CodeEND】
+【CodeSTART】
+```
+node --version
+```
+【/CodeEND】
+【/cmd】
 建议始终使用代码块格式,因为有的时候某些特殊字符会在单行模式下破坏内容
+**如何选择单块还是多块：**
+- 多行命令之间存在依赖（后一步要用到前一步的变量或结果）→ 必须写在**同一个块**内
+- 多条互不相关的命令（如分别查看 python 和 node 版本）→ 用**多个块**，彼此隔离、失败互不拖累、回执各自独立
 **代码块格式说明：**
 - 内联文本与代码块同时存在时，以代码块为准，内联部分被忽略
 - 代码块内容原样作为命令执行，**不做 TICK3 还原**（TICK3 规定仅适用于写入文件的内容），不要在 exec 代码块内使用 TICK3
 - 多行命令仅在 PowerShell 终端下可靠执行，CMD 终端请改用单行命令
+- 多代码块模式下：每个块独立进行危险命令确认（含危险关键词的块可能各弹一次确认窗），各块的超时限制独立计时
 **危险命令确认**：命令中包含删除/格式化类关键词（del、rd、rm、ri、Remove-Item、format、erase、diskpart、mkfs、shred、Clear-Disk、Initialize-Disk、Remove-Partition）时，会先请求用户确认，被拒绝则不执行。
-**终端类型：** exec 使用的系统终端由后端配置决定，回退链为：
+**终端类型：**
+exec 使用的系统终端由后端配置决定，回退链为：
 1. PowerShell 7+（pwsh）— 优先
 2. Windows PowerShell 5.x（powershell）— 未安装 pwsh 时回退
 3. 命令提示符（cmd）— 未检测到任何 PowerShell 时回退
-
 **⚠ 你不确定当前终端是哪种。** 编写 exec 命令前必须先确认：
 - 方法一：询问用户
 - 方法二：执行 `exec $PSVersionTable.PSVersion.ToString()`，返回版本号则为 PowerShell，报错则为 CMD
-
 **PowerShell 与 CMD 语法差异示例：**
 - CMD: `dir /b` → PS: `Get-ChildItem -Name`
 - CMD: `type file.txt` → PS: `Get-Content file.txt`
 - CMD: `echo %PATH%` → PS: `$env:PATH`
 - CMD: `findstr "xxx" file` → PS: `Select-String "xxx" file`
 - CMD: `set` → PS: `Get-ChildItem Env:`
-
 请根据实际终端类型编写对应语法的命令。
 示例：
 【cmd】exec `python` `--version`【/cmd】
 【cmd】exec `$PSVersionTable.PSVersion.ToString()`【/cmd】
 【cmd】exec `Get-ChildItem` `-Name`【/cmd】
 解码格式会动态获取系统编码
+
 ### run <脚本路径>
 运行 Python 脚本，返回输出。
 示例：
