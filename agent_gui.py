@@ -2346,8 +2346,13 @@ class AgentGUI:
                 print(f'[Agent] CLI 指令执行异常: {e}')
 
     def run(self):
+        # [修复] 日志泵首次调度：原位于 __init__（set_gui_log_queue 之后），上一轮插入
+        # CLI 线程块时被编辑事故吞掉，队列有生产者无消费者，日志区零显示。
+        # 启动挪到 run() 与 mainloop 同址：泵的"启动+自续"生命周期收拢进这个三行方法，
+        # 根治同类事故（__init__ 是编辑高频区，run 几乎不会被动）；mainloop 前注册
+        # after 合法，进入主循环 15ms 后首拉
+        self.root.after(LOG_POLL_MS, self._drain_log_queue)
         self.root.mainloop()
-
 
 if __name__ == '__main__':
     gui = AgentGUI()
