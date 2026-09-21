@@ -312,10 +312,10 @@ def _job_alive_count(job):
 def _residue_note(alive):
     """残留警告：只在 alive>0 时被调用。随模式给出后果 + 操作指引"""
     if EXEC_JOB_KILL_ON_CLOSE:
-        return (f'────\n⚠ 任务结束后仍有 {alive} 个后台进程存活（如 gradle daemon），'
+        return (f'\n\n[agent] ⚠ 任务结束后仍有 {alive} 个后台进程存活（如 gradle daemon），'
                 '已随任务一并终止，下次构建将冷启动。'
                 '（切换行为：GUI 控制面板「任务结束销毁残留进程」）')
-    return (f'────\nℹ 任务结束后仍有 {alive} 个后台进程存活（如 gradle daemon），'
+    return (f'\n\n[agent] ℹ 任务结束后仍有 {alive} 个后台进程存活（如 gradle daemon），'
             '其后续输出继续写入 .agent_task_logs 对应任务日志（不影响上方回执）；'
             '它们已脱离本系统管辖，gradle daemon 将在闲置约 3 小时后自行退出。'
             '（切换行为：GUI 控制面板「任务结束销毁残留进程」）')
