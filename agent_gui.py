@@ -1474,6 +1474,20 @@ class AgentGUI:
         agent_server._push_config()
         print(f'[Agent] exec 终端已切换为: {agent_server.shell_type}')
 
+    # ========== [新增·exec v2.1] 任务结束销毁残留进程策略 ==========
+    def _toggle_job_kill(self):
+        """[新增·exec v2.1] Job Object KILL_ON_JOB_CLOSE 开关。
+        后端 agent_server.EXEC_JOB_KILL_ON_CLOSE 即时生效（Job 创建时读取），并持久化。
+        开=任务结束歼灭整树（构建冷启动换确定性）；关=daemon 保温构建快，残留进程脱离管辖。"""
+        agent_server.EXEC_JOB_KILL_ON_CLOSE = self.var_job_kill.get()
+        try:
+            agent_server._push_config()
+        except Exception:
+            pass
+        print('[Agent] 任务结束销毁残留进程: '
+              + ('开（终止树内全部活口，构建冷启动换确定性）' if agent_server.EXEC_JOB_KILL_ON_CLOSE
+                 else '关（daemon 保温构建快，残留进程脱离管辖）'))
+
     # ========== 拦截弹窗策略 [新增] ==========
     def _validate_perm_timeout_key(self, new_text):
         """[新增] 秒数输入即时校验（主线程事件驱动）：
@@ -1842,6 +1856,15 @@ class AgentGUI:
         tk.Label(f, text="🔧 服务", bg=PANEL, fg=TXT2, font=FONT_UI).pack(anchor='w', padx=16, pady=(2, 6))
         self._btn(f, "重启服务", self._restart_server).pack(fill=tk.X, padx=12, pady=2)
         self._btn(f, "清空日志", self._clear_log).pack(fill=tk.X, padx=12, pady=2)
+        # ── [新增·exec v2.1] Job Object 残留进程策略（对应 agent_server.EXEC_JOB_KILL_ON_CLOSE）──
+        # getattr 兜底：后端未同步打补丁时以出厂默认 True 呈现，避免 GUI 启动崩溃
+        self.var_job_kill = tk.BooleanVar(value=getattr(agent_server, 'EXEC_JOB_KILL_ON_CLOSE', True))
+        self.chk_job_kill = tk.Checkbutton(
+            f, text="任务结束销毁残留进程\n(daemon等活口；关=保温但脱离管辖)",
+            variable=self.var_job_kill, bg=PANEL, fg=TXT, selectcolor=BTN,
+            activebackground=PANEL, activeforeground=TXT, font=FONT_UI, justify='left',
+            command=self._wrap_cmd(self._toggle_job_kill))
+        self.chk_job_kill.pack(anchor='w', padx=20)
         # ── [新增·G1] exec/run 超时配置（对应 agent_server.EXEC_TIMEOUT_SEC / RUN_TIMEOUT_SEC）──
         tk.Label(f, text="⏱ 执行超时（秒）", bg=PANEL, fg=TXT2, font=FONT_UI).pack(anchor='w', padx=16, pady=(2, 2))
         self._timeout_vars = {}
