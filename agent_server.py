@@ -1,5 +1,5 @@
 """
-PokerAgent - 本地接应服务 (SSE流式版) v47
+PokerAgent - 本地接应服务 (SSE流式版) v48
 启动方式：python agent_server.py
 默认监听：http://127.0.0.1:9966
 """
@@ -20,6 +20,7 @@ import locale  # 获取系统默认编码
 import platform  # 用于判断操作系统
 import uuid
 import queue
+import codecs  # [exec v2.1] 增量解码器（多字节劈叉免疫）
 from collections import deque  # [新增] 跳过计划表用 FIFO 队列
 import json
 import sys
@@ -73,6 +74,7 @@ task_queue = queue.Queue()
 # [新增] 任务控制共享状态（GUI 按钮 → Worker 线程）
 _current_process = None  # 当前正在执行的子进程引用
 _current_process_lock = threading.Lock()
+_current_job = None  # [exec v2.1] 当前任务 Job Object 句柄（与 _current_process 同锁）
 # [重构] 暂停控制：Event → Condition + 布尔态（单步放行功能的根源性前提）。
 # Event.set() 是粘性的，无法表达"暂停态下仅放行一个任务"；worker 事后复位事件
 # 又无法区分置位来源（单步 or 用户恢复），故换用带状态的条件变量。
@@ -122,7 +124,11 @@ def emit_task_event(evt):
             if 'result' in evt:
                 entry['result'] = strip_ansi(evt['result'])
         elif evt.get('type') == 'log':
-            entry['logs'].append(strip_ansi(evt.get('data', '')))
+            logs = entry['logs']
+            logs.append(strip_ansi(evt.get('data', '')))
+            # [exec v2.1] 注册表只做回放预览；完整真相在 .agent_task_logs 任务文件
+            if len(logs) > _REGISTRY_LOG_CAP:
+                del logs[:-_REGISTRY_LOG_CAP]
     # [修改] 推送前剥离 ANSI，前端/LLM 拿到干净文本（原在 if task_id 块内，现随 early-return 结构外提一级）
     if evt.get('type') == 'log' and 'data' in evt:
         evt = dict(evt, data=strip_ansi(evt['data']))
@@ -136,6 +142,19 @@ def push_event(data_dict):
         clients = list(sse_clients)  # 拷贝一份再遍历，避免竞态
         for q in clients:
             q.put(msg)
+def emit_task_note(task_id, status, text, result=None):
+    """[note 机制] 追加型收尾：注册表 status 翻转 +（可选）result 写入（供晚订阅回放）+ notes 追加；
+    实时只推一条 note——前端在现有回执末尾追加一行，不覆写、不重发历史输出。
+    （旧模式把终止说明+全部已有输出整体重发，前端只能覆写——已废弃）"""
+    with _task_registry_lock:
+        entry = _task_registry.get(task_id)
+        if entry is None:
+            return
+        entry['status'] = status
+        if result is not None:
+            entry['result'] = result
+        entry.setdefault('notes', []).append(text)
+    push_event({'id': task_id, 'type': 'note', 'status': status, 'text': text})
 # [新增] 暴力终止子进程树（跨平台，供 request_kill 和超时逻辑复用）
 def _kill_process_tree(proc):
     """kill → taskkill 双保险，确保进程树死透"""
@@ -153,6 +172,362 @@ def _kill_process_tree(proc):
                            stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL, timeout=5)
         except Exception:
             pass
+# ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+# [exec v2.1] 文件落盘执行核心 + Job Object 树级管控
+# 根因消灭对照（9/20、9/21 两起挂死事故）：
+#   孤儿攥管道滴水   → 无管道：stdout 落每任务独立文件，滴流与完成判定彻底解耦
+#   drain 永不安静   → 概念删除：完成判定 = 顶层 shell 退出（OS 事件 poll）
+#   超时分支不可达   → 完成/中断/超时三检查同节拍轮询，互不耦合
+#   超时丢弃全部回执 → 回执 = 文件内容，超时文案附带末尾输出
+#   终止打不到树梢   → TerminateJobObject 树级原子歼灭（含被领养孤儿）
+#   滴流取证困难     → 滴流原样落 .agent_task_logs，自动留证
+# ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+_EXEC_TICK_SEC = 0.05          # 主循环节拍：中断/超时响应上限
+_EXEC_DRAIN_SEC = 1.5          # 顶层退出后的排水静默窗（v1 的 drain 是 3.3s，这里更快）
+_EXEC_DRAIN_MAX_SEC = 5.0      # 排水硬上限（防"迟到输出"永不停止）
+_EMIT_LINES_PER_TICK = 200     # 每 tick SSE 推送行数上限（洪峰削峰，残余下轮续传）
+_PUMP_READ_CHUNK = 1024 * 1024 # 单次读文件字节上限
+_REGISTRY_LOG_CAP = 500        # 注册表日志行数上限（回放预览用，完整真相在文件）
+_RECEIPT_MAX_BYTES = 16 * 1024 * 1024  # 回执读取上限，超出读尾部并标注
+_TIMEOUT_RECEIPT_LINES = 30    # 超时文案附带的末尾行数
+_TASK_LOG_KEEP_DAYS = 7        # 任务日志保留天数
+EXEC_JOB_KILL_ON_CLOSE = True  # True=任务结束即歼灭整树（构建冷启动，状态有界）
+                               # False=树存活到 harness 退出（daemon 保温构建快，滴流入文件无害）
+                               # [残留检测] GUI 可 setattr 切换，随 agent_config.json 持久化
+DOWNLOAD_TIMEOUT_SEC = 300     # download 总时长上限
+def _task_log_dir():
+    """[exec v2.1] 每任务输出日志目录（跟随 WORK_DIR）"""
+    return os.path.join(WORK_DIR, '.agent_task_logs')
+def _remove_quiet(path):
+    try:
+        if os.path.exists(path):
+            os.remove(path)
+    except OSError:
+        pass
+def _decode_blob(data):
+    """整块解码：优先 UTF-8，失败回退 GBK（文件级回执用，与 smart_decode 同策略）"""
+    if not data:
+        return ''
+    try:
+        return data.decode('utf-8')
+    except UnicodeDecodeError:
+        return data.decode('gbk', errors='replace')
+# ---- Job Object（Windows 原生进程树管控）----
+if platform.system() == 'Windows':
+    import ctypes
+    from ctypes import wintypes as _wt
+    _k32 = ctypes.WinDLL('kernel32', use_last_error=True)
+    _k32.CreateJobObjectW.restype = _wt.HANDLE
+    _k32.CreateJobObjectW.argtypes = [_wt.LPVOID, _wt.LPWSTR]
+    _k32.SetInformationJobObject.restype = _wt.BOOL
+    _k32.SetInformationJobObject.argtypes = [_wt.HANDLE, ctypes.c_int, ctypes.c_void_p, _wt.DWORD]
+    _k32.AssignProcessToJobObject.restype = _wt.BOOL
+    _k32.AssignProcessToJobObject.argtypes = [_wt.HANDLE, _wt.HANDLE]
+    _k32.TerminateJobObject.restype = _wt.BOOL
+    _k32.TerminateJobObject.argtypes = [_wt.HANDLE, _wt.UINT]
+    _k32.CloseHandle.restype = _wt.BOOL
+    _k32.CloseHandle.argtypes = [_wt.HANDLE]
+    # [残留检测] QueryInformationJobObject 显式声明 argtypes：HANDLE 是 c_void_p，
+    # 不设 argtypes 时 ctypes 会按 c_int 传参，64 位下截断指针（未显式声明即 100% 失效）
+    _k32.QueryInformationJobObject.restype = _wt.BOOL
+    _k32.QueryInformationJobObject.argtypes = [
+        _wt.HANDLE, ctypes.c_int, ctypes.c_void_p, _wt.DWORD, ctypes.POINTER(_wt.DWORD)]
+    _JobObjectExtendedLimitInformation = 9
+    _JOB_OBJECT_LIMIT_KILL_ON_JOB_CLOSE = 0x00002000
+    class _IO_COUNTERS(ctypes.Structure):
+        _fields_ = [('ReadOperationCount', ctypes.c_ulonglong),
+                    ('WriteOperationCount', ctypes.c_ulonglong),
+                    ('OtherOperationCount', ctypes.c_ulonglong),
+                    ('ReadTransferCount', ctypes.c_ulonglong),
+                    ('WriteTransferCount', ctypes.c_ulonglong),
+                    ('OtherTransferCount', ctypes.c_ulonglong)]
+    class _JOBOBJECT_BASIC_LIMIT_INFORMATION(ctypes.Structure):
+        _fields_ = [('PerProcessUserTimeLimit', ctypes.c_longlong),
+                    ('PerJobUserTimeLimit', ctypes.c_longlong),
+                    ('LimitFlags', _wt.DWORD),
+                    ('MinimumWorkingSetSize', ctypes.c_size_t),
+                    ('MaximumWorkingSetSize', ctypes.c_size_t),
+                    ('ActiveProcessLimit', _wt.DWORD),
+                    ('Affinity', ctypes.c_size_t),
+                    ('PriorityClass', _wt.DWORD),
+                    ('SchedulingClass', _wt.DWORD)]
+    class _JOBOBJECT_EXTENDED_LIMIT_INFORMATION(ctypes.Structure):
+        _fields_ = [('BasicLimitInformation', _JOBOBJECT_BASIC_LIMIT_INFORMATION),
+                    ('IoInfo', _IO_COUNTERS),
+                    ('ProcessMemoryLimit', ctypes.c_size_t),
+                    ('JobMemoryLimit', ctypes.c_size_t),
+                    ('PeakProcessMemoryUsed', ctypes.c_size_t),
+                    ('PeakJobMemoryUsed', ctypes.c_size_t)]
+def _job_create():
+    """创建 Job Object；失败/非 Windows 返回 None（退化为 taskkill 兜底）"""
+    if platform.system() != 'Windows':
+        return None
+    try:
+        job = _k32.CreateJobObjectW(None, None)
+        if not job:
+            return None
+        if EXEC_JOB_KILL_ON_CLOSE:
+            info = _JOBOBJECT_EXTENDED_LIMIT_INFORMATION()
+            info.BasicLimitInformation.LimitFlags = _JOB_OBJECT_LIMIT_KILL_ON_JOB_CLOSE
+            if not _k32.SetInformationJobObject(job, _JobObjectExtendedLimitInformation,
+                                                ctypes.byref(info), ctypes.sizeof(info)):
+                _k32.CloseHandle(job)
+                return None
+        return job
+    except Exception:
+        return None
+def _job_assign(job, proc):
+    """挂入 Job：子进程自动继承（daemon/孙子/被领养孤儿一并受控）"""
+    if job and proc:
+        try:
+            _k32.AssignProcessToJobObject(job, int(proc._handle))
+        except Exception:
+            pass
+def _job_kill(job):
+    if job:
+        try:
+            _k32.TerminateJobObject(job, 1)
+        except Exception:
+            pass
+def _job_close(job):
+    if job:
+        try:
+            _k32.CloseHandle(job)
+        except Exception:
+            pass
+def _job_alive_count(job):
+    """[残留检测] Job 内当前存活进程数。顶层退出后调用：>0 = 有存活后代（构建场景=daemon）。
+    查询失败返回 None —— 检测不了就沉默，宁漏报不噪音。"""
+    if not job:
+        return None
+    try:
+        buf = (ctypes.c_ulong * 1026)()   # [assigned][in_list][pid×~512]（64位下余量已足）
+        ret_len = _wt.DWORD(ctypes.sizeof(buf))
+        if not _k32.QueryInformationJobObject(job, 3, ctypes.byref(buf),   # 3=JobObjectBasicProcessIdList
+                                              ctypes.sizeof(buf), ctypes.byref(ret_len)):
+            return None
+        return int(buf[1])                # NumberOfProcessIdsInList = 当前存活
+    except Exception:
+        return None
+def _residue_note(alive):
+    """残留警告：只在 alive>0 时被调用。随模式给出后果 + 操作指引"""
+    if EXEC_JOB_KILL_ON_CLOSE:
+        return (f'────\n⚠ 任务结束后仍有 {alive} 个后台进程存活（如 gradle daemon），'
+                '已随任务一并终止，下次构建将冷启动。'
+                '（切换行为：GUI 控制面板「任务结束销毁残留进程」）')
+    return (f'────\nℹ 任务结束后仍有 {alive} 个后台进程存活（如 gradle daemon），'
+            '其后续输出继续写入 .agent_task_logs 对应任务日志（不影响上方回执）；'
+            '它们已脱离本系统管辖，gradle daemon 将在闲置约 3 小时后自行退出。'
+            '（切换行为：GUI 控制面板「任务结束销毁残留进程」）')
+class _TaskLogTailer:
+    """任务日志增量尾随器：
+    - 多字节安全：UTF-8 优先、失败切 GBK；残字节跨读段保存（劈叉免疫）
+    - 行缓冲：半行不外发；finish() 冲出残字节与半行"""
+    def __init__(self):
+        self._buf = b''
+        self._dec = None
+        self._enc = 'utf-8'
+        self._line_buf = ''
+    def feed(self, data):
+        if not data:
+            return []
+        if self._dec is None:
+            self._buf += data
+            # 探测时机：攒到行边界或 8KB，避免把截断的 UTF-8 误判成 GBK
+            if not (self._buf.endswith(b'\n') or len(self._buf) >= 8192):
+                return []
+            try:
+                text = self._buf.decode('utf-8'); self._enc = 'utf-8'
+            except UnicodeDecodeError:
+                try:
+                    text = self._buf.decode('gbk'); self._enc = 'gbk'
+                except UnicodeDecodeError:
+                    if len(self._buf) < 8192:
+                        return []
+                    text = self._buf.decode('utf-8', errors='replace'); self._enc = 'utf-8'
+            self._dec = codecs.getincrementaldecoder(self._enc)(errors='replace')
+            self._buf = b''
+        else:
+            text = self._dec.decode(data)
+        return self._split(text)
+    def finish(self):
+        if self._dec is None:
+            text = self._buf.decode(self._enc, errors='replace')
+        else:
+            text = self._dec.decode(b'', final=True)
+        self._buf = b''
+        out, self._line_buf = self._line_buf + text, ''
+        return out
+    def _split(self, text):
+        if not text:
+            return []
+        self._line_buf += text
+        parts = self._line_buf.split('\n')
+        self._line_buf = parts.pop()      # 最后一段是半行或 ''，留在缓冲
+        return parts
+def _cleanup_old_task_logs():
+    """机会式清理过期任务日志；可能被存活 daemon 占用——失败静默跳过"""
+    try:
+        cutoff = time.time() - _TASK_LOG_KEEP_DAYS * 86400
+        log_dir = _task_log_dir()
+        if os.path.isdir(log_dir):
+            for name in os.listdir(log_dir):
+                fp = os.path.join(log_dir, name)
+                try:
+                    if os.path.isfile(fp) and os.path.getmtime(fp) < cutoff:
+                        os.remove(fp)
+                except OSError:
+                    pass
+    except Exception:
+        pass
+def _read_receipt(log_path, freeze_pos):
+    """回执 = 文件内容（冻结点前）。超限读尾部并标注。返回剥净文本（可为空串）"""
+    try:
+        size = os.path.getsize(log_path)
+    except OSError:
+        return '（回执读取失败：日志文件被占用，全文见 .agent_task_logs）'
+    read_from = 0
+    note = ''
+    end = min(freeze_pos, size)
+    if end > _RECEIPT_MAX_BYTES:
+        read_from = end - _RECEIPT_MAX_BYTES
+        note = f'（回执过长，仅保留末尾 {_RECEIPT_MAX_BYTES // (1024 * 1024)}MB，全文见 .agent_task_logs）\n'
+    try:
+        with open(log_path, 'rb') as f:
+            f.seek(read_from)
+            data = f.read(end - read_from)
+    except OSError:
+        return '（回执读取失败：日志文件被占用，全文见 .agent_task_logs）'
+    text = _decode_blob(data).strip()
+    return note + text if text else ''
+def _tail_lines_text(log_path, freeze_pos, n=_TIMEOUT_RECEIPT_LINES):
+    """超时附证：冻结点前末尾 n 个非空行（空行滴流无取证价值，剔除）"""
+    try:
+        with open(log_path, 'rb') as f:
+            start = max(0, freeze_pos - 16384)
+            f.seek(start)
+            data = f.read(freeze_pos - start)
+    except OSError:
+        return '（无输出可附）'
+    lines = [l.rstrip() for l in _decode_blob(data).splitlines() if l.strip()]
+    return '\n'.join(lines[-n:]) if lines else '（无输出可附）'
+def _stream_process_to_file(argv, task_id, timeout_sec, shell=False):
+    """[exec v2.1] 统一执行核心（exec/run 共用）：
+    stdout/stderr 直接落每任务独立文件（无管道）+ Job Object 树级管控 +
+    固定节拍轮询（完成/中断/超时三检查互相独立）。
+    正常返回回执；超时返回附末尾输出的文案；中断抛 TaskAborted（树已歼灭）。"""
+    global _current_process, _current_job
+    _cleanup_old_task_logs()
+    log_dir = _task_log_dir()
+    os.makedirs(log_dir, exist_ok=True)
+    log_path = os.path.join(log_dir, f"{(task_id or 'cli')[:8]}-{int(time.time())}.log")
+    job = None
+    proc = None
+    pending = deque()                # 已解码待推送整行（削峰队列，字节已消费不重读）
+    tailer = _TaskLogTailer()
+    def _pump(file_pos):
+        """读文件新增字节 → 解码 → 限流推送；返回推进后的 file_pos"""
+        try:
+            size = os.path.getsize(log_path)
+        except OSError:
+            return file_pos
+        if size > file_pos and len(pending) < _EMIT_LINES_PER_TICK:
+            try:
+                with open(log_path, 'rb') as f:
+                    f.seek(file_pos)
+                    data = f.read(min(size - file_pos, _PUMP_READ_CHUNK))
+            except OSError:
+                return file_pos
+            if data:
+                file_pos += len(data)
+                pending.extend(tailer.feed(data))
+        if pending:
+            batch = [pending.popleft() for _ in range(min(_EMIT_LINES_PER_TICK, len(pending)))]
+            for ln in batch:
+                emit_task_event({'id': task_id, 'type': 'log', 'data': ln.rstrip()})
+        return file_pos
+    def _drain(file_pos):
+        """顶层退出后的排水窗：孙子进程迟到输出照常推送，静默即冻结"""
+        quiet_since = None
+        deadline = time.time() + _EXEC_DRAIN_MAX_SEC
+        while True:
+            _check_abort()
+            new_pos = _pump(file_pos)
+            now = time.time()
+            if new_pos > file_pos:
+                file_pos = new_pos
+                quiet_since = now
+            elif quiet_since is None:
+                quiet_since = now
+            if now - quiet_since >= _EXEC_DRAIN_SEC or now >= deadline:
+                return file_pos
+            time.sleep(_EXEC_TICK_SEC)
+    try:
+        # 1) spawn：stdout 落文件（无管道→无 EOF/drain 概念）；stdin 断开防怪异子进程读控制台
+        log_f = open(log_path, 'wb')
+        try:
+            proc = subprocess.Popen(argv, stdout=log_f, stderr=subprocess.STDOUT,
+                                    stdin=subprocess.DEVNULL, cwd=WORK_DIR, shell=shell)
+        finally:
+            log_f.close()            # 子进程已持有继承句柄，写侧交割完毕
+        # 2) Job：整树受控（含后续产生的 daemon/被领养孤儿）
+        job = _job_create()
+        _job_assign(job, proc)
+        with _current_process_lock:
+            _current_process = proc
+            _current_job = job
+        file_pos = 0
+        start_time = time.time()
+        timed_out = False
+        # 3) 主循环：三检查同节拍、互相独立——v1 挂死的对 Kore
+        while True:
+            _check_abort()                                   # 中断 ≤50ms
+            if time.time() - start_time > timeout_sec:       # 超时恒可达（与数据流无关）
+                timed_out = True
+                break
+            if proc.poll() is not None:                      # 完成 = OS 事件
+                break
+            file_pos = _pump(file_pos)
+            time.sleep(_EXEC_TICK_SEC)
+        # 4) 收尾：残留检测必须在 kill/close 之前（歼灭后 Job 清空，查无所获）
+        alive = _job_alive_count(job)
+        if timed_out:
+            _job_kill(job)
+        freeze_pos = _drain(file_pos)
+        try:
+            proc.wait(timeout=5)
+        except Exception:
+            pass
+        # 5) 回执构建（来自文件，超时也不丢）
+        if timed_out:
+            receipt = (f'错误：命令执行超时（{timeout_sec}秒限制），进程树已强杀。\n'
+                       f'—— 末尾输出 ——\n{_tail_lines_text(log_path, freeze_pos)}')
+        else:
+            while pending:                                       # SSE 尾批冲刷
+                batch = [pending.popleft() for _ in range(min(_EMIT_LINES_PER_TICK, len(pending)))]
+                for ln in batch:
+                    emit_task_event({'id': task_id, 'type': 'log', 'data': ln.rstrip()})
+            residual = tailer.finish()                           # 残字节 + 半行
+            if residual.strip():
+                emit_task_event({'id': task_id, 'type': 'log', 'data': residual.rstrip()})
+            receipt = _read_receipt(log_path, freeze_pos)
+            receipt = receipt if receipt else '（命令已执行，无输出）'
+        # [残留警告] 仅当真有活口时追加；0/None 沉默。中断路径不打（用户主动终止，前端已有提示）
+        if alive:
+            receipt += '\n' + _residue_note(alive)
+        return receipt
+    except TaskAborted:
+        _job_kill(job)                                       # 树级歼灭（含 v1 修不掉的孤儿）
+        _kill_process_tree(proc)                             # taskkill 双保险（Job 建立失败时兜底）
+        raise
+    finally:
+        _job_close(job)          # KILL_ON_JOB_CLOSE=True → 任务结束 = 整树不复存在
+        with _current_process_lock:
+            if _current_process is proc:
+                _current_process = None
+            if _current_job is job:
+                _current_job = None
+        # 日志文件不删：完整真相留档，_cleanup_old_task_logs 按天回收
 # [新增] 任务控制接口（供 GUI 调用）
 def request_kill(mode):
     """请求终止当前任务。mode: 'discard'=丢弃结果 / 'done'=返回已有输出
@@ -172,11 +547,13 @@ def request_kill(mode):
     _abort_event.set()
     with _current_process_lock:
         proc = _current_process
+        job = _current_job
+    if job:
+        # [exec v2.1] 树级原子歼灭：Job 内所有进程（含被领养孤儿）立即死亡，不阻塞调用线程
+        _job_kill(job)
     if proc:
-        # [重构·B3] 后台线程执行进程树击杀：杀透后管道写端关闭，遗留 reader 线程
-        # 收到 EOF 自然退出。与 TaskAborted 分支的兜底杀树幂等（poll 检查）
-        threading.Thread(target=_kill_process_tree, args=(proc,), daemon=True,
-                         name='kill-worker').start()
+        # 双保险兜底：Job 建立失败（返回 None）或 assign 前微秒窗口逃逸者
+        threading.Thread(target=_kill_process_tree, args=(proc,), daemon=True, name='kill-worker').start()
     return True
 def request_pause():
     """暂停任务队列（当前任务继续执行完，不再取新任务）。不 notify：worker 若在执行任务自会走到门检"""
@@ -300,17 +677,15 @@ def worker_loop():
             _result_str = str(result) if result is not None else ''
             _ts = datetime.datetime.now().strftime("%H:%M:%S")
             if mode == 'discard':
-                # [修改] 丢弃：emit killed 状态让前端知道任务已终止
                 print(f'[{_ts}] ⛔ 任务 {task_id[:8]} 已终止并丢弃')
-                emit_task_event({'id': task_id, 'type': 'status', 'status': 'killed', 'result': '当前任务已被用户手动终止（结果已丢弃）'})
+                emit_task_note(task_id, 'killed', '⛔ 当前任务已被用户手动终止（结果已丢弃）')
             elif mode == 'done':
-                # [修改] 终止但返回已有输出，前面加提示
                 print(f'[{_ts}] ⛔ 任务 {task_id[:8]} 已终止，返回已有输出:')
-                _notice = '当前任务已被用户手动终止。以下为终止前的已有输出：\n'
-                _final = _notice + _result_str if _result_str else _notice + '（无输出）'
                 if _result_str:
                     print(_result_str)
-                emit_task_event({'id': task_id, 'type': 'status', 'status': 'done', 'result': _final})
+                # 注册表存纯回执（回放时晚订阅者看到干净全文），实时只推一行追加提示
+                emit_task_note(task_id, 'done', '⛔ 任务已被手动终止，以上回执为终止前的已有输出',
+                               result=_result_str)
             else:
                 # 正常完成（多行回执分行显示）
                 if '\n' in _result_str:
@@ -384,6 +759,8 @@ def save_config():
         # [新增·B1] exec/run 超时持久化
         'exec_timeout_sec': EXEC_TIMEOUT_SEC,
         'run_timeout_sec': RUN_TIMEOUT_SEC,
+        # [新增·exec v2.1] Job Object 残留进程策略持久化
+        'job_kill_on_close': EXEC_JOB_KILL_ON_CLOSE,
     }
     try:
         with open(CONFIG_FILE, 'w', encoding='utf-8') as f:
@@ -396,6 +773,7 @@ def load_config():
     global MEMORY_TEMP_INITIAL, MEMORY_TEMP_DECAY_RATIO, MEMORY_TEMP_HEAT_RATIO
     global MEMORY_EXPOSE_WINDOW, MEMORY_READ_WINDOW
     global EXEC_TIMEOUT_SEC, RUN_TIMEOUT_SEC  # [新增·B1]
+    global EXEC_JOB_KILL_ON_CLOSE  # [新增·exec v2.1]
     if not os.path.exists(CONFIG_FILE):
         return
     try:
@@ -430,6 +808,9 @@ def load_config():
             EXEC_TIMEOUT_SEC = max(1, int(config['exec_timeout_sec']))
         if 'run_timeout_sec' in config:
             RUN_TIMEOUT_SEC = max(1, int(config['run_timeout_sec']))
+        # [新增·exec v2.1] Job Object 残留进程策略（旧配置无此项保持默认 True）
+        if 'job_kill_on_close' in config:
+            EXEC_JOB_KILL_ON_CLOSE = bool(config['job_kill_on_close'])
         print(f'[Agent] 配置已加载: {CONFIG_FILE}')
     except Exception as e:
         print(f'[Agent] 配置加载失败，使用默认值: {e}')
@@ -1804,95 +2185,15 @@ def execute_line_streaming(line, task_id):
                     return f'操作被拒绝：执行高危系统命令需用户确认。命令：{arg.strip()}'
         log_action('EXEC', arg.strip())
         try:
-            # [修改] 根据 shell_type 配置选择 PowerShell 或 cmd
+            # [exec v2.1] shell 选择不变，执行核心换文件落盘版
             if shell_type == 'powershell' and _POWERSHELL_EXE:
-                # PowerShell：列表传参，不走 shell=True，避免二次解析
-                process = subprocess.Popen(
-                    [_POWERSHELL_EXE, '-NoProfile', '-NonInteractive', '-Command', arg.strip()],
-                    stdout=subprocess.PIPE, stderr=subprocess.STDOUT, cwd=W
-                )
+                argv = [_POWERSHELL_EXE, '-NoProfile', '-NonInteractive', '-Command', arg.strip()]
+                return _stream_process_to_file(argv, task_id, EXEC_TIMEOUT_SEC)
             else:
-                # cmd 回退
-                process = subprocess.Popen(
-                    f'cmd /c {arg.strip()}', shell=True,
-                    stdout=subprocess.PIPE, stderr=subprocess.STDOUT, cwd=W
-                )
-            # [新增] 注册当前子进程，供 GUI 侧终止
-            with _current_process_lock:
-                _current_process = process
-            output_lines = []
-            start_time = time.time()
-            # [重构] 读取线程 + Queue：readline 阻塞不再卡死中断响应
-            _read_q = queue.Queue()
-            def _reader():
-                """daemon 线程：专门 readline，读到就往 queue 塞"""
-                try:
-                    while True:
-                        line_bytes = process.stdout.readline()
-                        if not line_bytes:
-                            break
-                        _read_q.put(line_bytes)
-                except (OSError, ValueError):
-                    pass  # 管道被外部关闭时静默退出
-                finally:
-                    _read_q.put(None)  # EOF 哨兵：通知主循环"没有更多数据了"
-            reader_thread = threading.Thread(target=_reader, daemon=True)
-            reader_thread.start()
-            # [新增] drain 阶段连续空轮计数：daemon 线程被强杀时 finally 不保证执行，
-            # 哨兵可能丢失，连续空轮超过阈值则强制认为管道已死，避免无限空转
-            _drain_empty_hits = 0
-            timed_out = False
-            draining = False  # [新增] 进程退出后的管道排空阶段
-            while True:
-                try:
-                    # drain 阶段用较长超时等最后一批数据；正常阶段 50ms 检查中断
-                    item = _read_q.get(timeout=0.3 if draining else 0.05)
-                except queue.Empty:
-                    if draining:
-                        _drain_empty_hits += 1
-                        if _drain_empty_hits > 10:  # 10 × 0.3s ≈ 3s 无新增数据
-                            break
-                    continue
-                _check_abort()
-                if time.time() - start_time > EXEC_TIMEOUT_SEC:  # [修改·B5] 超时改读配置
-                    timed_out = True
-                    break
-                # [修复] 队列空但主进程已退出 → 切 drain 模式，等读取线程把缓冲区剩余数据吐完
-                if process.poll() is not None:
-                    draining = True
-                    # [修复] 关键：item 在本分支必然未绑定，必须回循环头重新 get，
-                    # 禁止向下引用（原 except 内残留的 if item is None 已删除）
-                    continue
-                # ↓ 以下为成功 get 到 item 的公共路径
-                if item is None:  # EOF 哨兵：管道彻底关闭
-                    break
-                _drain_empty_hits = 0  # 有数据则重置空轮计数
-                line_out = smart_decode(item).rstrip()
-                output_lines.append(line_out)
-                emit_task_event({'id': task_id, 'type': 'log', 'data': line_out})
-                _check_abort()
-            if timed_out:
-                _kill_process_tree(process)  # [修改] 用统一函数杀进程树
-                with _current_process_lock:
-                    _current_process = None
-                # [修改·B5] 文案改读配置
-                return f'错误：命令执行超时（{EXEC_TIMEOUT_SEC}秒限制），进程树已强杀。'
-            process.wait()
-            # 清理子进程引用
-            with _current_process_lock:
-                _current_process = None
-            output = '\n'.join(output_lines).strip()
-            if not output:
-                output = '（命令已执行，无输出）'
-            return output
+                return _stream_process_to_file(f'cmd /c {arg.strip()}', task_id,
+                                               EXEC_TIMEOUT_SEC, shell=True)
         except TaskAborted:
-            # [新增·B4·修复] 中断路径资源清理：原直接 raise，残留死进程引用且管道写端可能被
-            # 幸存的脱管子进程(gradle daemon 等)攥住。此处兜底杀树 + 清引用，
-            # 杀透后管道 EOF，遗留 reader 线程自然退出（worker 线程内执行，最多阻塞 5s 可接受）
-            _kill_process_tree(process)
-            with _current_process_lock:
-                _current_process = None
-            raise  # 中断信号透传给 worker_loop 处理
+            raise      # 杀树已在核心内完成（Job 歼灭 + taskkill 双保险）
         except Exception as e:
             return f'执行失败：{e}'
     elif cmd == 'run':
@@ -1909,80 +2210,9 @@ def execute_line_streaming(line, task_id):
             return f'错误：脚本不存在：{script}'
         log_action('RUN', script)
         try:
-            process = subprocess.Popen(
-                ['python', script], stdout=subprocess.PIPE, stderr=subprocess.STDOUT, cwd=W
-            )
-            # [新增] 注册当前子进程，供 GUI 侧终止
-            with _current_process_lock:
-                _current_process = process
-            output_lines = []
-            start_time = time.time()
-            # [重构] 读取线程 + Queue（与 exec 相同模式）
-            _read_q = queue.Queue()
-            def _reader():
-                try:
-                    while True:
-                        line_bytes = process.stdout.readline()
-                        if not line_bytes:
-                            break
-                        _read_q.put(line_bytes)
-                except (OSError, ValueError):
-                    pass
-                finally:
-                    _read_q.put(None)
-            reader_thread = threading.Thread(target=_reader, daemon=True)
-            reader_thread.start()
-            # [新增] drain 阶段连续空轮计数：daemon 线程被强杀时 finally 不保证执行，
-            # 哨兵可能丢失，连续空轮超过阈值则强制认为管道已死，避免无限空转
-            _drain_empty_hits = 0
-            timed_out = False
-            draining = False  # [新增] 进程退出后的管道排空阶段
-            while True:
-                try:
-                    item = _read_q.get(timeout=0.3 if draining else 0.05)
-                except queue.Empty:
-                    if draining:
-                        _drain_empty_hits += 1
-                        if _drain_empty_hits > 10:
-                            break
-                    continue
-                _check_abort()
-                if time.time() - start_time > RUN_TIMEOUT_SEC:  # [修改·B5] 超时改读配置
-                    timed_out = True
-                    break
-                # [修复] 队列空但主进程已退出 → 切 drain 模式
-                if process.poll() is not None:
-                    draining = True
-                    # [修复] item 在本分支必然未绑定，必须回循环头重新 get
-                    continue
-                # ↓ 以下为成功 get 到 item 的公共路径
-                if item is None:
-                    break
-                _drain_empty_hits = 0
-                line_out = smart_decode(item).rstrip()
-                output_lines.append(line_out)
-                emit_task_event({'id': task_id, 'type': 'log', 'data': line_out})
-                _check_abort()
-            if timed_out:
-                _kill_process_tree(process)
-                with _current_process_lock:
-                    _current_process = None
-                # [修改·B5] 文案修正：超时路径已调用 _kill_process_tree 强杀进程树，超时改读配置
-                return f'命令执行超时（限制:{RUN_TIMEOUT_SEC}秒），进程树已被强制终止。'
-            process.wait()
-            with _current_process_lock:
-                _current_process = None
-            output = '\n'.join(output_lines).strip()
-            if not output:
-                output = '（脚本已执行，无输出）'
-            return output
+            return _stream_process_to_file(['python', script], task_id, RUN_TIMEOUT_SEC)
         except TaskAborted:
-            # [新增·B4·修复] 中断路径资源清理（同 exec）：兜底杀树 + 清引用，
-            # 杀透后管道 EOF，遗留 reader 线程自然退出（worker 线程内执行，最多阻塞 5s 可接受）
-            _kill_process_tree(process)
-            with _current_process_lock:
-                _current_process = None
-            raise  # 中断信号透传给 worker_loop 处理
+            raise
         except Exception as e:
             return f'运行失败：{e}'
     elif cmd == 'get':
@@ -2023,11 +2253,29 @@ def execute_line_streaming(line, task_id):
             return err
         try:
             os.makedirs(os.path.dirname(save) or '.', exist_ok=True)
-            urllib.request.urlretrieve(url, save)
-            size = os.path.getsize(save)
+            req = urllib.request.Request(url, headers={'User-Agent': 'Agent/1.0 (PokerAgent)'})
+            # [download v2] 三重修复：socket 超时(30s) + 总时长上限 + 分块循环中断检查点
+            # （原 urlretrieve 无超时、无检查点——"终止按下却无效"的根源）
+            with urllib.request.urlopen(req, timeout=30) as resp, open(save + '.part', 'wb') as f:
+                total = 0
+                t0 = time.time()
+                while True:
+                    _check_abort()                            # 终止按钮 ≤1s 生效
+                    if time.time() - t0 > DOWNLOAD_TIMEOUT_SEC:
+                        raise TimeoutError(f'下载总时长超过 {DOWNLOAD_TIMEOUT_SEC} 秒')
+                    chunk = resp.read(65536)
+                    if not chunk:
+                        break
+                    f.write(chunk)
+                    total += len(chunk)
+            os.replace(save + '.part', save)                  # 原子落盘：中断/超时不留半截成品
             log_action('DOWNLOAD', f'{url} -> {save}')
-            return f'已下载：{save}（{size} 字节）'
+            return f'已下载：{save}（{total} 字节）'
+        except TaskAborted:
+            _remove_quiet(save + '.part')
+            raise
         except Exception as e:
+            _remove_quiet(save + '.part')
             return f'下载失败：{e}'
     else:
         return f'未知指令：{cmd}\n输入 @@help fast 查看可用指令列表。'
@@ -2529,11 +2777,15 @@ def agent_stream():
             if entry['status'] in ('done', 'killed') and entry['result']:
                 evt['result'] = entry['result']
             q.put(f"data: {json.dumps(evt, ensure_ascii=False)}\n\n")
-            # 只对未完成任务回放日志（done 的任务结果已含全部信息）
-            if entry['status'] != 'done':
+            # [exec v2.1] result 非空的正常 done 不回放日志（行为不变）；
+            # result 空的终止型 done 回放日志补全回执（note 机制下终止型任务 result 为空）
+            if entry['status'] != 'done' or not entry['result']:
                 for log_line in entry['logs']:
                     log_evt = {'id': tid, 'type': 'log', 'data': log_line}
                     q.put(f"data: {json.dumps(log_evt, ensure_ascii=False)}\n\n")
+            # [新增·note 机制] 回放 notes（终止提示行）
+            for note_text in entry.get('notes', []):
+                q.put(f"data: {json.dumps({'id': tid, 'type': 'note', 'status': entry['status'], 'text': note_text}, ensure_ascii=False)}\n\n")
         # [新增·B7] 回放结束哨兵：前端据此对账本地任务表，识别"后端重启导致注册表清空"的僵尸任务
         q.put('data: {"id": "all", "type": "replay_done"}\n\n')
     def generate():

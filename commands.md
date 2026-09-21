@@ -540,12 +540,16 @@ exec 使用的系统终端由后端配置决定，回退链为：
 【cmd】exec `$PSVersionTable.PSVersion.ToString()`【/cmd】
 【cmd】exec `Get-ChildItem` `-Name`【/cmd】
 解码格式会动态获取系统编码
+**完成判定:**
+顶层命令进程退出（+1.5s 排水窗）。用 Start-Process 拉起后台且需等它结束的，脚本内自加 -Wait；不加则顶层退出后任务立即正常收工（后台进程的输出继续写入任务日志文件，不影响任何状态）。
 
 ### run <脚本路径>
 运行 Python 脚本，返回输出。
 示例：
 【cmd】run `script.py`【/cmd】
 【cmd】run `"my script.py"`【/cmd】
+**完成判定:**
+顶层命令进程退出（+1.5s 排水窗）。用 Start-Process 拉起后台且需等它结束的，脚本内自加 -Wait；不加则顶层退出后任务立即正常收工（后台进程的输出继续写入任务日志文件，不影响任何状态）。
 
 ---
 
