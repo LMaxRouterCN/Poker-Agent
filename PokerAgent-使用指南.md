@@ -31,8 +31,8 @@
 
   1. 如果文件或目录路径中包含空格,必须使用双引号 "" 将路径包裹起来,例如 read `"11 1.md"` `10-20`.不加引号时,空格会被视为参数分隔符.
   2. 如果需要写入的代码正文本身包含```,必须将其替换为TICK3(后端在写入文件时会自动还原为```).
-  3. 【CodeSTART】和【/CodeEND】的作用就是标记代码块的起始和结束,所以在指令中每个markdown代码块都必须用【CodeSTART】和【/CodeEND】包裹,【CodeSTART】和【/CodeEND】必须和代码块同时存在,如果没有代码块就不要用【CodeSTART】和【/CodeEND】.
-  4. 【CodeSTART】的下一行与【/CodeEND】的上一行必须单独写一行```,仅用于在预览器中把代码渲染为代码块,在后端这两行用作代码块的三联反引号会被忽略.
+  3. 【code】和【/code】的作用就是标记代码块的起始和结束,所以在指令中每个markdown代码块都必须用【code】和【/code】包裹,【code】和【/code】必须和代码块同时存在,如果没有代码块就不要用【code】和【/code】.
+  4. 【code】的下一行与【/code】的上一行必须单独写一行```,仅用于在预览器中把代码渲染为代码块,在后端这两行用作代码块的三联反引号会被忽略.
   5. 单行指令中指令的传入参数需要用"`"包裹,多行指令不需要,在这边并没有严格的格式规定,可以是【cmd】read `"11111.md"` `10-20`【/cmd】分开包裹,也可以【cmd】read `"11111.md" 10-20`【/cmd】整体只包裹一次.
 
   除了单条单行指令的情况之外,所有每个标签前后都必须换行.
@@ -42,7 +42,7 @@
   1. 代码块中的```是否将其替换为了TICK3?
   2. 写入的代码**正文本身**是否包含```?,是否将其替换为了TICK3?
   3. 一条指令是否完全包裹在【cmd】和【/cmd】标签之内?
-  4. 每个代码块是否都用【CodeSTART】和【/CodeEND】标签包裹?
+  4. 每个代码块是否都用【code】和【/code】标签包裹?
   5. 单行指令的传入参数是否用`包裹?
   6. 所有【】标签前后是否都已换行?
 
@@ -95,11 +95,11 @@ PokerAgent 内置了记忆系统,用于在长对话中保持上下文. 记忆分
   写入短期记忆(覆盖). 短期记忆会在每次对话时自动注入到你的上下文中,用于记录当前任务的关键状态.
   示例:
   【cmd】remember
-  【CodeSTART】
+  【code】
   ```
   当前正在修复登录接口的并发Bug,已定位到线程池配置问题
   ```
-  【/CodeEND】
+  【/code】
   【/cmd】
   清空:
   【cmd】remember【/cmd】
@@ -111,36 +111,36 @@ PokerAgent 内置了记忆系统,用于在长对话中保持上下文. 记忆分
   写入后会返回一个纯数字编号,格式为三位数(如 001、042).
   示例:
   【cmd】memory tag: 用户名,max
-  【CodeSTART】
+  【code】
   ```
   用户的名字是max
   ```
-  【/CodeEND】
+  【/code】
   【/cmd】
   【cmd】memory tag: 配置,密钥 -pin temp: 500
-  【CodeSTART】
+  【code】
   ```
   重要的核心密钥配置
   ```
-  【/CodeEND】
+  【/code】
   【/cmd】
   ### memory `<id>` tag: `标签1,标签2` [-pin] [temp: `初始温度`]
   按ID覆盖写入已有的长期记忆. ID必须是已存在的记忆编号.
   覆盖时会重置该记忆的温度,若指定 `temp:` 则使用新值,否则恢复为其初始温度.
   示例:
   【cmd】memory 042 tag: 用户名,max
-  【CodeSTART】
+  【code】
   ```
   用户的名字是Max,网名LMaxRouterCN
   ```
-  【/CodeEND】
+  【/code】
   【/cmd】
   【cmd】memory 042 tag: 架构 temp: 200
-  【CodeSTART】
+  【code】
   ```
   核心架构改为MVVM
   ```
-  【/CodeEND】
+  【/code】
   【/cmd】
   ### memory search `-tag 标签1,标签2` / `-c 关键词1 关键词2`
   搜索长期记忆. 标签模式和内容模式强制分离,必须显式指定,缺模式直接报错:
@@ -216,14 +216,14 @@ PokerAgent 内置了记忆系统,用于在长对话中保持上下文. 记忆分
 
   好的,我会帮你写一段说明文档,介绍使用三联反引号创建代码块的方式.
   【cmd】create `"code_blocks.md"`
-  【CodeSTART】
+  【code】
   ```
   Yes, you can use TICK3 to create code blocks, like this:
   TICK3
   something
   TICK3
   ```
-  【/CodeEND】
+  【/code】
   【/cmd】
 
 ## 使用指南结束

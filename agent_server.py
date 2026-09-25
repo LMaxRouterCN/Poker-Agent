@@ -1,5 +1,5 @@
 """
-PokerAgent - 本地接应服务 (SSE流式版) v49
+PokerAgent - 本地接应服务 (SSE流式版) v50
 启动方式：python agent_server.py
 默认监听：http://127.0.0.1:9966
 """
@@ -1010,7 +1010,7 @@ def execute_line_streaming(line, task_id):
     cmd = parts[0].lower()
     arg = parts[1] if len(parts) > 1 else ''
     arg = arg.replace('\u201c', '"').replace('\u201d', '"')
-    cs_idx = arg.find('【CodeSTART】')
+    cs_idx = arg.find('【code】')
     if cs_idx != -1:
         arg = arg[:cs_idx]
     W = WORK_DIR
@@ -1138,7 +1138,7 @@ def execute_line_streaming(line, task_id):
     # ========== 记忆系统指令 ==========
     elif cmd == 'remember':
         # 短期记忆：覆盖写入 .agent/remember.md
-        # [协议 v2] 内容只认【CodeSTART】代码块（\x00 通道），内联文本废除：
+        # [协议 v2] 内容只认【code】代码块（\x00 通道），内联文本废除：
         #   remember + 代码块            → 覆盖写入
         #   remember（完全空参数）        → 清空短期记忆（保留原语义）
         #   remember 内联文本（无代码块） → 报错（绝不静默清空，LLM 可据此自纠）
@@ -1150,7 +1150,7 @@ def execute_line_streaming(line, task_id):
         if not block:
             if arg:
                 # 有内联文本但无代码块：协议违规，拒绝执行（防止误清空短期记忆）
-                return '错误：remember 写入内容必须通过【CodeSTART】代码块提供，内联文本已不支持。'
+                return '错误：remember 写入内容必须通过【code】代码块提供，内联文本已不支持。'
             memory_engine.write_short('')
             return '已清空短期记忆。'
         memory_engine.write_short(block)
@@ -1224,12 +1224,12 @@ def execute_line_streaming(line, task_id):
                 # 覆盖写入模式
                 # [协议 v2] 正文只认代码块：无块直接报错；块外残留正文（内联）同样报错
                 if not mem_block:
-                    return '错误：memory <id> 覆盖写入内容必须通过【CodeSTART】代码块提供，内联文本已不支持。'
+                    return '错误：memory <id> 覆盖写入内容必须通过【code】代码块提供，内联文本已不支持。'
                 rest = raw_arg[len(first_token):].strip()
                 # [修改] 末尾参数统一走解析器（与新增写入一致，temp:N / -pin / tag: 任意组合）
                 content, tags, pin, custom_temp = _parse_memory_params(rest)
                 if content.strip():
-                    return '错误：memory 覆盖写入不支持内联文本，正文必须放在【CodeSTART】代码块中。'
+                    return '错误：memory 覆盖写入不支持内联文本，正文必须放在【code】代码块中。'
                 content = mem_block
                 success = memory_engine.overwrite_by_id(mem_id, content, tags, pin, custom_temp)
                 if success:
@@ -1243,9 +1243,9 @@ def execute_line_streaming(line, task_id):
         # [修改] 末尾参数（-pin / temp:N / tag:）统一走解析器，任意顺序组合
         content, tags, pin, custom_temp = _parse_memory_params(raw_arg)
         if content.strip():
-            return '错误：memory 写入不支持内联文本，正文必须放在【CodeSTART】代码块中。'
+            return '错误：memory 写入不支持内联文本，正文必须放在【code】代码块中。'
         if not mem_block:
-            return '错误：memory 写入内容必须通过【CodeSTART】代码块提供。'
+            return '错误：memory 写入内容必须通过【code】代码块提供。'
         content = mem_block
         mem_id = memory_engine.write_long(content, tags, pin, custom_temp)
         return f'已存入长期记忆，编号 {mem_id:03d}'
@@ -2175,7 +2175,7 @@ def execute_line_streaming(line, task_id):
     elif cmd == 'exec':
         if not exec_enabled:
             return '错误：exec 指令已被管理员禁用。'
-        # [新增] 代码块格式支持：exec 后跟【CodeSTART】/```代码块时，代码块内容即要执行的命令
+        # [新增] 代码块格式支持：exec 后跟【code】/```代码块时，代码块内容即要执行的命令
         # 内联文本与代码块同时存在时以代码块为准（内联丢弃）；不做 TICK3 替换，保证命令逐字保真
         if '\x00' in arg:
             arg = arg.split('\x00', 1)[1]
@@ -2863,7 +2863,7 @@ def agent_exec():
     lines = command_text.split('\n')
     i = 0
     task_ids = []
-    # 提取代码块的独立函数，仅认 【CodeSTART】...【/CodeEND】 边界。
+    # 提取代码块的独立函数，仅认 【code】...【/code】 边界。
     # [协议说明] ``` 不作为边界：它是前端的 markdown 渲染记号，正常链路下
     # 前端渲染消费后不会到达后端；若仍出现在块内，一律视为字面内容（不剥离、不匹配）。
     # LLM 侧约定：正文中需要字面 ``` 时用 TICK3 转义（前端不渲染转义序列）。
@@ -2872,14 +2872,14 @@ def agent_exec():
         peek = start_idx
         while peek < len(lines):
             stripped = lines[peek].strip()
-            # 匹配 【CodeSTART】...【/CodeEND】
-            if '【codestart】' in stripped.lower():
+            # 匹配 【code】...【/code】
+            if '【code】' in stripped.lower():
                 peek += 1
                 block = []
                 while peek < len(lines):
                     bln = lines[peek]
-                    if '【/codeend】' in bln.lower():
-                        idx = bln.lower().find('【/codeend】')
+                    if '【/code】' in bln.lower():
+                        idx = bln.lower().find('【/code】')
                         if idx != -1:
                             block.append(bln[:idx])
                         peek += 1

@@ -176,52 +176,52 @@
 
 1. 如果文件或目录路径中包含空格,必须使用双引号 "" 将路径包裹起来,例如 read `"11111.md"` `10-20`.不加引号时,空格会被视为参数分隔符.
 2. 如果要写入的内容本身包含三个反引号,请用 TICK3 代替避免在浏览器处理文本后打乱排版格式（后端会自动还原）.
-3. 【CodeSTART】和【/CodeEND】的作用就是标记代码块的起始和结束,所以在指令中每个markdown代码块都必须用【CodeSTART】和【/CodeEND】包裹,【CodeSTART】和【/CodeEND】必须和代码块同时存在,如果没有代码块就不要用【CodeSTART】和【/CodeEND】.
+3. 【code】和【/code】的作用就是标记代码块的起始和结束,所以在指令中每个markdown代码块都必须用【code】和【/code】包裹,【code】和【/code】必须和代码块同时存在,如果没有代码块就不要用【code】和【/code】.
 4. 指令中指令的传入参数需要用"`"包裹,在这边并没有严格的格式规定,可以是【cmd】read `"11111.md"` `10-20`【/cmd】分开包裹,也可以【cmd】read `"11111.md" 10-20`【/cmd】.
 
 - 任何情况下,指令内用于包裹代码的```的同一行都不能出现任何标识代码块的编程语言标签
     >写:
     >【cmd】create `hello.txt`
-    >【CodeSTART】
+    >【code】
     >```
     >something
     >```
-    >【/CodeEND】
+    >【/code】
     >【/cmd】
     >不要写:
     >【cmd】create `hello.txt`
-    >【CodeSTART】
+    >【code】
     >```java
     >something
     >```
-    >【/CodeEND】
+    >【/code】
     >【/cmd】
 - 关于```,TICK3,三联反引号的详细说明
     >
     >**正确示例:**
     >好的,我会帮你写一段说明文本,介绍使用三联反引号创建代码块的方式.
     >【cmd】create `code_blocks.md`
-    >【CodeSTART】
+    >【code】
     >```
     >Yes, you can use TICK3 to create code blocks, like this:
     >TICK3
     >something
     >TICK3
     >```
-    >【/CodeEND】
+    >【/code】
     >【/cmd】
     >
     >**完全错误示例:**
     >好的,我会帮你写一段说明文本,介绍使用```创建代码块的方式.
     >【cmd】create `code_blocks.md`
-    >【CodeSTART】
+    >【code】
     >TICK3
     >Yes, you can use ``` to create code blocks, like this:
     >三联反引号
     >something
     >三联反引号
     >TICK3
-    >【/CodeEND】
+    >【/code】
     >【/cmd】
 
 ---
@@ -296,25 +296,25 @@
 - -p : 部分匹配（搜索词是目标的子串或正则部分匹配）
 - -i : 忽略大小写
 无修饰参数时默认: 全匹配 + 不忽略大小写.
-**模式一: 文件内容查找（使用【CodeSTART】标签时触发）**
+**模式一: 文件内容查找（使用【code】标签时触发）**
 路径必须是文件.支持单行或多行连续匹配.
 示例 (全匹配单行): 
 【cmd】find `main.py`
-【CodeSTART】
+【code】
 ```
 def main():
 ```
-【/CodeEND】
+【/code】
 【/cmd】
 示例 (正则部分匹配): 
 【cmd】find `main.py` `-r` `-p`
-【CodeSTART】
+【code】
 ```
 import .* from .*
 ```
-【/CodeEND】
+【/code】
 【/cmd】
-**模式二: 文件名递归搜索（不使用【CodeSTART】标签时触发）**
+**模式二: 文件名递归搜索（不使用【code】标签时触发）**
 路径必须是目录.递归向下搜索匹配的文件名.
 选项同上.若需使用通配符（如 *.txt）,请开启 -r 使用正则（如 .*\.txt）.
 示例 (全匹配文件名): 
@@ -335,11 +335,11 @@ import .* from .*
 示例: 
 【cmd】deleteline `test.txt` `-i` `-w` `hello`【/cmd】
 【cmd】deleteline `test.txt` `-a`
-【CodeSTART】
+【code】
 ```
 hello world
 ```
-【/CodeEND】
+【/code】
 【/cmd】
 ### replace <文件路径> [选项]
 **选项: **
@@ -356,25 +356,25 @@ hello world
 **内容匹配模式**（默认）: 用两个独立的代码块分别提供旧文本和新文本,第一个代码块是旧文本,第二个是新文本.
 示例（组合匹配: 忽略缩进 + 忽略大小写）: 
 【cmd】replace `config.json` `-s` `-i`
-【CodeSTART】
+【code】
 ```
 "debug": false
 ```
-【/CodeEND】
-【CodeSTART】
+【/code】
+【code】
 ```
 "debug": true
 ```
-【/CodeEND】
+【/code】
 【/cmd】
 **行号模式**（-l）: 直接指定要替换的行范围,只提供新文本.
 示例: 
 【cmd】replace `"config file.json"` `-l` `10-15`
-【CodeSTART】
+【code】
 ```
 // 新的代码
 ```
-【/CodeEND】
+【/code】
 【/cmd】
 注意replace指令*不支持*多行分别查找替换, 指令会把一个代码块内的所有内容作为一个整体
 建议尽可能使用行号模式,因为内容匹配模式由于缩进和换行比较脆弱,而且原文本如果tab和空格混用这种情况下将极难排查
@@ -382,19 +382,19 @@ hello world
 在指定位置插入内容.可以指定行号,也可以指定一段目标文本.
 示例（在第10行后插入）: 
 【cmd】insert `main.py` `-after` `10`
-【CodeSTART】
+【code】
 ```
 print("插入的内容")
 ```
-【/CodeEND】
+【/code】
 【/cmd】
 示例（在目标文本前插入）: 
 【cmd】insert `"main file.py"` `-before` `"def main():"`
-【CodeSTART】
+【code】
 ```
 # 这是新插入的注释
 ```
-【/CodeEND】
+【/code】
 【/cmd】
 ### grep [选项] "模式" <文件或目录路径>
 在文件或目录中按正则表达式搜索匹配的行.模式默认作为 Python 正则表达式解析（re.search 语义）.
@@ -425,23 +425,23 @@ print("插入的内容")
 ---
 
 ### create <文件路径> [内容]
-创建一个新文件并写入内容.文件路径写在指令同行,多行内容必须使用 【CodeSTART】 和 【/CodeEND】 标签包裹
+创建一个新文件并写入内容.文件路径写在指令同行,多行内容必须使用 【code】 和 【/code】 标签包裹
 格式: 
 【cmd】create <文件路径>
-【CodeSTART】
+【code】
 ```
 <文件内容>
 ```
-【/CodeEND】
+【/code】
 【/cmd】
 示例: 
 【cmd】create `hello.txt`
-【CodeSTART】
+【code】
 ```
 Hello World!
 这是第二行.
 ```
-【/CodeEND】
+【/code】
 【/cmd】
 - 文件路径: 相对于工作目录,或使用绝对路径.**如果路径包含空格,必须用双引号包裹**.
 - 如果文件已存在,会覆盖原文件.
@@ -466,11 +466,11 @@ Hello World!
 向已有文件末尾追加内容.多行格式与 create 相同.
 格式: 
 【cmd】append <文件路径>
-【CodeSTART】
+【code】
 ```
 <追加内容>
 ```
-【/CodeEND】
+【/code】
 【/cmd】
 简写: 
 【cmd】append <文件路径> <单行内容>【/cmd】
@@ -533,31 +533,31 @@ Hello World!
 执行系统命令,返回输出.支持两种命令格式.
 **命令格式（两种）: **
 1. **单行内联**: `exec <命令>`.
-2. **代码块格式**: exec 独占一行,命令内容用【CodeSTART】和【/CodeEND】代码块包裹.
+2. **代码块格式**: exec 独占一行,命令内容用【code】和【/code】代码块包裹.
 代码块格式下,按提供的块**数量**区分两种行为: 
 - **单代码块**: 整个块的内容作为一个多行脚本,在**同一个进程**中按顺序执行,块内各行可共享变量.
 - **多代码块**: 每个块成为**独立任务**,各自启动**独立进程**依次串行执行,块与块之间**无状态共享,不拼接**,且各自产生一条独立回执.单个块失败不影响后续块.
 示例（单代码块: 同一进程,共享变量）: 
 【cmd】exec
-【CodeSTART】
+【code】
 ```
 $files = Get-ChildItem -Recurse -File
 $files | Sort-Object Length -Descending | Select-Object -First 10 Name, Length
 ```
-【/CodeEND】
+【/code】
 【/cmd】
 示例（多代码块: 两个独立进程先后执行,第二个块拿不到第一个块的变量）: 
 【cmd】exec
-【CodeSTART】
+【code】
 ```
 python --version
 ```
-【/CodeEND】
-【CodeSTART】
+【/code】
+【code】
 ```
 node --version
 ```
-【/CodeEND】
+【/code】
 【/cmd】
 建议始终使用代码块格式,因为有的时候某些特殊字符会在单行模式下破坏内容
 **如何选择单块还是多块: **
@@ -604,20 +604,20 @@ exec 使用的系统终端由后端配置决定,回退链为:
 
 ### remember
 覆盖写入短期记忆.短期记忆会在每次对话时自动注入上下文,用于记录当前任务的实时状态.
-**内容必须通过【CodeSTART】代码块提供,不支持内联文本**（发内联会直接报错,不会执行）.
+**内容必须通过【code】代码块提供,不支持内联文本**（发内联会直接报错,不会执行）.
 **清空模式**: 完全无参数且无代码块时,清空短期记忆.
 示例（写入）: 
 【cmd】remember
-【CodeSTART】
+【code】
 ```
 当前正在修复登录接口的并发Bug,已定位到线程池配置问题
 ```
-【/CodeEND】
+【/code】
 【/cmd】
 示例（清空）: 
 【cmd】remember【/cmd】
 ### memory
-长期记忆指令,支持多种子命令.**写入模式的正文必须通过【CodeSTART】代码块提供,不支持内联文本**（发内联会直接报错,不会执行）.
+长期记忆指令,支持多种子命令.**写入模式的正文必须通过【code】代码块提供,不支持内联文本**（发内联会直接报错,不会执行）.
 **新增写入**: `memory tag: 标签1,标签2 [-pin] [temp: N]` + 一个代码块
 - 标签用于后续检索,通过 `tag:` 指定（逗号分隔多个）
 - `-pin`: 该记忆永不衰减,温度锁定为 ∞
@@ -638,19 +638,19 @@ exec 使用的系统终端由后端配置决定,回退链为:
 - `memory unpin <id> [<id> ...]`: 按ID取消固定,回到初始温度继续衰减
 示例（新增写入）: 
 【cmd】memory tag: 用户名,max
-【CodeSTART】
+【code】
 ```
 用户的名字是max
 ```
-【/CodeEND】
+【/code】
 【/cmd】
 示例（覆盖写入）: 
 【cmd】memory 042 tag: 架构 temp: 200
-【CodeSTART】
+【code】
 ```
 核心架构改为MVVM
 ```
-【/CodeEND】
+【/code】
 【/cmd】
 示例（搜索）: 
 【cmd】memory search -tag 架构 数据库【/cmd】
