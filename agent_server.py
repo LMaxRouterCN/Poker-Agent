@@ -1,5 +1,5 @@
 """
-PokerAgent - 本地接应服务 (SSE流式版) v48
+PokerAgent - 本地接应服务 (SSE流式版) v49
 启动方式：python agent_server.py
 默认监听：http://127.0.0.1:9966
 """
@@ -1138,27 +1138,28 @@ def execute_line_streaming(line, task_id):
     # ========== 记忆系统指令 ==========
     elif cmd == 'remember':
         # 短期记忆：覆盖写入 .agent/remember.md
-        # 空参数 = 清空短期记忆
-        # [修复] 多行代码块：agent-exec 将其拼接为 "参数\x00代码块"，
-        # 原实现未拆分导致 \x00 字符与内容混杂写入记忆文件
+        # [协议 v2] 内容只认【CodeSTART】代码块（\x00 通道），内联文本废除：
+        #   remember + 代码块            → 覆盖写入
+        #   remember（完全空参数）        → 清空短期记忆（保留原语义）
+        #   remember 内联文本（无代码块） → 报错（绝不静默清空，LLM 可据此自纠）
         block = ''
         if '\x00' in arg:
             arg, block = arg.split('\x00', 1)
             arg = arg.strip()
             block = block.strip('\n').replace('TICK3', '```')
-        content = arg.replace('TICK3', '```').strip()
-        if block:
-            content = (content + '\n' + block) if content else block
-        memory_engine.write_short(content)
-        if content:
-            return '已更新短期记忆。'
-        else:
+        if not block:
+            if arg:
+                # 有内联文本但无代码块：协议违规，拒绝执行（防止误清空短期记忆）
+                return '错误：remember 写入内容必须通过【CodeSTART】代码块提供，内联文本已不支持。'
+            memory_engine.write_short('')
             return '已清空短期记忆。'
+        memory_engine.write_short(block)
+        return '已更新短期记忆。'
     elif cmd == 'memory':
         # 长期记忆指令：支持多种子命令
         raw_arg = arg.strip()
         # [修复] 多行代码块：拆分 "\x00" 分隔的代码块（原样混入导致记忆内容损坏）。
-        # inline 部分承载内容前缀与 tag:/-pin 修饰符，代码块追加到内容末尾
+        # inline 部分承载 tag:/-pin 修饰符，代码块作为正文
         mem_block = ''
         if '\x00' in raw_arg:
             raw_arg, mem_block = raw_arg.split('\x00', 1)
@@ -1168,12 +1169,26 @@ def execute_line_streaming(line, task_id):
         if not raw_arg and not mem_block:
             return '错误：memory 指令缺少参数。发送 @@help memory 获取指令详细用法'
         # ── 子命令：search ──
+        # [协议 v2] 标签/内容模式强制显式分流（原为标签优先、内容兜底自动回退）：
+        #   memory search -tag 标签1,标签2    → 按标签匹配
+        #   memory search -c 关键词1 关键词2  → 按内容匹配
+        # 多关键词 OR 语义：任一关键词命中即算命中该条（与 grep -e 多模式一致）
         if raw_arg.lower().startswith('search'):
-            keyword = raw_arg[6:].strip()
-            if not keyword:
-                return '错误：memory search 需要指定搜索关键词。'
-            result = memory_engine.search(keyword)
-            return result
+            spec = raw_arg[6:].strip()
+            if not spec:
+                return '错误：memory search 必须显式指定模式：-tag（按标签）或 -c（按内容）。'
+            spec_parts = spec.split(None, 1)
+            mode_flag = spec_parts[0].lower()
+            if mode_flag not in ('-tag', '-c') or len(spec_parts) < 2:
+                return '错误：memory search 必须显式指定模式：-tag（按标签）或 -c（按内容）。用法：memory search -tag a,b / memory search -c 词1 词2'
+            # 标签模式：逗号/空白均可分隔（标签本身不含空白）；内容模式：仅按空白分词（关键词可含逗号）
+            if mode_flag == '-tag':
+                keywords = [k for k in re.split(r'[,\s，、]+', spec_parts[1]) if k]
+            else:
+                keywords = spec_parts[1].split()
+            if not keywords:
+                return '错误：memory search 关键词为空。'
+            return memory_engine.search(keywords, 'tag' if mode_flag == '-tag' else 'content')
         # ── 子命令：del ──
         if raw_arg.lower().startswith('del'):
             id_str = raw_arg[3:].strip()
@@ -1200,38 +1215,38 @@ def execute_line_streaming(line, task_id):
             return f'已取消固定 {unpinned} 条记忆。'
         # ── 判断是否为覆盖写入 ──
         # 第一个 token 是纯数字 且 该ID已存在 → 覆盖写入
-        # 否则 → 新增写入（防止 "memory 23号的改动..." 中的 23 被误识别为ID）
+        # [协议 v2] ID 不存在不再 fall-through 到新增写入（内联死刑后此兜底路径也一并失效），
+        # 直接按 ID 未找到报错，避免把数字串误当正文
         first_token = raw_arg.split(None, 1)[0] if raw_arg else ''
         if first_token.isdigit():
             mem_id = int(first_token)
             if memory_engine.memory_exists(mem_id):
                 # 覆盖写入模式
+                # [协议 v2] 正文只认代码块：无块直接报错；块外残留正文（内联）同样报错
+                if not mem_block:
+                    return '错误：memory <id> 覆盖写入内容必须通过【CodeSTART】代码块提供，内联文本已不支持。'
                 rest = raw_arg[len(first_token):].strip()
-                if not rest:
-                    return '错误：memory <id> 覆盖写入需要指定内容。'
-                # [修改] 末尾参数统一走解析器（与新增写入一致，新增 temp:N 支持）
+                # [修改] 末尾参数统一走解析器（与新增写入一致，temp:N / -pin / tag: 任意组合）
                 content, tags, pin, custom_temp = _parse_memory_params(rest)
-                content = content.replace('TICK3', '```')
-                # [修复] 多行代码块内容并入（空内容判断移到并入之后）
-                if mem_block:
-                    content = (content + '\n' + mem_block) if content else mem_block
-                if not content:
-                    return '错误：memory <id> 覆盖写入内容为空。'
+                if content.strip():
+                    return '错误：memory 覆盖写入不支持内联文本，正文必须放在【CodeSTART】代码块中。'
+                content = mem_block
                 success = memory_engine.overwrite_by_id(mem_id, content, tags, pin, custom_temp)
                 if success:
                     return f'已覆盖写入长期记忆，编号 {mem_id:03d}'
                 else:
                     return f'错误：未找到编号为 {mem_id:03d} 的记忆。'
-            # ID不存在 → fall through 到新增写入模式
+            else:
+                return f'错误：未找到编号为 {mem_id:03d} 的记忆（ID 不存在，新增请勿携带数字前缀）。'
         # ── 新增写入模式 ──
-        raw = raw_arg.replace('TICK3', '```')
+        # [协议 v2] 正文只认代码块：块外残留正文（内联）报错；无块且无正文也报错
         # [修改] 末尾参数（-pin / temp:N / tag:）统一走解析器，任意顺序组合
-        content, tags, pin, custom_temp = _parse_memory_params(raw)
-        # [修复] 多行代码块内容并入（空内容判断移到并入之后）
-        if mem_block:
-            content = (content + '\n' + mem_block) if content else mem_block
-        if not content:
-            return '错误：memory 指令内容为空。'
+        content, tags, pin, custom_temp = _parse_memory_params(raw_arg)
+        if content.strip():
+            return '错误：memory 写入不支持内联文本，正文必须放在【CodeSTART】代码块中。'
+        if not mem_block:
+            return '错误：memory 写入内容必须通过【CodeSTART】代码块提供。'
+        content = mem_block
         mem_id = memory_engine.write_long(content, tags, pin, custom_temp)
         return f'已存入长期记忆，编号 {mem_id:03d}'
     elif cmd == 'count':
@@ -2418,9 +2433,12 @@ class MemoryEngine:
         meta = self._load_meta()
         return str(mem_id) in meta['memory']
     # ── 长期记忆搜索 ──
-    def search(self, keyword, window=None):
+    def search(self, keywords, mode='tag', window=None):
         """搜索长期记忆，返回命中全文 + 上下 N 条元数据，触发加热
-        [修改] 支持多命中：标签命中优先全量返回；标签零命中再搜内容，内容命中全量返回
+        [协议 v2] 标签/内容模式分离（原为标签优先、内容兜底自动回退）：
+          mode='tag'     → 仅按标签匹配
+          mode='content' → 仅按内容匹配
+        [协议 v2] 多关键词 OR 语义：keywords 为列表，任一关键词命中即算该条命中（与 grep -e 一致）
         [修改] 温度显示改为区间：floor(t)~floor(t)+1（Pin 为 ∞）"""
         if window is None:
             window = MEMORY_READ_WINDOW
@@ -2434,18 +2452,23 @@ class MemoryEngine:
         entries = self._parse_memory_file(content)
         if not entries:
             return '长期记忆为空。'
-        keyword_lower = keyword.lower()
-        # [修改] 多命中收集：先按标签匹配，收集全部命中
-        matched = [i for i, entry in enumerate(entries)
-                   if any(keyword_lower in tag.lower() for tag in entry['tags'])]
-        match_by = '标签'
-        if not matched:
-            # 标签零命中 → 回退按内容匹配，同样收集全部命中
+        # 关键词统一小写（子串匹配不区分大小写）
+        kws_lower = [k.lower() for k in keywords if k]
+        if not kws_lower:
+            return '错误：memory search 关键词为空。'
+        # [协议 v2] 模式分流：不再自动回退，模式由指令显式指定
+        if mode == 'tag':
+            # 标签模式：条目的任一标签包含任一关键词即命中
             matched = [i for i, entry in enumerate(entries)
-                       if keyword_lower in entry['content'].lower()]
+                       if any(kw in tag.lower() for tag in entry['tags'] for kw in kws_lower)]
+            match_by = '标签'
+        else:
+            # 内容模式：正文包含任一关键词即命中
+            matched = [i for i, entry in enumerate(entries)
+                       if any(kw in entry['content'].lower() for kw in kws_lower)]
             match_by = '内容'
         if not matched:
-            return f'未找到匹配 "{keyword}" 的记忆。'
+            return f'未找到匹配 "{", ".join(keywords)}" 的记忆（模式：{match_by}）。'
         # 加热所有命中的记忆
         for i in matched:
             self._heat_memory(entries[i]['id'])
@@ -2840,7 +2863,10 @@ def agent_exec():
     lines = command_text.split('\n')
     i = 0
     task_ids = []
-    # [新增] 提取代码块的独立函数，兼容 【CodeSTART】 和 ```
+    # 提取代码块的独立函数，仅认 【CodeSTART】...【/CodeEND】 边界。
+    # [协议说明] ``` 不作为边界：它是前端的 markdown 渲染记号，正常链路下
+    # 前端渲染消费后不会到达后端；若仍出现在块内，一律视为字面内容（不剥离、不匹配）。
+    # LLM 侧约定：正文中需要字面 ``` 时用 TICK3 转义（前端不渲染转义序列）。
     def extract_blocks(start_idx):
         blocks = []
         peek = start_idx
@@ -2856,18 +2882,6 @@ def agent_exec():
                         idx = bln.lower().find('【/codeend】')
                         if idx != -1:
                             block.append(bln[:idx])
-                        peek += 1
-                        break
-                    block.append(bln)
-                    peek += 1
-                blocks.append('\n'.join(block).strip('\n'))
-            # 兼容 ``` 代码块
-            elif stripped.startswith('```'):
-                peek += 1
-                block = []
-                while peek < len(lines):
-                    bln = lines[peek]
-                    if bln.strip().startswith('```'):
                         peek += 1
                         break
                     block.append(bln)
