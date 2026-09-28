@@ -1,5 +1,5 @@
 """
-PokerAgent - 本地接应服务 (SSE流式版) v50
+PokerAgent - 本地接应服务 (SSE流式版) v51
 启动方式：python agent_server.py
 默认监听：http://127.0.0.1:9966
 """
@@ -11,6 +11,7 @@ import urllib.request
 import urllib.error
 import re
 import inspect
+import functools  # [修复·memory] 记忆引擎锁装饰器需要（保留被装饰方法的元信息）
 import threading
 import base64
 import difflib  # 用于 -s 模式的模糊匹配策略
@@ -24,32 +25,45 @@ import codecs  # [exec v2.1] 增量解码器（多字节劈叉免疫）
 from collections import deque  # [新增] 跳过计划表用 FIFO 队列
 import json
 import sys
+
 app = Flask(__name__)
 CORS(app)
+
 # 工作目录：脚本所在目录
 WORK_DIR = os.path.dirname(os.path.abspath(__file__))
+
 def get_temp_dir():
     """获取当前工作目录下的临时文件夹路径（动态跟随 WORK_DIR）"""
     return os.path.join(WORK_DIR, '.agent_temp_files')
+
 # 帮助文档路径
 HELP_FILE = os.path.join(WORK_DIR, 'commands.md')
+
 # [新增] 专属回收站目录
 TRASH_DIR = os.path.join(WORK_DIR, '.agent_trash')
+
 # 配置文件路径（固定在脚本所在目录，不随 WORK_DIR 变化）
 CONFIG_FILE = os.path.join(os.path.dirname(os.path.abspath(__file__)), 'agent_config.json')
+
 # 操作日志
 LOG_FILE = os.path.join(WORK_DIR, 'agent_log.txt')
+
 clipboard_mode = False
 exec_enabled = True
+
 # [新增] Shell 类型：'powershell'（默认）或 'cmd'，可通过配置文件切换
 shell_type = 'powershell'
+
 # [新增·B1] exec/run 超时（秒）：原硬编码 3600/60，支持 agent_config.json 与 GUI 配置
 EXEC_TIMEOUT_SEC = 3600
 RUN_TIMEOUT_SEC = 60
+
 _config_changed = threading.Event()
+
 # [修改] Windows 的 cmd 默认输出是 GBK，Linux/Mac 是 UTF-8
 encoding = 'gbk' if platform.system() == 'Windows' else 'utf-8'
 _SYS_ENCODING = locale.getpreferredencoding(False) or 'gbk'
+
 # [新增] 检测系统可用的 PowerShell：优先 pwsh (7+)，回退 powershell (5.x)
 def _detect_powershell():
     if shutil.which('pwsh'):
@@ -60,21 +74,26 @@ def _detect_powershell():
         return 'powershell'
     print('[Agent] ⚠ 未检测到任何 PowerShell，exec 将回退到 cmd。')
     return None
+
 _POWERSHELL_EXE = _detect_powershell()
+
 # ========== 记忆系统配置 ==========
 MEMORY_TEMP_INITIAL = 100  # 新记忆初始温度（决定新旧记忆的淘汰压力）。
 MEMORY_TEMP_DECAY_RATIO = 0.95  # 每轮衰减比例（保留95%，即衰减5%）。
 MEMORY_TEMP_HEAT_RATIO = 0.5  # 被读取时向初始温度回归的比例（极冷数据飙升）。
 MEMORY_EXPOSE_WINDOW = 20  # Tag 云暴露的记忆条数（温度Top-N）。
 MEMORY_READ_WINDOW = 2  # memory search 上下额外返回的记忆条数。
+
 # ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 # 任务队列与 SSE 流式架构
 # ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 task_queue = queue.Queue()
+
 # [新增] 任务控制共享状态（GUI 按钮 → Worker 线程）
 _current_process = None  # 当前正在执行的子进程引用
 _current_process_lock = threading.Lock()
 _current_job = None  # [exec v2.1] 当前任务 Job Object 句柄（与 _current_process 同锁）
+
 # [重构] 暂停控制：Event → Condition + 布尔态（单步放行功能的根源性前提）。
 # Event.set() 是粘性的，无法表达"暂停态下仅放行一个任务"；worker 事后复位事件
 # 又无法区分置位来源（单步 or 用户恢复），故换用带状态的条件变量。
@@ -82,31 +101,40 @@ _current_job = None  # [exec v2.1] 当前任务 Job Object 句柄（与 _current
 _pause_cond = threading.Condition()
 _paused = False
 _step_pending = 0
+
 _kill_mode = None  # None / 'discard' / 'done'
 _kill_mode_lock = threading.Lock()
+
 # [新增] 跳过计划表（FIFO 动作队列）：暂停队列时可预置，worker 每取出一个任务消费队首一个动作。
 # 'discard' = 该任务不执行直接丢弃；'done' = 该任务不执行直接标记完成。
 # 点击顺序即作用顺序（先点的先作用），两个按钮共用一张表
 _skip_plan = deque()
 _skip_plan_lock = threading.Lock()
 _skip_plan_callback = None  # [新增] 计划表变更回调 cb(discard_n, done_n)，GUI 按钮计数显示用
+
 _current_task_id = None  # 当前正在执行的任务ID
+
 # [新增] 全局中断信号：request_kill 时 set，worker 取新任务前 clear
 _abort_event = threading.Event()
+
 # [新增] 任务中断异常：在任何检查点命中时抛出，worker_loop 统一捕获
 class TaskAborted(Exception):
     pass
+
 def _check_abort():
     """检查中断信号，命中则抛出 TaskAborted（在耗时操作间调用）"""
     if _abort_event.is_set():
         raise TaskAborted()
+
 sse_clients = []  # 存放所有连接的 SSE 客户端队列
 _sse_lock = threading.Lock()  # 保护 sse_clients 的锁
+
 # ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 # 任务状态注册表（解决 SSE 晚订阅竞态：新客户端连接时回放历史状态）
 # ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 _task_registry = {}  # task_id -> {'status':..., 'logs':[...], 'result':...}
 _task_registry_lock = threading.Lock()
+
 def emit_task_event(evt):
     """更新任务注册表并推送给所有已连接的 SSE 客户端（SSE 侧自动剥离 ANSI 颜色码）"""
     task_id = evt.get('id')
@@ -135,6 +163,7 @@ def emit_task_event(evt):
     elif evt.get('type') == 'status' and 'result' in evt:
         evt = dict(evt, result=strip_ansi(evt['result']))
     push_event(evt)
+
 def push_event(data_dict):
     """向所有连接的 SSE 客户端推送事件"""
     msg = f"data: {json.dumps(data_dict, ensure_ascii=False)}\n\n"
@@ -142,6 +171,7 @@ def push_event(data_dict):
         clients = list(sse_clients)  # 拷贝一份再遍历，避免竞态
         for q in clients:
             q.put(msg)
+
 def emit_task_note(task_id, status, text, result=None):
     """[note 机制] 追加型收尾：注册表 status 翻转 +（可选）result 写入（供晚订阅回放）+ notes 追加；
     实时只推一条 note——前端在现有回执末尾追加一行，不覆写、不重发历史输出。
@@ -155,6 +185,7 @@ def emit_task_note(task_id, status, text, result=None):
             entry['result'] = result
         entry.setdefault('notes', []).append(text)
     push_event({'id': task_id, 'type': 'note', 'status': status, 'text': text})
+
 # [新增] 暴力终止子进程树（跨平台，供 request_kill 和超时逻辑复用）
 def _kill_process_tree(proc):
     """kill → taskkill 双保险，确保进程树死透"""
@@ -172,6 +203,7 @@ def _kill_process_tree(proc):
                            stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL, timeout=5)
         except Exception:
             pass
+
 # ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 # [exec v2.1] 文件落盘执行核心 + Job Object 树级管控
 # 根因消灭对照（9/20、9/21 两起挂死事故）：
@@ -195,15 +227,18 @@ EXEC_JOB_KILL_ON_CLOSE = True  # True=任务结束即歼灭整树（构建冷启
                                # False=树存活到 harness 退出（daemon 保温构建快，滴流入文件无害）
                                # [残留检测] GUI 可 setattr 切换，随 agent_config.json 持久化
 DOWNLOAD_TIMEOUT_SEC = 300     # download 总时长上限
+
 def _task_log_dir():
     """[exec v2.1] 每任务输出日志目录（跟随 WORK_DIR）"""
     return os.path.join(WORK_DIR, '.agent_task_logs')
+
 def _remove_quiet(path):
     try:
         if os.path.exists(path):
             os.remove(path)
     except OSError:
         pass
+
 def _decode_blob(data):
     """整块解码：优先 UTF-8，失败回退 GBK（文件级回执用，与 smart_decode 同策略）"""
     if not data:
@@ -212,6 +247,7 @@ def _decode_blob(data):
         return data.decode('utf-8')
     except UnicodeDecodeError:
         return data.decode('gbk', errors='replace')
+
 # ---- Job Object（Windows 原生进程树管控）----
 if platform.system() == 'Windows':
     import ctypes
@@ -234,6 +270,7 @@ if platform.system() == 'Windows':
         _wt.HANDLE, ctypes.c_int, ctypes.c_void_p, _wt.DWORD, ctypes.POINTER(_wt.DWORD)]
     _JobObjectExtendedLimitInformation = 9
     _JOB_OBJECT_LIMIT_KILL_ON_JOB_CLOSE = 0x00002000
+
     class _IO_COUNTERS(ctypes.Structure):
         _fields_ = [('ReadOperationCount', ctypes.c_ulonglong),
                     ('WriteOperationCount', ctypes.c_ulonglong),
@@ -241,6 +278,7 @@ if platform.system() == 'Windows':
                     ('ReadTransferCount', ctypes.c_ulonglong),
                     ('WriteTransferCount', ctypes.c_ulonglong),
                     ('OtherTransferCount', ctypes.c_ulonglong)]
+
     class _JOBOBJECT_BASIC_LIMIT_INFORMATION(ctypes.Structure):
         _fields_ = [('PerProcessUserTimeLimit', ctypes.c_longlong),
                     ('PerJobUserTimeLimit', ctypes.c_longlong),
@@ -251,6 +289,7 @@ if platform.system() == 'Windows':
                     ('Affinity', ctypes.c_size_t),
                     ('PriorityClass', _wt.DWORD),
                     ('SchedulingClass', _wt.DWORD)]
+
     class _JOBOBJECT_EXTENDED_LIMIT_INFORMATION(ctypes.Structure):
         _fields_ = [('BasicLimitInformation', _JOBOBJECT_BASIC_LIMIT_INFORMATION),
                     ('IoInfo', _IO_COUNTERS),
@@ -258,6 +297,7 @@ if platform.system() == 'Windows':
                     ('JobMemoryLimit', ctypes.c_size_t),
                     ('PeakProcessMemoryUsed', ctypes.c_size_t),
                     ('PeakJobMemoryUsed', ctypes.c_size_t)]
+
 def _job_create():
     """创建 Job Object；失败/非 Windows 返回 None（退化为 taskkill 兜底）"""
     if platform.system() != 'Windows':
@@ -276,6 +316,7 @@ def _job_create():
         return job
     except Exception:
         return None
+
 def _job_assign(job, proc):
     """挂入 Job：子进程自动继承（daemon/孙子/被领养孤儿一并受控）"""
     if job and proc:
@@ -283,18 +324,21 @@ def _job_assign(job, proc):
             _k32.AssignProcessToJobObject(job, int(proc._handle))
         except Exception:
             pass
+
 def _job_kill(job):
     if job:
         try:
             _k32.TerminateJobObject(job, 1)
         except Exception:
             pass
+
 def _job_close(job):
     if job:
         try:
             _k32.CloseHandle(job)
         except Exception:
             pass
+
 def _job_alive_count(job):
     """[残留检测] Job 内当前存活进程数。顶层退出后调用：>0 = 有存活后代（构建场景=daemon）。
     查询失败返回 None —— 检测不了就沉默，宁漏报不噪音。"""
@@ -309,6 +353,7 @@ def _job_alive_count(job):
         return int(buf[1])                # NumberOfProcessIdsInList = 当前存活
     except Exception:
         return None
+
 def _residue_note(alive):
     """残留警告：只在 alive>0 时被调用。随模式给出后果 + 操作指引"""
     if EXEC_JOB_KILL_ON_CLOSE:
@@ -319,6 +364,7 @@ def _residue_note(alive):
             '其后续输出继续写入 .agent_task_logs 对应任务日志（不影响上方回执）；'
             '它们已脱离本系统管辖，gradle daemon 将在闲置约 3 小时后自行退出。'
             '（切换行为：GUI 控制面板「任务结束销毁残留进程」）')
+
 class _TaskLogTailer:
     """任务日志增量尾随器：
     - 多字节安全：UTF-8 优先、失败切 GBK；残字节跨读段保存（劈叉免疫）
@@ -328,6 +374,7 @@ class _TaskLogTailer:
         self._dec = None
         self._enc = 'utf-8'
         self._line_buf = ''
+
     def feed(self, data):
         if not data:
             return []
@@ -350,6 +397,7 @@ class _TaskLogTailer:
         else:
             text = self._dec.decode(data)
         return self._split(text)
+
     def finish(self):
         if self._dec is None:
             text = self._buf.decode(self._enc, errors='replace')
@@ -358,6 +406,7 @@ class _TaskLogTailer:
         self._buf = b''
         out, self._line_buf = self._line_buf + text, ''
         return out
+
     def _split(self, text):
         if not text:
             return []
@@ -365,6 +414,7 @@ class _TaskLogTailer:
         parts = self._line_buf.split('\n')
         self._line_buf = parts.pop()      # 最后一段是半行或 ''，留在缓冲
         return parts
+
 def _cleanup_old_task_logs():
     """机会式清理过期任务日志；可能被存活 daemon 占用——失败静默跳过"""
     try:
@@ -380,6 +430,7 @@ def _cleanup_old_task_logs():
                     pass
     except Exception:
         pass
+
 def _read_receipt(log_path, freeze_pos):
     """回执 = 文件内容（冻结点前）。超限读尾部并标注。返回剥净文本（可为空串）"""
     try:
@@ -400,6 +451,7 @@ def _read_receipt(log_path, freeze_pos):
         return '（回执读取失败：日志文件被占用，全文见 .agent_task_logs）'
     text = _decode_blob(data).strip()
     return note + text if text else ''
+
 def _tail_lines_text(log_path, freeze_pos, n=_TIMEOUT_RECEIPT_LINES):
     """超时附证：冻结点前末尾 n 个非空行（空行滴流无取证价值，剔除）"""
     try:
@@ -411,6 +463,7 @@ def _tail_lines_text(log_path, freeze_pos, n=_TIMEOUT_RECEIPT_LINES):
         return '（无输出可附）'
     lines = [l.rstrip() for l in _decode_blob(data).splitlines() if l.strip()]
     return '\n'.join(lines[-n:]) if lines else '（无输出可附）'
+
 def _stream_process_to_file(argv, task_id, timeout_sec, shell=False):
     """[exec v2.1] 统一执行核心（exec/run 共用）：
     stdout/stderr 直接落每任务独立文件（无管道）+ Job Object 树级管控 +
@@ -425,6 +478,7 @@ def _stream_process_to_file(argv, task_id, timeout_sec, shell=False):
     proc = None
     pending = deque()                # 已解码待推送整行（削峰队列，字节已消费不重读）
     tailer = _TaskLogTailer()
+
     def _pump(file_pos):
         """读文件新增字节 → 解码 → 限流推送；返回推进后的 file_pos"""
         try:
@@ -446,6 +500,7 @@ def _stream_process_to_file(argv, task_id, timeout_sec, shell=False):
             for ln in batch:
                 emit_task_event({'id': task_id, 'type': 'log', 'data': ln.rstrip()})
         return file_pos
+
     def _drain(file_pos):
         """顶层退出后的排水窗：孙子进程迟到输出照常推送，静默即冻结"""
         quiet_since = None
@@ -462,6 +517,7 @@ def _stream_process_to_file(argv, task_id, timeout_sec, shell=False):
             if now - quiet_since >= _EXEC_DRAIN_SEC or now >= deadline:
                 return file_pos
             time.sleep(_EXEC_TICK_SEC)
+
     try:
         # 1) spawn：stdout 落文件（无管道→无 EOF/drain 概念）；stdin 断开防怪异子进程读控制台
         log_f = open(log_path, 'wb')
@@ -528,6 +584,7 @@ def _stream_process_to_file(argv, task_id, timeout_sec, shell=False):
             if _current_job is job:
                 _current_job = None
         # 日志文件不删：完整真相留档，_cleanup_old_task_logs 按天回收
+
 # [新增] 任务控制接口（供 GUI 调用）
 def request_kill(mode):
     """请求终止当前任务。mode: 'discard'=丢弃结果 / 'done'=返回已有输出
@@ -555,17 +612,20 @@ def request_kill(mode):
         # 双保险兜底：Job 建立失败（返回 None）或 assign 前微秒窗口逃逸者
         threading.Thread(target=_kill_process_tree, args=(proc,), daemon=True, name='kill-worker').start()
     return True
+
 def request_pause():
     """暂停任务队列（当前任务继续执行完，不再取新任务）。不 notify：worker 若在执行任务自会走到门检"""
     global _paused
     with _pause_cond:
         _paused = True
+
 def request_resume():
     """恢复任务队列"""
     global _paused
     with _pause_cond:
         _paused = False
         _pause_cond.notify_all()  # 唤醒睡眠在门检上的 worker
+
 def request_step_once():
     """[新增] 单步放行令牌：暂停态下放行任务，执行完自动回到暂停冻结。
     [修改] 覆盖式赋值(=1) → 累加(+=1)：单步执行期间连点 N 次 → 连续放行 N 个，点击不丢。
@@ -574,15 +634,18 @@ def request_step_once():
     with _pause_cond:
         _step_pending += 1  # [修改] 原 _step_pending = 1：覆盖式赋值，连点只记一次
         _pause_cond.notify_all()  # 唤醒睡眠中的 worker 消费令牌
+
 def is_paused():
     """[新增·上轮函数重写] 队列是否处于暂停态（跳过计划/单步均仅允许暂停时操作）"""
     with _pause_cond:
         return _paused
+
 def set_skip_plan_callback(cb):
     """[新增] 注册跳过计划表变更回调：签名 cb(discard_count, done_count)。
     可能从 worker 线程触发，回调体内不得直接操作 Tk 控件（GUI 侧自行 after 调度）"""
     global _skip_plan_callback
     _skip_plan_callback = cb
+
 def request_skip_next(mode):
     """[新增] 向跳过计划表队尾追加一个动作（累计模式：点几次攒几个，按点击顺序 FIFO 消费）。
     校验：未消费计划总数 + 1 ≤ 队列当前积压数（计划不得指向不存在的任务）。
@@ -595,11 +658,13 @@ def request_skip_next(mode):
         _skip_plan.append(mode)
     _notify_skip_plan()
     return True
+
 def clear_skip_plan():
     """[新增] 清空整张跳过计划表：未消费的预置动作全部作废（计数归零经 _notify_skip_plan 广播）"""
     with _skip_plan_lock:
         _skip_plan.clear()
     _notify_skip_plan()
+
 def _notify_skip_plan():
     """[新增] 计划表变更后通知订阅方（点击入队 / worker 消费两个入口都触发）。
     锁外调用回调：回调内会重新取锁读计数，threading.Lock 不可重入，锁内调用即死锁"""
@@ -613,6 +678,7 @@ def _notify_skip_plan():
         cb(d, n)
     except Exception:
         pass
+
 def worker_loop():
     """后台 Worker 线程：严格串行执行任务"""
     global _current_task_id, _kill_mode
@@ -698,6 +764,7 @@ def worker_loop():
                 emit_task_event({'id': task_id, 'type': 'status', 'status': 'done', 'result': _result_str})
         except Exception as e:
             print(f'[Worker] 致命错误: {e}')
+
 def smart_read(filepath):
     """智能读取：优先 UTF-8 (含BOM)，失败回退系统默认编码(如 GBK)，保底 latin-1"""
     _check_abort()  # [新增] 读取前检查中断（覆盖所有调用 smart_read 的指令）
@@ -713,6 +780,7 @@ def smart_read(filepath):
         pass
     with open(filepath, 'r', encoding='latin-1') as f:
         return f.read(), 'latin-1'
+
 def smart_write(filepath, content, encoding):
     """智能写入：根据原编码格式写入，但避免给无BOM文件强加BOM"""
     # [修改] 如果原编码是utf-8-sig，检查原文件是否真有BOM
@@ -730,6 +798,7 @@ def smart_write(filepath, content, encoding):
             encoding = 'utf-8'
     with open(filepath, 'w', encoding=encoding) as f:
         f.write(content)
+
 def smart_decode(b_str):
     """智能解码：优先UTF-8，失败则回退GBK"""
     if not b_str:
@@ -738,10 +807,12 @@ def smart_decode(b_str):
         return b_str.decode('utf-8')
     except UnicodeDecodeError:
         return b_str.decode(encoding, errors='replace')
+
 # [新增] 剥离 ANSI 转义序列（PowerShell 7 默认输出颜色码，GUI/日志无法渲染）
 _ANSI_RE = re.compile(r'\x1b\[[0-9;]*[a-zA-Z]')
 def strip_ansi(s):
     return _ANSI_RE.sub('', s)
+
 def save_config():
     """将当前运行时配置持久化到 JSON 文件"""
     config = {
@@ -767,6 +838,7 @@ def save_config():
             json.dump(config, f, ensure_ascii=False, indent=2)
     except Exception as e:
         print(f'[Agent] 配置保存失败: {e}')
+
 def load_config():
     """启动时从 JSON 文件加载配置，文件不存在或损坏则静默使用默认值"""
     global WORK_DIR, TRASH_DIR, clipboard_mode, exec_enabled, shell_type
@@ -814,9 +886,11 @@ def load_config():
         print(f'[Agent] 配置已加载: {CONFIG_FILE}')
     except Exception as e:
         print(f'[Agent] 配置加载失败，使用默认值: {e}')
+
 def _push_config():
     save_config()  # 每次配置变更时持久化
     _config_changed.set()
+
 def log_action(action, detail=''):
     import datetime
     timestamp = datetime.datetime.now().strftime('%Y-%m-%d %H:%M:%S')
@@ -827,10 +901,12 @@ def log_action(action, detail=''):
     with open(LOG_FILE, 'a', encoding='utf-8') as f:
         f.write(line)
     print(line.strip())
+
 def safe_path(base, path):
     if os.path.isabs(path):
         return os.path.normpath(path)
     return os.path.normpath(os.path.join(base, path))
+
 def parse_args_with_quotes(s):
     """解析命令参数，支持双引号包裹含空格的参数。"""
     args = []
@@ -853,6 +929,7 @@ def parse_args_with_quotes(s):
     if current:
         args.append(''.join(current))
     return args
+
 # ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 # 路径权限管理器
 # ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
@@ -862,12 +939,15 @@ class PermissionManager:
         self._always_allow = set()
         self._lock = threading.Lock()
         self.enabled = True
+
     def set_callback(self, fn):
         self._callback = fn
+
     def _is_within(self, filepath):
         work = os.path.normpath(WORK_DIR).lower()
         fp = os.path.normpath(filepath).lower()
         return fp == work or fp.startswith(work + os.sep)
+
     def check(self, cmd, filepath):
         if not self.enabled or not filepath:
             return True
@@ -887,11 +967,14 @@ class PermissionManager:
                 return True
             return bool(result)
         return False
+
     def reset_session(self):
         with self._lock:
             self._always_allow.clear()
         save_config()  # 清除始终允许列表后持久化
+
 permission_mgr = PermissionManager()
+
 # [新增] 判断路径是否在回收站内
 def _is_trash_path(filepath):
     if not filepath:
@@ -899,6 +982,7 @@ def _is_trash_path(filepath):
     trash_norm = os.path.normpath(TRASH_DIR).lower()
     fp_norm = os.path.normpath(filepath).lower()
     return fp_norm == trash_norm or fp_norm.startswith(trash_norm + os.sep)
+
 # [新增] 将原路径映射为回收站内的存储路径
 def _get_trash_path(filepath):
     norm_work = os.path.normpath(WORK_DIR)
@@ -912,6 +996,7 @@ def _get_trash_path(filepath):
         drive, path_no_drive = os.path.splitdrive(norm_fp)
         drive_clean = drive.replace(':', '') if drive else 'no_drive'
         return os.path.join(TRASH_DIR, '__external__', drive_clean, path_no_drive.strip(os.sep))
+
 # [新增] 从回收站路径反推原始绝对路径
 def _get_original_path(trash_path):
     norm_trash = os.path.normpath(TRASH_DIR)
@@ -925,6 +1010,7 @@ def _get_original_path(trash_path):
         return os.path.join(drive, *parts[2:])
     else:
         return os.path.normpath(os.path.join(WORK_DIR, rel_path))
+
 def _match_text_block(file_lines, old_lines, ignore_case=False, ignore_indent=False, normalize_ws=False, fuzzy_threshold=None):
     """
     通用文本块匹配方法，支持组合匹配条件。
@@ -938,12 +1024,14 @@ def _match_text_block(file_lines, old_lines, ignore_case=False, ignore_indent=Fa
         if normalize_ws:
             line = re.sub(r'\s+', ' ', line).strip()
         return line
+
     proc_file = [_process(l) for l in file_lines]
     proc_old = [_process(l) for l in old_lines]
     matches = []
     num_old = len(proc_old)
     if num_old == 0:
         return matches
+
     for i in range(len(proc_file) - num_old + 1):
         is_match = True
         # 模糊匹配逻辑
@@ -967,6 +1055,7 @@ def _match_text_block(file_lines, old_lines, ignore_case=False, ignore_indent=Fa
         if is_match:
             matches.append(i)
     return matches
+
 def _check_permission(cmd, *paths):
     # [新增] 拦截对专属回收站的非授权访问
     if cmd not in ('delete', 'restore'):
@@ -977,6 +1066,7 @@ def _check_permission(cmd, *paths):
         if p and not permission_mgr.check(cmd, p):
             return f'操作被拒绝：路径超出工作目录 — {p}'
     return None
+
 def _default_permission_callback(cmd, filepath):
     print(f'\n⚠ 路径超出工作目录!')
     print(f'  指令: {cmd}')
@@ -992,6 +1082,7 @@ def _default_permission_callback(cmd, filepath):
             return 'always'
         else:
             print('  请输入 y, n 或 a')
+
 # 兼容 GUI CLI 模式的壳函数
 def execute_line(line):
     # [修复] task_id 传 None（原 'cli-manual'）：CLI 执行 exec/run 时流式日志经 emit_task_event
@@ -999,6 +1090,7 @@ def execute_line(line):
     # → 内存泄漏 + 每个新 SSE 客户端连接都被回放一个幽灵任务。传 None = 无任务上下文，
     # CLI 输出走 stdout → _LogWriter → GUI 日志区，本就不依赖注册表
     return execute_line_streaming(line, None)
+
 def execute_line_streaming(line, task_id):
     """统一执行核心：支持实时推送 exec/run 的日志"""
     global _current_process
@@ -1014,6 +1106,7 @@ def execute_line_streaming(line, task_id):
     if cs_idx != -1:
         arg = arg[:cs_idx]
     W = WORK_DIR
+
     if cmd == '@@help':
         # [修改] 智能帮助查询系统：支持 all / fast / [指令名] 三种模式
         if not os.path.exists(HELP_FILE):
@@ -1147,6 +1240,9 @@ def execute_line_streaming(line, task_id):
             arg, block = arg.split('\x00', 1)
             arg = arg.strip()
             block = block.strip('\n').replace('TICK3', '```')
+            # [修复·memory] 多代码块显式报错（原 dispatcher 静默丢弃后续块）
+            if '\x00' in block:
+                return '错误：remember 只支持一个【code】代码块，请合并为单个代码块后重发。'
         if not block:
             if arg:
                 # 有内联文本但无代码块：协议违规，拒绝执行（防止误清空短期记忆）
@@ -1165,6 +1261,9 @@ def execute_line_streaming(line, task_id):
             raw_arg, mem_block = raw_arg.split('\x00', 1)
             raw_arg = raw_arg.strip()
             mem_block = mem_block.strip('\n').replace('TICK3', '```')
+            # [修复·memory] 多代码块显式报错
+            if '\x00' in mem_block:
+                return '错误：memory 指令只支持一个【code】代码块，请合并为单个代码块后重发。'
         # [修改] 仅 block 无 inline 参数时也放行（原来是直接报缺参数）
         if not raw_arg and not mem_block:
             return '错误：memory 指令缺少参数。发送 @@help memory 获取指令详细用法'
@@ -1195,8 +1294,8 @@ def execute_line_streaming(line, task_id):
             ids = memory_engine._parse_ids(id_str)
             if not ids:
                 return '错误：memory del 需要指定至少一个记忆ID。'
-            deleted = memory_engine.delete_by_ids(ids)
-            return f'已删除 {deleted} 条记忆。'
+            # [修复·memory] delete_by_ids 现返回完整回执（含失配警告），直接透传
+            return memory_engine.delete_by_ids(ids)
         # ── 子命令：pin ──
         if raw_arg.lower().startswith('pin'):
             id_str = raw_arg[3:].strip()
@@ -1276,6 +1375,9 @@ def execute_line_streaming(line, task_id):
         if '\x00' in arg:
             # --- 模式一：文件内容查找 (路径必须为文件) ---
             opts_str, search_text = arg.split('\x00', 1)
+            # [修复·memory] 多代码块显式报错
+            if '\x00' in search_text:
+                return '错误：find 只支持一个【code】代码块，请合并为单个代码块后重发。'
             tokens = parse_args_with_quotes(opts_str.strip())
             if not tokens:
                 return '错误：缺少文件路径。发送 @@help find 获取指令详细用法'
@@ -1435,11 +1537,17 @@ def execute_line_streaming(line, task_id):
         if line_range:
             if len(parts) < 2:
                 return '错误：行号模式需要提供新文本。发送 @@help replace 获取指令详细用法'
+            # [修复·memory] 多代码块显式报错（行号模式只允许 1 个内容块 = 共 2 段）
+            if len(parts) > 2:
+                return '错误：replace 行号模式只支持一个【code】代码块（新文本），收到多个。'
             new_text = parts[1].replace('TICK3', '```')
             old_text = ''
         else:
             if len(parts) < 3:
                 return '错误：缺少参数。发送 @@help replace 获取指令详细用法'
+            # [修复·memory] 多代码块显式报错（标准模式只允许 2 个内容块 = 共 3 段）
+            if len(parts) > 3:
+                return '错误：replace 只支持两个【code】代码块（旧文本/新文本），收到多个。'
             old_text = parts[1].replace('TICK3', '```')
             new_text = parts[2].replace('TICK3', '```')
         ignore_case = '-i' in flags
@@ -1538,6 +1646,9 @@ def execute_line_streaming(line, task_id):
         sep = arg.split('\x00', 1)
         opts_str = sep[0].strip()
         insert_text = sep[1]
+        # [修复·memory] 多代码块显式报错
+        if '\x00' in insert_text:
+            return '错误：insert 只支持一个【code】代码块，请合并为单个代码块后重发。'
         tokens = parse_args_with_quotes(opts_str)
         if not tokens:
             return '错误：缺少文件路径。发送 @@help insert 获取指令详细用法'
@@ -1624,6 +1735,9 @@ def execute_line_streaming(line, task_id):
             delete_all = '-a' in flags
             if '\x00' in arg:
                 opts_str, delete_text = arg.split('\x00', 1)
+                # [修复·memory] 多代码块显式报错
+                if '\x00' in delete_text:
+                    return '错误：deleteline 只支持一个【code】代码块，请合并为单个代码块后重发。'
             else:
                 non_flag_parts = [part for part in parts if not part.startswith('-')]
                 delete_text = ' '.join(non_flag_parts[1:]) if len(non_flag_parts) > 1 else ''
@@ -1865,6 +1979,9 @@ def execute_line_streaming(line, task_id):
             filepath_str = p_args[0] if p_args else sep[0].strip().strip('"')
             filepath = safe_path(W, filepath_str)
             content = sep[1]
+            # [修复·memory] 多代码块显式报错
+            if '\x00' in content:
+                return '错误：create 只支持一个【code】代码块，请合并为单个代码块后重发。'
         else:
             p_args = parse_args_with_quotes(arg.strip())
             if not p_args:
@@ -1979,6 +2096,9 @@ def execute_line_streaming(line, task_id):
             filepath_str = p_args[0] if p_args else sep[0].strip().strip('"')
             filepath = safe_path(W, filepath_str)
             content = sep[1]
+            # [修复·memory] 多代码块显式报错
+            if '\x00' in content:
+                return '错误：append 只支持一个【code】代码块，请合并为单个代码块后重发。'
         else:
             p_args = parse_args_with_quotes(arg.strip())
             if not p_args:
@@ -2294,8 +2414,10 @@ def execute_line_streaming(line, task_id):
             return f'下载失败：{e}'
     else:
         return f'未知指令：{cmd}\n输入 @@help fast 查看可用指令列表。'
+
 _EXEC_SRC = inspect.getsource(execute_line_streaming)
 KNOWN_CMDS = set(re.findall(r"cmd\s*==\s*'([^']+)'", _EXEC_SRC))
+
 # [新增] memory 指令末尾修饰参数统一解析器（新增写入 / 覆盖写入共用）
 def _parse_memory_params(raw):
     """
@@ -2338,6 +2460,18 @@ def _parse_memory_params(raw):
             continue
         break
     return s, tags, pin, custom_temp
+
+def _mem_locked(fn):
+    """[修复·memory] 记忆引擎公共方法互斥装饰器。
+    RLock 可重入：公共方法之间的相互调用（如 get_inject_content → get_expose_tags）安全。
+    仅装饰公共入口；私有方法（_load_meta/_save_meta/_parse_memory_file/_heat_memory/
+    _remove_entry_from_file/_update_entry_content 等）只被锁内路径调用，不重复加锁。"""
+    @functools.wraps(fn)
+    def wrapper(self, *args, **kwargs):
+        with self._lock:
+            return fn(self, *args, **kwargs)
+    return wrapper
+
 # ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 # 记忆引擎
 # ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
@@ -2352,25 +2486,36 @@ class MemoryEngine:
     """
     def __init__(self):
         self._tick_count = 0  # 全局 Tick 计数器（对话轮次）
+        # [修复·memory] 引擎级互斥锁（RLock 可重入）：worker 线程执行 memory 指令与
+        # Flask 线程的 /agent-memory-tick（温度衰减）、/agent-memory-inject（注入读取）
+        # 并发对 meta JSON 做整文件读-改-写，无锁时后写者会整份覆盖先写者的修改
+        # （丢温度/丢标签/丢记忆条目）
+        self._lock = threading.RLock()
+
     @property
     def memory_dir(self):
         """记忆文件存储目录：工作目录下的 .agent"""
         return os.path.join(WORK_DIR, '.agent')
+
     @property
     def remember_file(self):
         """短期记忆文件路径"""
         return os.path.join(self.memory_dir, 'remember.md')
+
     @property
     def memory_file(self):
         """长期记忆文件路径"""
         return os.path.join(self.memory_dir, 'memory.md')
+
     @property
     def meta_file(self):
         """长期记忆元数据文件路径（温度、标签、Pin状态）"""
         return os.path.join(self.memory_dir, 'memory_meta.json')
+
     def _ensure_dir(self):
         """确保记忆目录存在"""
         os.makedirs(self.memory_dir, exist_ok=True)
+
     def _load_meta(self):
         """加载长期记忆元数据"""
         if os.path.exists(self.meta_file):
@@ -2380,18 +2525,23 @@ class MemoryEngine:
             except Exception:
                 pass
         return {'next_id': 1, 'memory': {}}
+
     def _save_meta(self, meta):
         """保存长期记忆元数据"""
         self._ensure_dir()
         with open(self.meta_file, 'w', encoding='utf-8') as f:
             json.dump(meta, f, ensure_ascii=False, indent=2)
+
     # ── 短期记忆 ──
+    @_mem_locked
     def write_short(self, content):
         """覆盖写入短期记忆（空内容 = 清空）"""
         self._ensure_dir()
         with open(self.remember_file, 'w', encoding='utf-8') as f:
             f.write(content)
         log_action('REMEMBER', f'{len(content)} 字符')
+
+    @_mem_locked
     def read_short(self):
         """读取短期记忆全文"""
         if os.path.exists(self.remember_file):
@@ -2401,7 +2551,9 @@ class MemoryEngine:
             except Exception:
                 pass
         return ''
+
     # ── 长期记忆写入 ──
+    @_mem_locked
     def write_long(self, content, tags, pin=False, custom_temp=None):
         """追加写入长期记忆，分配纯数字ID，返回ID
         [修改] custom_temp: temp:N 指定的初始温度（None=用全局默认）"""
@@ -2428,11 +2580,15 @@ class MemoryEngine:
         self._save_meta(meta)
         log_action('MEMORY-WRITE', f'ID:{mem_id:03d} | tags:{tags} | pin:{pin} | temp:{temp}')
         return mem_id
+
+    @_mem_locked
     def memory_exists(self, mem_id):
         """检查指定ID的记忆是否存在（用于区分覆盖写入和新增写入）"""
         meta = self._load_meta()
         return str(mem_id) in meta['memory']
+
     # ── 长期记忆搜索 ──
+    @_mem_locked
     def search(self, keywords, mode='tag', window=None):
         """搜索长期记忆，返回命中全文 + 上下 N 条元数据，触发加热
         [协议 v2] 标签/内容模式分离（原为标签优先、内容兜底自动回退）：
@@ -2498,6 +2654,7 @@ class MemoryEngine:
                 # 上下文项：仅元数据
                 lines.append(f"ID: {e['id']:03d} | 温度: {_temp_range(e)} | 标签: {tags_str}")
         return '\n'.join(lines).rstrip()
+
     def _parse_memory_file(self, content):
         """解析 memory.md，提取所有记忆块（ID、标签、内容）"""
         entries = []
@@ -2506,16 +2663,19 @@ class MemoryEngine:
         for m in pattern.finditer(content):
             mem_id = int(m.group(1))
             body = m.group(2)
-            # 解析 body：内容 + tag 行
+            # [修复·memory] tag 行只认"块内最后一行"：写入端格式（write_long/
+            # _update_entry_content）保证 tag: 行恒为正文之后的末行。
+            # 原实现逐行扫描会把正文自身以 tag: 开头的行误吞为标签行（内容缺失+标签污染）。
+            # 修复附带效果：历史条目正文中被误吞的 tag: 行会在读取时复原（文件本身未损坏）
             body_lines = body.split('\n')
             tags = []
-            content_lines = []
-            for line in body_lines:
-                if line.startswith('tag:'):
-                    tag_str = line[4:].strip()
-                    tags = [t.strip() for t in tag_str.split(',') if t.strip()]
-                else:
-                    content_lines.append(line)
+            if body_lines and body_lines[-1].startswith('tag:'):
+                tag_str = body_lines[-1][4:].strip()
+                tags = [t.strip() for t in tag_str.split(',') if t.strip()]
+                content_lines = body_lines[:-1]
+            else:
+                # 无 tag 末行的条目（手工编辑/外部写入）：整块按正文处理
+                content_lines = body_lines
             content_text = '\n'.join(content_lines).strip()
             # 从 meta 获取温度和 pin 状态
             mem_meta = meta['memory'].get(str(mem_id), {})
@@ -2529,6 +2689,7 @@ class MemoryEngine:
                 'content': content_text
             })
         return entries
+
     def _heat_memory(self, mem_id):
         """加热指定记忆：temp = temp + (initial - temp) × heat_ratio"""
         meta = self._load_meta()
@@ -2546,7 +2707,9 @@ class MemoryEngine:
         mem['temp'] = new_temp
         mem['last_accessed'] = time.time()
         self._save_meta(meta)
+
     # ── 温度衰减（每次 Tick 调用）──
+    @_mem_locked
     def tick(self):
         """每次对话轮次触发：所有非 Pin 记忆温度指数衰减"""
         self._tick_count += 1
@@ -2564,22 +2727,36 @@ class MemoryEngine:
             changed = True
         if changed:
             self._save_meta(meta)
+
     # ── 按ID删除记忆 ──
+    @_mem_locked
     def delete_by_ids(self, ids):
-        """按ID删除一条或多条记忆，返回删除数量"""
+        """按ID删除一条或多条记忆
+        [修复·memory] 返回值从 int 改为回执字符串：文件/索引失配（meta 有记录但
+        memory.md 无对应块）时如实追加警告，不再假报删除成功。
+        调用方（memory del 处理器）已同步适配为直接透传回执"""
         meta = self._load_meta()
         deleted = 0
+        mismatch_warnings = []
         for mem_id in ids:
             key = str(mem_id)
-            if key in meta['memory']:
-                del meta['memory'][key]
-                self._remove_entry_from_file(mem_id)
-                deleted += 1
+            if key not in meta['memory']:
+                continue
+            del meta['memory'][key]
+            # [修复·memory] 文件块删除结果如实记录：False = memory.md 中无对应块（失配）
+            if not self._remove_entry_from_file(mem_id):
+                mismatch_warnings.append(f'ID:{mem_id:03d} 在 memory.md 中无对应内容块（文件/索引失配），已仅清理索引')
+            deleted += 1
+        receipt = f'已删除 {deleted} 条记忆。'
+        if mismatch_warnings:
+            receipt += '\n⚠ ' + '\n⚠ '.join(mismatch_warnings)
         if deleted > 0:
             self._save_meta(meta)
             log_action('MEMORY-DEL', f'已删除 {deleted} 条记忆: {ids}')
-        return deleted
+        return receipt
+
     # ── 按ID固定记忆 ──
+    @_mem_locked
     def pin_by_ids(self, ids):
         """按ID固定一条或多条记忆（温度锁定为∞），返回固定数量"""
         meta = self._load_meta()
@@ -2594,7 +2771,9 @@ class MemoryEngine:
             self._save_meta(meta)
             log_action('MEMORY-PIN', f'已固定 {pinned} 条记忆: {ids}')
         return pinned
+
     # ── 按ID取消固定 ──
+    @_mem_locked
     def unpin_by_ids(self, ids):
         """按ID取消固定（回到初始温度继续衰减），返回取消数量"""
         meta = self._load_meta()
@@ -2611,16 +2790,23 @@ class MemoryEngine:
             self._save_meta(meta)
             log_action('MEMORY-UNPIN', f'已取消固定 {unpin_count} 条记忆: {ids}')
         return unpin_count
+
     # ── 按ID覆盖写入 ──
+    @_mem_locked
     def overwrite_by_id(self, mem_id, content, tags, pin=False, custom_temp=None):
         """按ID覆盖写入已有记忆的内容和标签，返回是否成功
         [修改] custom_temp: 指定时重置温度并更新 initial_temp
-        [修复] 原有 bug：覆盖写入取消 pin 时温度残留 '∞'（永不衰减的僵尸态）"""
+        [修复] 原有 bug：覆盖写入取消 pin 时温度残留 '∞'（永不衰减的僵尸态）
+        [修复·memory] 写入顺序反转：先落盘 memory.md（内容权威文件），成功后再更新
+        meta 索引——原顺序在正文写失败时 meta 已被改走而文件未动，回执却报成功，
+        造成文件/索引失配。现在正文写入抛错时 meta 保持原状，失败回执如实上报"""
         meta = self._load_meta()
         key = str(mem_id)
         if key not in meta['memory']:
             return False
-        # 更新 meta
+        # [修复·memory] 先写正文文件：任何失败在此抛出，meta 保持原状
+        self._update_entry_content(mem_id, content, tags)
+        # 正文落盘成功后才更新索引
         meta['memory'][key]['tags'] = tags
         meta['memory'][key]['pin'] = pin
         if custom_temp is not None:
@@ -2634,10 +2820,9 @@ class MemoryEngine:
             if meta['memory'][key].get('temp') == '∞':
                 meta['memory'][key]['temp'] = meta['memory'][key].get('initial_temp', MEMORY_TEMP_INITIAL)
         self._save_meta(meta)
-        # 更新 memory.md 中对应块的内容
-        self._update_entry_content(mem_id, content, tags)
         log_action('MEMORY-OVERWRITE', f'ID:{mem_id:03d} | tags:{tags} | pin:{pin} | temp_arg:{custom_temp}')
         return True
+
     # ── 辅助方法 ──
     def _parse_ids(self, id_str):
         """解析ID字符串，支持空格/逗号分隔的多个ID，返回int列表"""
@@ -2650,34 +2835,47 @@ class MemoryEngine:
             if t.isdigit():
                 ids.append(int(t))
         return ids
+
     def _remove_entry_from_file(self, mem_id):
-        """从 memory.md 中删除指定 ID 的记忆块"""
+        """从 memory.md 中删除指定 ID 的记忆块
+        [修复·memory] 返回 True=已删除 / False=块不存在（文件/索引失配，由调用方如实上报）；
+        原实现不校验命中数 + except-pass 黑洞（假报删除成功），替换串同有转义劫持风险"""
         if not os.path.exists(self.memory_file):
-            return
-        try:
-            content, _ = smart_read(self.memory_file)
-            pattern = re.compile(
-                rf'<!-- ID:{mem_id:03d} -->\n.*?\n<!-- END:{mem_id:03d} -->\n?', re.DOTALL)
-            new_content = pattern.sub('', content)
-            with open(self.memory_file, 'w', encoding='utf-8') as f:
-                f.write(new_content)
-        except Exception:
-            pass
+            return False
+        file_content, _ = smart_read(self.memory_file)
+        pattern = re.compile(rf'<!-- ID:{mem_id:03d} -->\n.*?\n<!-- END:{mem_id:03d} -->\n?', re.DOTALL)
+        # [修复·memory] 函数形式替换串：与 _update_entry_content 同理，杜绝转义解释
+        new_content, hit_count = pattern.subn(lambda _m: '', file_content)
+        if hit_count == 0:
+            return False
+        with open(self.memory_file, 'w', encoding='utf-8') as f:
+            f.write(new_content)
+        return True
+
     def _update_entry_content(self, mem_id, content, tags):
-        """替换 memory.md 中指定ID的记忆块内容"""
+        """替换 memory.md 中指定ID的记忆块内容
+        [修复·memory] 原实现三大问题：
+        1) re.sub 第二参数是"替换模板"：正文中的反斜杠被 re 模块当转义解释——
+           '\\1' 被替换成正则捕获组内容（内容静默篡改），非法转义直接抛 re.error
+        2) 不校验命中数：块不存在时静默跳过 → 上层照常返回 True 报"覆盖成功"
+        3) except Exception: pass 异常黑洞：写入失败无任何感知
+        现改为：subn + 函数形式替换串（re 对函数返回值不做转义解释，正文逐字保真）
+        + 0 命中显式抛错 + 异常上抛（worker 统一转错误回执）"""
         if not os.path.exists(self.memory_file):
-            return
-        try:
-            file_content, _ = smart_read(self.memory_file)
-            pattern = re.compile(
-                rf'<!-- ID:{mem_id:03d} -->\n.*?\n<!-- END:{mem_id:03d} -->', re.DOTALL)
-            new_block = f"<!-- ID:{mem_id:03d} -->\n{content}\ntag: {', '.join(tags)}\n<!-- END:{mem_id:03d} -->"
-            new_content = pattern.sub(new_block, file_content)
-            with open(self.memory_file, 'w', encoding='utf-8') as f:
-                f.write(new_content)
-        except Exception:
-            pass
+            raise FileNotFoundError(f'memory.md 不存在，无法覆盖写入 ID:{mem_id:03d}')
+        file_content, _ = smart_read(self.memory_file)
+        pattern = re.compile(rf'<!-- ID:{mem_id:03d} -->\n.*?\n<!-- END:{mem_id:03d} -->', re.DOTALL)
+        new_block = f"<!-- ID:{mem_id:03d} -->\n{content}\ntag: {', '.join(tags)}\n<!-- END:{mem_id:03d} -->"
+        # [修复·memory] 函数形式替换串：正文中的反斜杠不再被 re 模块解释
+        new_content, hit_count = pattern.subn(lambda _m: new_block, file_content)
+        if hit_count == 0:
+            # [修复·memory] meta 索引声称存在但文件无块：文件/索引失配，如实报错而非静默装成功
+            raise ValueError(f'覆盖写入失败：memory.md 中未找到 ID:{mem_id:03d} 的内容块（文件/索引失配）')
+        with open(self.memory_file, 'w', encoding='utf-8') as f:
+            f.write(new_content)
+
     # ── 获取暴露窗口标签（供前端注入）──
+    @_mem_locked
     def get_expose_tags(self):
         """[修改] 返回 (已固定标签列表, 暴露窗口标签列表)。
         Pin 记忆的标签全量收集、单独返回，不挤占正常记忆的温度 Top-N 暴露窗口"""
@@ -2699,7 +2897,9 @@ class MemoryEngine:
         for _, tag_list in top_n:
             normal_tags.update(tag_list)
         return sorted(pinned_tags), sorted(normal_tags)
+
     # ── 获取注入内容（供 /agent-memory-inject 接口）──
+    @_mem_locked
     def get_inject_content(self):
         """返回短期记忆全文 + 长期记忆标签云，供前端注入到输入框
         [修改] 已固定标签单列一行（[已固定:x,x]），与正常暴露窗口标签分区显示"""
@@ -2718,13 +2918,16 @@ class MemoryEngine:
                 tag_lines.append(', '.join(normal_tags))
             parts.append('\n'.join(tag_lines))
         return '\n\n'.join(parts) if parts else ''
+
 # 全局记忆引擎实例
 memory_engine = MemoryEngine()
+
 # ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 # 启动后台 Worker 线程（移到顶层，确保任何启动方式都能跑）
 # ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 # 启动时加载持久化配置（必须在 permission_mgr 创建之后、worker 启动之前）
 load_config()
+
 # ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 # [新增] 全量日志捕获 + 事件推送到 GUI
 # ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
@@ -2732,10 +2935,12 @@ load_config()
 _gui_log_queue = None
 # 文件写入锁：防止多线程并发写坏文件
 _log_file_lock = threading.Lock()
+
 def set_gui_log_queue(q):
     """供 GUI 注入日志队列，调用后立即启用事件推送"""
     global _gui_log_queue
     _gui_log_queue = q
+
 class _LogWriter:
     """
     重定向 stdout/stderr 的核心类：
@@ -2746,6 +2951,7 @@ class _LogWriter:
     def __init__(self, original_stream, stream_name):
         self._orig = original_stream  # 原始 sys.stdout 或 sys.stderr
         self._name = stream_name      # 'out' 或 'err'，用于区分来源
+
     def write(self, s):
         if not s:
             return
@@ -2777,14 +2983,18 @@ class _LogWriter:
                 _gui_log_queue.put_nowait((self._name, s, start_pos, end_pos))
             except Exception:
                 pass  # 队列满或异常时静默丢弃，保证服务稳定
+
     def flush(self):
         self._orig.flush()
+
 # ── 挂载钩子 ──
 # 注意：必须在 load_config() 之后执行，确保 LOG_FILE 路径已确定
 sys.stdout = _LogWriter(sys.stdout, 'out')
 sys.stderr = _LogWriter(sys.stderr, 'err')
+
 worker_thread = threading.Thread(target=worker_loop, daemon=True)
 worker_thread.start()
+
 @app.route('/agent-stream')
 def agent_stream():
     """SSE 接口：前端建立长连接监听任务进度"""
@@ -2811,6 +3021,7 @@ def agent_stream():
                 q.put(f"data: {json.dumps({'id': tid, 'type': 'note', 'status': entry['status'], 'text': note_text}, ensure_ascii=False)}\n\n")
         # [新增·B7] 回放结束哨兵：前端据此对账本地任务表，识别"后端重启导致注册表清空"的僵尸任务
         q.put('data: {"id": "all", "type": "replay_done"}\n\n')
+
     def generate():
         try:
             while True:
@@ -2828,7 +3039,9 @@ def agent_stream():
             with _sse_lock:
                 if q in sse_clients:
                     sse_clients.remove(q)
+
     return Response(generate(), mimetype='text/event-stream')
+
 # [新增·B6] 统一入队入口：注册表登记(waiting) + 入队 + 日志三合一
 def _enqueue_task(cmd_str):
     """[新增] 统一入队入口：注册表登记(waiting) + 入队 + 日志三合一。
@@ -2840,6 +3053,7 @@ def _enqueue_task(cmd_str):
     task_queue.put({'id': task_id, 'cmd': cmd_str})
     log_action('ENQUEUE', f'ID: {task_id} | CMD: {cmd_str}')
     return task_id
+
 @app.route('/agent-exec', methods=['POST', 'GET'])
 def agent_exec():
     if request.method == 'GET':
@@ -2863,6 +3077,7 @@ def agent_exec():
     lines = command_text.split('\n')
     i = 0
     task_ids = []
+
     # 提取代码块的独立函数，仅认 【code】...【/code】 边界。
     # [协议说明] ``` 不作为边界：它是前端的 markdown 渲染记号，正常链路下
     # 前端渲染消费后不会到达后端；若仍出现在块内，一律视为字面内容（不剥离、不匹配）。
@@ -2894,6 +3109,7 @@ def agent_exec():
             else:
                 break
         return blocks, peek
+
     while i < len(lines):
         line = lines[i].strip()
         if not line or line.startswith('#'):
@@ -2915,8 +3131,10 @@ def agent_exec():
             if len(blocks) > 0:
                 if cmd == 'replace':
                     if len(blocks) >= 2:
-                        final_cmd = f"replace {arg}\x00{blocks[0]}\x00{blocks[1]}"
-                        task_ids.append(_enqueue_task(final_cmd))  # [重构·B6]
+                        # [修复·memory] 全部代码块透传（\x00 连接）：超出 2 块时由 replace
+                        # 处理器显式报错（原实现静默丢弃 blocks[2:]）
+                        final_cmd = 'replace ' + arg + '\x00' + '\x00'.join(blocks)
+                        task_ids.append(_enqueue_task(final_cmd))
                         i = next_i
                         continue
                     elif len(blocks) == 1 and '-l' in arg:
@@ -2937,14 +3155,16 @@ def agent_exec():
                     i = next_i
                     continue
                 elif cmd in ('create', 'append', 'insert', 'find', 'remember', 'memory'):
-                    # 这些指令只需要一个内容块
-                    final_cmd = f"{cmd} {arg}\x00{blocks[0]}"
-                    task_ids.append(_enqueue_task(final_cmd))  # [重构·B6]
+                    # [修复·memory] 全部代码块透传（\x00 连接）：协议只允许 1 块，
+                    # 超出时由各指令处理器显式报错（原实现静默丢弃 blocks[1:]）
+                    final_cmd = f'{cmd} {arg}\x00' + '\x00'.join(blocks)
+                    task_ids.append(_enqueue_task(final_cmd))
                     i = next_i
                     continue
                 elif cmd == 'deleteline':
-                    final_cmd = f"deleteline {arg}\x00{blocks[0]}"
-                    task_ids.append(_enqueue_task(final_cmd))  # [重构·B6]
+                    # [修复·memory] 全部代码块透传（\x00 连接）：超出 1 块由处理器显式报错
+                    final_cmd = 'deleteline ' + arg + '\x00' + '\x00'.join(blocks)
+                    task_ids.append(_enqueue_task(final_cmd))
                     i = next_i
                     continue
                 # 如果没收集到块，当作单行处理
@@ -2959,6 +3179,7 @@ def agent_exec():
             task_ids.append(_enqueue_task(line))  # [重构·B6]
             i += 1
     return jsonify({'type': 'task_batch', 'task_ids': task_ids})
+
 @app.route('/agent-file-download')
 def agent_file_download():
     """下载临时文件，并在响应完成后自动清理"""
@@ -2995,6 +3216,7 @@ def agent_file_download():
     except Exception as e:
         print(f'[Download] 读取文件异常: {e}')
         return f'下载失败: {e}', 500
+
 @app.route('/agent-config-poll', methods=['GET'])
 def agent_config_poll():
     _config_changed.wait(timeout=25)
@@ -3004,17 +3226,20 @@ def agent_config_poll():
         'permission_enabled': permission_mgr.enabled,
         'exec_enabled': exec_enabled
     })
+
 @app.route('/agent-memory-inject', methods=['GET'])
 def agent_memory_inject():
     """返回当前的短期记忆内容和长期记忆标签云，供前端注入到输入框"""
     content = memory_engine.get_inject_content()
     return jsonify({'memory': content}) if content else jsonify({'memory': ''})
+
 @app.route('/agent-memory-tick', methods=['GET'])
 def agent_memory_tick():
     """[新增] 前端对话回合信号：一次对话衰减一次温度。
     去重由前端完成（跨标签页 GM 存储共享 round key），此处纯执行无状态"""
     memory_engine.tick()
     return jsonify({'ticked': True})
+
 if __name__ == '__main__':
     permission_mgr.set_callback(_default_permission_callback)
     _push_config()
