@@ -1,5 +1,5 @@
 """
-PokerAgent - 本地接应服务 (SSE流式版) v51
+PokerAgent - 本地接应服务 (SSE流式版) v52
 启动方式：python agent_server.py
 默认监听：http://127.0.0.1:9966
 """
@@ -3054,6 +3054,15 @@ def _enqueue_task(cmd_str):
     log_action('ENQUEUE', f'ID: {task_id} | CMD: {cmd_str}')
     return task_id
 
+def _reject_task(reason):
+    """[新增·防御] 零执行错误回执任务：不经过任务队列、不经 worker，直接以 done 状态
+    写注册表并推 SSE。前端按普通 done 回执渲染发送，LLM 下一轮读到错误即可自纠重发。
+    与正常任务共用同一回执通道（前端零改动）；注册表条目由 agent_exec 下次的 stale 清理回收"""
+    task_id = str(uuid.uuid4())
+    emit_task_event({'id': task_id, 'type': 'status', 'status': 'done', 'result': reason})
+    log_action('REJECT', reason)
+    return task_id
+
 @app.route('/agent-exec', methods=['POST', 'GET'])
 def agent_exec():
     if request.method == 'GET':
@@ -3082,6 +3091,9 @@ def agent_exec():
     # [协议说明] ``` 不作为边界：它是前端的 markdown 渲染记号，正常链路下
     # 前端渲染消费后不会到达后端；若仍出现在块内，一律视为字面内容（不剥离、不匹配）。
     # LLM 侧约定：正文中需要字面 ``` 时用 TICK3 转义（前端不渲染转义序列）。
+    # [新增·防御] 第三返回值 blk_err：非 None = 存在未闭合的【code】（此时 blocks 恒为 None）。
+    # 旧行为下未闭合块会静默吞掉其后所有行并入块内容（后续无关指令被整段并进块里误执行），
+    # 现在检测到未闭合立即短路报错，主循环将其转为零执行的错误回执任务
     def extract_blocks(start_idx):
         blocks = []
         peek = start_idx
@@ -3089,8 +3101,11 @@ def agent_exec():
             stripped = lines[peek].strip()
             # 匹配 【code】...【/code】
             if '【code】' in stripped.lower():
+                open_line_no = peek + 1  # [新增·防御] 开块行号（1-based，错误提示定位用）
+                open_line = stripped     # [新增·防御] 开块行内容（错误提示回显，供 LLM 定位自纠）
                 peek += 1
                 block = []
+                closed = False  # [新增·防御] 闭合标志：只有显式命中【/code】break 才置位
                 while peek < len(lines):
                     bln = lines[peek]
                     if '【/code】' in bln.lower():
@@ -3098,17 +3113,23 @@ def agent_exec():
                         if idx != -1:
                             block.append(bln[:idx])
                         peek += 1
+                        closed = True  # [新增·防御]
                         break
                     block.append(bln)
                     peek += 1
+                if not closed:  # [新增·防御] 耗尽指令文本仍未闭合 → 短路报错
+                    return None, peek, (f'第 {open_line_no} 行开启了【code】代码块，'
+                                        f'直到指令文本结束都没有出现配对的【/code】'
+                                        f'（开块行："{open_line[:80]}"）。'
+                                        f'本指令及其后所有内容均未执行')
                 blocks.append('\n'.join(block).strip('\n'))
-            # 遇到空行，跳过继续找代码块
+                # 遇到空行，跳过继续找代码块
             elif stripped == '':
                 peek += 1
             # 遇到其他内容，认为多行指令内容结束
             else:
                 break
-        return blocks, peek
+        return blocks, peek, None  # [新增·防御] 第三元 blk_err（None=全部标签配对正常）
 
     while i < len(lines):
         line = lines[i].strip()
@@ -3127,7 +3148,14 @@ def agent_exec():
                 i += 1
                 continue
             # 提取后续的代码块
-            blocks, next_i = extract_blocks(i + 1)
+            blocks, next_i, blk_err = extract_blocks(i + 1)  # [修改·防御] 接收三元组返回值
+            if blk_err is not None:
+                # [新增·防御] 【code】未闭合：本指令零执行，直接生成一条 done 错误回执任务送达 LLM。
+                # next_i 已指向文本末尾（未闭合块吞掉的全部内容随之作废），循环自然结束；
+                # 此前已入队的合法指令不受影响、照常执行
+                task_ids.append(_reject_task(f'错误：指令解析失败 — {blk_err}。请修正【code】标签配对后重新发送。'))
+                i = next_i
+                continue
             if len(blocks) > 0:
                 if cmd == 'replace':
                     if len(blocks) >= 2:
