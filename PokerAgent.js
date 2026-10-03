@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         PokerAgent
 // @namespace    http://tampermonkey.net/
-// @version      55
+// @version      56
 // @author       LMaxRouterCN
 // @description  PokerAgent的浏览器端核心脚本，提供元素选择、配置管理、调试日志等功能，支持多站点独立配置和自动发送功能。
 // @match        *://*/*
@@ -3044,8 +3044,6 @@
         }
         const fp = _getSendBtnFingerprint();
         if (!fp || !idleList.includes(fp)) return;          // 非空闲态不叫（"等LLM说完"由指纹天然完成）
-        // 【新增·修复none守卫】none=不自动发送，看门狗叫醒后无意义（消息填进去永远发不出去）
-        if ((c.autoSendMode || 'click') === 'none') return;
         const input = document.querySelector(c.selInputBox);
         if (!input) return;
         // 输入框非空（人工输入中/回执滞留/none模式已填）→ 跳过本轮，等下个空闲窗口
