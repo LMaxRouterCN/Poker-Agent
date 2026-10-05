@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         PokerAgent
 // @namespace    http://tampermonkey.net/
-// @version      56
+// @version      58
 // @author       LMaxRouterCN
 // @description  PokerAgent的浏览器端核心脚本，提供元素选择、配置管理、调试日志等功能，支持多站点独立配置和自动发送功能。
 // @match        *://*/*
@@ -55,6 +55,7 @@
         memoryInjectFrequency: 1,
         showWatchdog: false,                    // 【新增·看门狗】总开关：空闲+无指令时自动叫醒二次确认
         watchdogMsg: '[agent] 唤醒并二次确认,未在此次回答内检测到指令,任务是否已完成?如果确认完成,请回复【double_check】.',  // 【新增·看门狗】叫醒消息文案
+        watchdogQuietMs: 0, // 【新增·看门狗解耦】防抖A：迁移到空闲后监听聊天容器DOM静默确认的毫秒数，0=关
         memoryInjectTimeout: 3000,              // 【新增·记忆挪位】收口时拉取记忆的HTTP超时毫秒数
         allowAnswerShrink: false                // 【新增·元素减少】是否允许回答元素减少（false=过滤/停机，true=维持旧行为）
     };
@@ -142,8 +143,8 @@
             if (cfg.codeTrimEnd === undefined) cfg.codeTrimEnd = 0;
             if (cfg.memoryInjectFrequency === undefined) cfg.memoryInjectFrequency = 1;
             if (cfg.copyInterceptTimeout === undefined) cfg.copyInterceptTimeout = 800; // 【新增】存量配置补发默认拦截窗口
-            // 【新增】四新字段存量兜底：老配置补默认值，防 undefined 穿透
-            for (const k of ['showWatchdog', 'watchdogMsg', 'memoryInjectTimeout', 'allowAnswerShrink']) {
+            // 【新增】五新字段存量兜底：老配置补默认值，防 undefined 穿透
+            for (const k of ['showWatchdog', 'watchdogMsg', 'memoryInjectTimeout', 'allowAnswerShrink', 'watchdogQuietMs']) {
                 if (cfg[k] === undefined) cfg[k] = SITE_DEFAULTS[k];
             }
         };
@@ -269,6 +270,7 @@
         _scanPending = false; // 【改·修复J】勿重置_scanRunning：旧泵在途会自然排空，强行清零会放出第二泵重现并发
         _tasksFinished = false;
         _destroyAutoSendToggle();
+        _destroyWatchdogObserver(); // 【新增·看门狗解耦】回收指纹观察器（在途判定链由epoch守卫自弃）
         _isProcessing = false;
         _finalSendInProgress = false; // 【新增·修复M·自决】停止时释放收口互斥：防止挂在_waitForLLMFinish硬等中的旧收口器把新会话的收口永久锁死
         _cmdQueue = [];
@@ -1128,7 +1130,7 @@
                 actionsHtml += `<button class="ag-btn ag-btn-g" id="ag-create-site">为此网站创建独立配置</button>`;
             }
         }
-        _panel.innerHTML = `<div id="agent-panel-head"><b>${titleText}</b><button id="agent-panel-close">✕</button></div><div id="agent-panel-body"><div class="ag-site-info"><div class="ag-site-row"><span class="ag-site-label">当前网站:</span><span class="ag-site-value">${esc(siteDisplay)}</span><span class="ag-site-badge ${badgeClass}">${badgeText}</span></div><div class="ag-site-row"><span class="ag-site-label">当前使用:</span><span class="ag-site-value" style="color:#818cf8">${esc(sourceDisplay)}</span></div></div><div class="ag-site-actions">${actionsHtml}</div><div class="ag-sec"><div class="ag-sec-title">控制台</div><div class="ag-toggle"><input type="checkbox" id="ag-debug-toggle" ${store.debugMode ? 'checked' : ''} /><label for="ag-debug-toggle" style="cursor:pointer">启用调试模式 (右侧显示日志浮窗)</label></div></div><div class="ag-sec"><div class="ag-sec-title">网站白名单</div><div class="ag-wl-list" id="ag-wl-list">${store.whitelist.length ? store.whitelist.map((u, i) => `<div class="ag-wl-item"><code>${esc(u)}</code><button class="ag-wl-rm" data-i="${i}">✕</button></div>`).join('') : '<div style="padding:8px 10px;color:#52525b;font-size:12px">暂无</div>'}</div><div class="ag-row"><input class="ag-inp" id="ag-wl-new" placeholder="https://example.com/" /><button class="ag-btn ag-btn-g" id="ag-wl-add">添加</button></div></div><div class="ag-sec"><div class="ag-sec-title">本地 Agent 服务</div><div class="ag-field"><label>接收指令的 HTTP 地址</label><input class="ag-inp" id="ag-api" value="${esc(editCfg.apiUrl)}" /><div class="ag-hint">默认仅本机(localhost/127.0.0.1)开箱即用；指向其他主机需在脚本头部补对应 @connect 声明</div></div></div><div class="ag-sec"><div class="ag-sec-title">页面元素绑定</div><div class="ag-field"><label>聊天记录容器</label><div class="ag-row"><input class="ag-inp" id="ag-s-chat" value="${esc(editCfg.selChatContainer)}" /><button class="ag-btn ag-btn-p" id="ag-pick-chat">🖱 选择</button></div><div id="ag-m-chat"></div></div><div class="ag-field"><label>AI回答元素</label><div class="ag-row"><input class="ag-inp" id="ag-s-answer" value="${esc(editCfg.selAnswerItem)}" /><button class="ag-btn ag-btn-p" id="ag-pick-answer">🖱 选择</button><button class="ag-btn ag-btn-g" id="ag-test-answer">🧪 测试</button></div><div id="ag-m-answer"></div><div class="ag-hint">用于从聊天容器中定位AI的回复，默认 .answer；如不匹配请用选择器选取</div></div><div class="ag-field"><label>代码内容元素 (必需)</label><div class="ag-row"><input class="ag-inp" id="ag-s-code-content" value="${esc(editCfg.selCodeContentElement)}" placeholder="如：pre, .code-block" /><button class="ag-btn ag-btn-p" id="ag-pick-code-content">🖱 选择</button><button class="ag-btn ag-btn-g" id="ag-test-code-content">🧪 测试</button></div><div id="ag-m-code-content"></div></div><div class="ag-field"><label>代码复制按钮 (可选)</label><div class="ag-row"><input class="ag-inp" id="ag-s-code-copy-btn" value="${esc(editCfg.selCodeCopyButton)}" placeholder="如：button.copy, .icon-copy" /><button class="ag-btn ag-btn-p" id="ag-pick-code-copy-btn">🖱 选择</button><button class="ag-btn ag-btn-g" id="ag-test-code-copy-btn">🧪 测试</button></div><div id="ag-m-code-copy-btn"></div><div class="ag-hint">如果配置，将点击此按钮拦截剪贴板内容；失败则回退到读取代码元素文本。</div></div><div class="ag-field" style="margin-top:8px"><label>代码文本裁剪</label><div class="ag-row"><input class="ag-inp" id="ag-trim-start" type="number" value="${editCfg.codeTrimStart || 0}" style="width:80px" /><span style="font-size:11px;color:#a0a0a0;margin-right:12px">去掉开头字符数</span><input class="ag-inp" id="ag-trim-end" type="number" value="${editCfg.codeTrimEnd || 0}" style="width:80px" /><span style="font-size:11px;color:#a0a0a0">去掉末尾字符数</span></div></div><div class="ag-field"><label>复制拦截窗口 (毫秒)</label><div class="ag-row"><input class="ag-inp" id="ag-clip-timeout" type="number" min="0" value="${editCfg.copyInterceptTimeout ?? 800}" style="width:80px" /><span style="font-size:11px;color:#a0a0a0">点击复制按钮后等待闸门广播的最大时长</span></div></div><div class="ag-field"><label>输入框</label><div class="ag-row"><input class="ag-inp" id="ag-s-input" value="${esc(editCfg.selInputBox)}" /><button class="ag-btn ag-btn-p" id="ag-pick-input">🖱 选择</button></div><div id="ag-m-input"></div></div><div class="ag-field"><label>发送按钮</label><div class="ag-row"><input class="ag-inp" id="ag-s-send" value="${esc(editCfg.selSendButton)}" /><button class="ag-btn ag-btn-p" id="ag-pick-send">🖱 选择</button></div><div id="ag-m-send"></div><div class="ag-field" style="margin-top:6px"><label>发送按钮容器 (可选)</label><div class="ag-row"><input class="ag-inp" id="ag-s-send-container" value="${esc(editCfg.selSendButtonContainer)}" /><button class="ag-btn ag-btn-p" id="ag-pick-send-container">🖱 选择</button></div><div id="ag-m-send-container"></div><div class="ag-hint">如果网站在不同状态下会完全替换按钮元素（而非修改属性），请选择按钮的父容器。填写后指纹基于容器内容生成，selSendButton 仍可用于容器内精确定位点击目标。</div></div><div class="ag-field" id="ag-calibrate-field" style="margin-top:6px; padding:8px; background:#1a1a1a; border:1px solid #2a2a2a; display:${(editCfg.selSendButton || editCfg.selSendButtonContainer) ? 'block' : 'none'};"><div style="font-size:12px; color:#a1a1aa; margin-bottom:6px">捕获按钮的各种形态，手动标记【忙碌】(AI输出时)和【空闲】态。</div><div class="ag-row"><div id="ag-calibrate-status" style="flex:1; font-size:11px; color:#52525b"> 忙碌:${(editCfg.sendBtnBusyFingerprints || []).length}个 | 空闲:${(editCfg.sendBtnIdleFingerprints || []).length}个 | 可发送:${(editCfg.sendBtnSendableFingerprints || []).length}个 </div><button class="ag-btn ag-btn-p" id="ag-start-calibrate">${(editCfg.sendBtnBusyFingerprints || []).length > 0 ? '重新校准' : '开始校准'}</button></div></div></div><div class="ag-field" style="margin-top:12px;padding-top:10px;border-top:1px solid #2a2a2a"><label>输出完毕判断逻辑</label><div class="ag-row" style="margin-bottom:6px"><input type="radio" name="verifyMode" id="ag-mode-single" value="single" ${editCfg.verifyMode !== 'double' ? 'checked' : ''} /><label for="ag-mode-single" style="font-size:12px;cursor:pointer;margin-right:12px">单验证 (脱离忙碌即放行)</label><input type="radio" name="verifyMode" id="ag-mode-double" value="double" ${editCfg.verifyMode === 'double' ? 'checked' : ''} /><label for="ag-mode-double" style="font-size:12px;cursor:pointer">双验证 (需进入空闲态)</label></div><div class="ag-row"><label style="font-size:12px;color:#a0a0a0;white-space:nowrap">放行前额外延时</label><input class="ag-inp" id="ag-wait-delay" type="number" value="${editCfg.waitDelayAfterDone ?? 500}" style="width:80px" /></div><div class="ag-field" style="margin-top:8px"><label>回执验证重试次数</label><div class="ag-row"><input class="ag-inp" id="ag-verify-retry-times" type="number" value="${editCfg.verifyRetryTimes ?? 30}" style="width:80px" /><span style="font-size:11px;color:#a0a0a0">LLM说完后若输入框内容被破坏，尝试强制覆盖的次数</span></div></div><div class="ag-field"><label>回执验证重试间隔</label><div class="ag-row"><input class="ag-inp" id="ag-verify-retry-interval" type="number" value="${editCfg.verifyRetryInterval ?? 1000}" style="width:80px" /><span style="font-size:11px;color:#a0a0a0">每次强制覆盖后的等待毫秒数</span></div></div><div class="ag-toggle" style="margin-top:6px"><input type="checkbox" id="ag-allow-shrink" ${editCfg.allowAnswerShrink ? 'checked' : ''} /><label for="ag-allow-shrink" style="cursor:pointer">允许回答元素减少（默认禁止：队列空闲时过滤防重放，队列非空时停机保持静止）</label></div></div><label>发送模式选择器</label><div class="ag-toggle" style="margin-bottom:6px"><input type="checkbox" id="ag-show-toggle" ${editCfg.showAutoSendToggle ? 'checked' : ''} /><label for="ag-show-toggle" style="cursor:pointer">在发送按钮旁显示发送模式选择器</label></div><div class="ag-row"><label style="font-size:11px;color:#a0a0a0;white-space:nowrap">位置</label><div class="ag-pos-group"><button class="ag-pos-btn" data-pos="left">← 左</button><button class="ag-pos-btn" data-pos="top">↑ 上</button><button class="ag-pos-btn" data-pos="right">→ 右</button><button class="ag-pos-btn" data-pos="bottom">↓ 下</button></div></div><div class="ag-field" style="margin-top:8px"><label>发送前防抖延时</label><div class="ag-row"><input class="ag-inp" id="ag-debounce-delay" type="number" value="${editCfg.sendDebounceDelay ?? 100}" style="width:80px" /><span style="font-size:11px;color:#a0a0a0">检测到可发送状态后等待的毫秒数，0=不等待，默认100</span></div></div></div><div class="ag-sec"><div class="ag-sec-title">内容清理规则</div><div class="ag-field"><label>忽略的class关键词 (逗号分隔)</label><div class="ag-row"><input class="ag-inp" id="ag-clean-keywords" value="${esc(editCfg.cleanIgnoreClassKeywords)}" /><button class="ag-btn ag-btn-p" id="ag-pick-clean-keyword">🖱 选择</button></div><div class="ag-hint">包含这些关键词的class所在元素会被移除，支持用选择器直接抓取行号等干扰元素的class</div></div><div class="ag-toggle" style="margin-bottom:6px"><input type="checkbox" id="ag-clean-buttons" ${editCfg.cleanRemoveButtonLike !== false ? 'checked' : ''} /><label for="ag-clean-buttons" style="cursor:pointer">移除按钮/操作类元素</label></div><div class="ag-toggle"><input type="checkbox" id="ag-clean-pre" ${editCfg.cleanRemovePre !== false ? 'checked' : ''} /><label for="ag-clean-pre" style="cursor:pointer">移除pre代码块 (除非含【CodeSTART】)</label></div></div><div class="ag-sec"><div class="ag-sec-title">记忆系统</div><div class="ag-field"><label>记忆注入频率（每N轮，0=关闭）</label><div class="ag-row"><input class="ag-inp" id="ag-memory-freq" type="number" value="${editCfg.memoryInjectFrequency ?? 1}" style="width:80px" /><span style="font-size:11px;color:#a0a0a0">每N轮对话注入一次记忆上下文，0=关闭</span></div></div><div class="ag-field"><label>记忆注入HTTP超时（毫秒）</label><div class="ag-row"><input class="ag-inp" id="ag-mem-timeout" type="number" value="${editCfg.memoryInjectTimeout ?? 3000}" style="width:80px" /><span style="font-size:11px;color:#a0a0a0">收口时拉取记忆的HTTP超时毫秒数</span></div></div></div><div class="ag-sec"><div class="ag-sec-title">看门狗叫醒</div><div class="ag-toggle" style="margin-bottom:6px"><input type="checkbox" id="ag-watchdog-toggle" ${editCfg.showWatchdog ? 'checked' : ''} /><label for="ag-watchdog-toggle" style="cursor:pointer">空闲且最后回答无新指令时自动叫醒LLM二次确认</label></div><div class="ag-field"><label>叫醒消息文案</label><input class="ag-inp" id="ag-watchdog-msg" value="${esc(editCfg.watchdogMsg || '')}" /></div><div class="ag-hint">循环：叫醒 → LLM输出 → 说完后扫描 → 含【double_check】解除武装 / 含新指令恢复武装 / 都没有则再叫</div></div><div class="ag-sec"><div class="ag-sec-title">指令文本清洗规则</div><div class="ag-hint" style="margin-bottom:6px">在指令发送给后端前，按顺序执行以下替换规则。开启 Unicode 可解析 \\uXXXX 或 U+XXXX。</div><div class="ag-rule-list" id="ag-rule-list"></div><div class="ag-row" style="margin-top:8px"><button class="ag-btn ag-btn-g" id="ag-add-rule">➕ 添加规则</button></div></div><div class="ag-foot"><button class="ag-btn ag-btn-g" id="ag-cancel">取消</button><button class="ag-btn ag-btn-p" id="ag-save">${saveText}</button></div></div>`;
+        _panel.innerHTML = `<div id="agent-panel-head"><b>${titleText}</b><button id="agent-panel-close">✕</button></div><div id="agent-panel-body"><div class="ag-site-info"><div class="ag-site-row"><span class="ag-site-label">当前网站:</span><span class="ag-site-value">${esc(siteDisplay)}</span><span class="ag-site-badge ${badgeClass}">${badgeText}</span></div><div class="ag-site-row"><span class="ag-site-label">当前使用:</span><span class="ag-site-value" style="color:#818cf8">${esc(sourceDisplay)}</span></div></div><div class="ag-site-actions">${actionsHtml}</div><div class="ag-sec"><div class="ag-sec-title">控制台</div><div class="ag-toggle"><input type="checkbox" id="ag-debug-toggle" ${store.debugMode ? 'checked' : ''} /><label for="ag-debug-toggle" style="cursor:pointer">启用调试模式 (右侧显示日志浮窗)</label></div></div><div class="ag-sec"><div class="ag-sec-title">网站白名单</div><div class="ag-wl-list" id="ag-wl-list">${store.whitelist.length ? store.whitelist.map((u, i) => `<div class="ag-wl-item"><code>${esc(u)}</code><button class="ag-wl-rm" data-i="${i}">✕</button></div>`).join('') : '<div style="padding:8px 10px;color:#52525b;font-size:12px">暂无</div>'}</div><div class="ag-row"><input class="ag-inp" id="ag-wl-new" placeholder="https://example.com/" /><button class="ag-btn ag-btn-g" id="ag-wl-add">添加</button></div></div><div class="ag-sec"><div class="ag-sec-title">本地 Agent 服务</div><div class="ag-field"><label>接收指令的 HTTP 地址</label><input class="ag-inp" id="ag-api" value="${esc(editCfg.apiUrl)}" /><div class="ag-hint">默认仅本机(localhost/127.0.0.1)开箱即用；指向其他主机需在脚本头部补对应 @connect 声明</div></div></div><div class="ag-sec"><div class="ag-sec-title">页面元素绑定</div><div class="ag-field"><label>聊天记录容器</label><div class="ag-row"><input class="ag-inp" id="ag-s-chat" value="${esc(editCfg.selChatContainer)}" /><button class="ag-btn ag-btn-p" id="ag-pick-chat">🖱 选择</button></div><div id="ag-m-chat"></div></div><div class="ag-field"><label>AI回答元素</label><div class="ag-row"><input class="ag-inp" id="ag-s-answer" value="${esc(editCfg.selAnswerItem)}" /><button class="ag-btn ag-btn-p" id="ag-pick-answer">🖱 选择</button><button class="ag-btn ag-btn-g" id="ag-test-answer">🧪 测试</button></div><div id="ag-m-answer"></div><div class="ag-hint">用于从聊天容器中定位AI的回复，默认 .answer；如不匹配请用选择器选取</div></div><div class="ag-field"><label>代码内容元素 (必需)</label><div class="ag-row"><input class="ag-inp" id="ag-s-code-content" value="${esc(editCfg.selCodeContentElement)}" placeholder="如：pre, .code-block" /><button class="ag-btn ag-btn-p" id="ag-pick-code-content">🖱 选择</button><button class="ag-btn ag-btn-g" id="ag-test-code-content">🧪 测试</button></div><div id="ag-m-code-content"></div></div><div class="ag-field"><label>代码复制按钮 (可选)</label><div class="ag-row"><input class="ag-inp" id="ag-s-code-copy-btn" value="${esc(editCfg.selCodeCopyButton)}" placeholder="如：button.copy, .icon-copy" /><button class="ag-btn ag-btn-p" id="ag-pick-code-copy-btn">🖱 选择</button><button class="ag-btn ag-btn-g" id="ag-test-code-copy-btn">🧪 测试</button></div><div id="ag-m-code-copy-btn"></div><div class="ag-hint">如果配置，将点击此按钮拦截剪贴板内容；失败则回退到读取代码元素文本。</div></div><div class="ag-field" style="margin-top:8px"><label>代码文本裁剪</label><div class="ag-row"><input class="ag-inp" id="ag-trim-start" type="number" value="${editCfg.codeTrimStart || 0}" style="width:80px" /><span style="font-size:11px;color:#a0a0a0;margin-right:12px">去掉开头字符数</span><input class="ag-inp" id="ag-trim-end" type="number" value="${editCfg.codeTrimEnd || 0}" style="width:80px" /><span style="font-size:11px;color:#a0a0a0">去掉末尾字符数</span></div></div><div class="ag-field"><label>复制拦截窗口 (毫秒)</label><div class="ag-row"><input class="ag-inp" id="ag-clip-timeout" type="number" min="0" value="${editCfg.copyInterceptTimeout ?? 800}" style="width:80px" /><span style="font-size:11px;color:#a0a0a0">点击复制按钮后等待闸门广播的最大时长</span></div></div><div class="ag-field"><label>输入框</label><div class="ag-row"><input class="ag-inp" id="ag-s-input" value="${esc(editCfg.selInputBox)}" /><button class="ag-btn ag-btn-p" id="ag-pick-input">🖱 选择</button></div><div id="ag-m-input"></div></div><div class="ag-field"><label>发送按钮</label><div class="ag-row"><input class="ag-inp" id="ag-s-send" value="${esc(editCfg.selSendButton)}" /><button class="ag-btn ag-btn-p" id="ag-pick-send">🖱 选择</button></div><div id="ag-m-send"></div><div class="ag-field" style="margin-top:6px"><label>发送按钮容器 (可选)</label><div class="ag-row"><input class="ag-inp" id="ag-s-send-container" value="${esc(editCfg.selSendButtonContainer)}" /><button class="ag-btn ag-btn-p" id="ag-pick-send-container">🖱 选择</button></div><div id="ag-m-send-container"></div><div class="ag-hint">如果网站在不同状态下会完全替换按钮元素（而非修改属性），请选择按钮的父容器。填写后指纹基于容器内容生成，selSendButton 仍可用于容器内精确定位点击目标。</div></div><div class="ag-field" id="ag-calibrate-field" style="margin-top:6px; padding:8px; background:#1a1a1a; border:1px solid #2a2a2a; display:${(editCfg.selSendButton || editCfg.selSendButtonContainer) ? 'block' : 'none'};"><div style="font-size:12px; color:#a1a1aa; margin-bottom:6px">捕获按钮的各种形态，手动标记【忙碌】(AI输出时)和【空闲】态。</div><div class="ag-row"><div id="ag-calibrate-status" style="flex:1; font-size:11px; color:#52525b"> 忙碌:${(editCfg.sendBtnBusyFingerprints || []).length}个 | 空闲:${(editCfg.sendBtnIdleFingerprints || []).length}个 | 可发送:${(editCfg.sendBtnSendableFingerprints || []).length}个 </div><button class="ag-btn ag-btn-p" id="ag-start-calibrate">${(editCfg.sendBtnBusyFingerprints || []).length > 0 ? '重新校准' : '开始校准'}</button></div></div></div><div class="ag-field" style="margin-top:12px;padding-top:10px;border-top:1px solid #2a2a2a"><label>输出完毕判断逻辑</label><div class="ag-row" style="margin-bottom:6px"><input type="radio" name="verifyMode" id="ag-mode-single" value="single" ${editCfg.verifyMode !== 'double' ? 'checked' : ''} /><label for="ag-mode-single" style="font-size:12px;cursor:pointer;margin-right:12px">单验证 (脱离忙碌即放行)</label><input type="radio" name="verifyMode" id="ag-mode-double" value="double" ${editCfg.verifyMode === 'double' ? 'checked' : ''} /><label for="ag-mode-double" style="font-size:12px;cursor:pointer">双验证 (需进入空闲态)</label></div><div class="ag-row"><label style="font-size:12px;color:#a0a0a0;white-space:nowrap">放行前额外延时</label><input class="ag-inp" id="ag-wait-delay" type="number" value="${editCfg.waitDelayAfterDone ?? 500}" style="width:80px" /></div><div class="ag-field" style="margin-top:8px"><label>回执验证重试次数</label><div class="ag-row"><input class="ag-inp" id="ag-verify-retry-times" type="number" value="${editCfg.verifyRetryTimes ?? 30}" style="width:80px" /><span style="font-size:11px;color:#a0a0a0">LLM说完后若输入框内容被破坏，尝试强制覆盖的次数</span></div></div><div class="ag-field"><label>回执验证重试间隔</label><div class="ag-row"><input class="ag-inp" id="ag-verify-retry-interval" type="number" value="${editCfg.verifyRetryInterval ?? 1000}" style="width:80px" /><span style="font-size:11px;color:#a0a0a0">每次强制覆盖后的等待毫秒数</span></div></div><div class="ag-toggle" style="margin-top:6px"><input type="checkbox" id="ag-allow-shrink" ${editCfg.allowAnswerShrink ? 'checked' : ''} /><label for="ag-allow-shrink" style="cursor:pointer">允许回答元素减少（默认禁止：队列空闲时过滤防重放，队列非空时停机保持静止）</label></div></div><label>发送模式选择器</label><div class="ag-toggle" style="margin-bottom:6px"><input type="checkbox" id="ag-show-toggle" ${editCfg.showAutoSendToggle ? 'checked' : ''} /><label for="ag-show-toggle" style="cursor:pointer">在发送按钮旁显示发送模式选择器</label></div><div class="ag-row"><label style="font-size:11px;color:#a0a0a0;white-space:nowrap">位置</label><div class="ag-pos-group"><button class="ag-pos-btn" data-pos="left">← 左</button><button class="ag-pos-btn" data-pos="top">↑ 上</button><button class="ag-pos-btn" data-pos="right">→ 右</button><button class="ag-pos-btn" data-pos="bottom">↓ 下</button></div></div><div class="ag-field" style="margin-top:8px"><label>发送前防抖延时</label><div class="ag-row"><input class="ag-inp" id="ag-debounce-delay" type="number" value="${editCfg.sendDebounceDelay ?? 100}" style="width:80px" /><span style="font-size:11px;color:#a0a0a0">检测到可发送状态后等待的毫秒数，0=不等待，默认100</span></div></div></div><div class="ag-sec"><div class="ag-sec-title">内容清理规则</div><div class="ag-field"><label>忽略的class关键词 (逗号分隔)</label><div class="ag-row"><input class="ag-inp" id="ag-clean-keywords" value="${esc(editCfg.cleanIgnoreClassKeywords)}" /><button class="ag-btn ag-btn-p" id="ag-pick-clean-keyword">🖱 选择</button></div><div class="ag-hint">包含这些关键词的class所在元素会被移除，支持用选择器直接抓取行号等干扰元素的class</div></div><div class="ag-toggle" style="margin-bottom:6px"><input type="checkbox" id="ag-clean-buttons" ${editCfg.cleanRemoveButtonLike !== false ? 'checked' : ''} /><label for="ag-clean-buttons" style="cursor:pointer">移除按钮/操作类元素</label></div><div class="ag-toggle"><input type="checkbox" id="ag-clean-pre" ${editCfg.cleanRemovePre !== false ? 'checked' : ''} /><label for="ag-clean-pre" style="cursor:pointer">移除pre代码块 (除非含【CodeSTART】)</label></div></div><div class="ag-sec"><div class="ag-sec-title">记忆系统</div><div class="ag-field"><label>记忆注入频率（每N轮，0=关闭）</label><div class="ag-row"><input class="ag-inp" id="ag-memory-freq" type="number" value="${editCfg.memoryInjectFrequency ?? 1}" style="width:80px" /><span style="font-size:11px;color:#a0a0a0">每N轮对话注入一次记忆上下文，0=关闭</span></div></div><div class="ag-field"><label>记忆注入HTTP超时（毫秒）</label><div class="ag-row"><input class="ag-inp" id="ag-mem-timeout" type="number" value="${editCfg.memoryInjectTimeout ?? 3000}" style="width:80px" /><span style="font-size:11px;color:#a0a0a0">收口时拉取记忆的HTTP超时毫秒数</span></div></div></div><div class="ag-sec"><div class="ag-sec-title">看门狗叫醒</div><div class="ag-toggle" style="margin-bottom:6px"><input type="checkbox" id="ag-watchdog-toggle" ${editCfg.showWatchdog ? 'checked' : ''} /><label for="ag-watchdog-toggle" style="cursor:pointer">空闲且最后回答无新指令时自动叫醒LLM二次确认</label></div><div class="ag-field"><label>叫醒消息文案</label><input class="ag-inp" id="ag-watchdog-msg" value="${esc(editCfg.watchdogMsg || '')}" /></div><div class="ag-field"><label>空闲静默确认 (毫秒)</label><div class="ag-row"><input class="ag-inp" id="ag-wd-quiet" type="number" value="${editCfg.watchdogQuietMs ?? 0}" style="width:80px" /><span style="font-size:11px;color:#a0a0a0">进入空闲后监听聊天区DOM静默N毫秒才判定，0=关</span></div></div><div class="ag-hint">循环：叫醒 → LLM输出 → 说完后扫描 → 含【double_check】解除武装 / 含新指令恢复武装 / 都没有则再叫</div></div><div class="ag-sec"><div class="ag-sec-title">指令文本清洗规则</div><div class="ag-hint" style="margin-bottom:6px">在指令发送给后端前，按顺序执行以下替换规则。开启 Unicode 可解析 \\uXXXX 或 U+XXXX。</div><div class="ag-rule-list" id="ag-rule-list"></div><div class="ag-row" style="margin-top:8px"><button class="ag-btn ag-btn-g" id="ag-add-rule">➕ 添加规则</button></div></div><div class="ag-foot"><button class="ag-btn ag-btn-g" id="ag-cancel">取消</button><button class="ag-btn ag-btn-p" id="ag-save">${saveText}</button></div></div>`;
         _panel.querySelector('#agent-panel-close').onclick = hidePanel;
         _panel.querySelector('#ag-cancel').onclick = hidePanel;
         _panel.querySelector('#ag-debug-toggle').onchange = (e) => {
@@ -1293,6 +1295,8 @@
             siteData.memoryInjectFrequency = Math.max(0, parseInt(_panel.querySelector('#ag-memory-freq').value) || 0); // 【改·改动4】钳制负值
             siteData.showWatchdog = _panel.querySelector('#ag-watchdog-toggle').checked;                     // 【新增·看门狗】
             siteData.watchdogMsg = _panel.querySelector('#ag-watchdog-msg').value;                           // 【新增·看门狗】
+            const _wq = parseInt(_panel.querySelector('#ag-wd-quiet').value);
+            siteData.watchdogQuietMs = isNaN(_wq) ? 0 : Math.max(0, _wq);
             const _mt2 = parseInt(_panel.querySelector('#ag-mem-timeout').value);                            // 【新增·记忆挪位】
             siteData.memoryInjectTimeout = isNaN(_mt2) ? 3000 : Math.max(0, _mt2);
             siteData.allowAnswerShrink = _panel.querySelector('#ag-allow-shrink').checked;                   // 【新增·元素减少】
@@ -3006,12 +3010,149 @@
     }
 
     /* ================================================================
-     * 6.6 看门狗叫醒
-     * 职责：空闲态 + 最后回答无新指令时，向 LLM 发送二次确认消息，闭环判定任务完成。
-     * 全事件驱动：由扫描泵（mutation驱动）在"游标后无新闭合"出口触发，零轮询零延时。
-     * 循环闭环：叫醒 → LLM输出(busy挡) → 说完(idle) → 泵扫新回答 →
-     *   含【double_check】→ 解除武装 / 含新指令 → 恢复武装+正常执行 / 都没有 → 再叫（无上限，按裁决）
+     * 6.6 看门狗叫醒（v58 事件源解耦重构）
+     * 旧版挂在主流程mutation扫描的"无新指令"出口上——指令流的失败分支，
+     * 流式期间每批token白跑判定链，靠忙碌指纹兜底；且依赖"同帧渲染"巧合存活
+     * （最后token与按钮空闲切换若分帧，说完后再无mutation，看门狗永久死）。
+     * 新版：独立事件源=按钮指纹迁移（busy→idle边缘触发，复用修复H三层观察器），
+     * 与主流程（文本流/抓指令）正交。工作时段天然错开：主流程在LLM说话时，看门狗只在其说完后。
+     * 判定链：门1静默位 → 门3总开关 → 门4空闲电平 → [防抖A:DOM静默确认,可关]
+     *        → 门2成对指令让位 → 门5输入框空 → [防抖B:复用_waitForLLMFinish+_waitForSendable+防抖延时] → 开叫
+     * 防循环闭环依赖主流程扫描的disarmed置位/重新武装（见_scanAnswers，勿删）：
+     * 叫醒→LLM回double_check→主流程置disarmed→本迁移判定被门1挡住
      * ================================================================ */
+    let _watchdogJudging = false;   // 判定链在途互斥：防抖A/B窗口内新迁移事件不得重入（两链并行会抢发送）
+    let _watchdogObsStop = null;    // 常驻指纹观察器停止句柄（生命周期=agent会话）
+    let _watchdogPrevFp = null;     // 边缘检测电平基准：上一采样时刻的指纹（迁移=电平跳变命中边缘谓词）
+    function _destroyWatchdogObserver() {
+        if (_watchdogObsStop) { _watchdogObsStop(); _watchdogObsStop = null; }
+        _watchdogJudging = false; // 【微调】停止/重挂时释放判定链互斥，防旧链永挂导致新链永久静默
+        _watchdogPrevFp = null;
+    }
+    /**
+     * 布防：挂常驻指纹观察器做busy→idle边缘检测。首态电平初始化为当前指纹——
+     * 首态即空闲不补触发（错过即错过，下一个回答轮自然接管，保持纯边缘语义）。
+     * 依赖缺失（未校准空闲/容器或回答选择器未配）则不布防，等同旧版锁定语义
+     */
+    function _installWatchdogObserver() {
+        _destroyWatchdogObserver();
+        const c = cfgLoad();
+        if (!c.showWatchdog) return; // 总开关关闭：零布防
+        if ((c.sendBtnIdleFingerprints || []).length === 0) {
+            if (!_watchdogWarned) {
+                _watchdogWarned = true;
+                log('WARN', '🐕 看门狗未校准空闲态指纹，已锁定不启用。校准完成后自动生效');
+            }
+            return;
+        }
+        if (!c.selChatContainer || !c.selAnswerItem) {
+            log('WARN', '🐕 看门狗依赖聊天容器/回答元素选择器，未配置则不布防');
+            return;
+        }
+        _watchdogPrevFp = _getSendBtnFingerprint(); // 电平基准=当前态，杜绝启动瞬间的假迁移
+        _watchdogObsStop = _observeSendBtnFingerprint(() => {
+            const fp = _getSendBtnFingerprint();
+            if (fp === _watchdogPrevFp) return; // 指纹取值未变（无关属性抖动）：非电平跳变，丢弃
+            const prev = _watchdogPrevFp;
+            _watchdogPrevFp = fp;
+            if (_watchdogEdgeHit(prev, fp)) _watchdogTrigger(); // 边缘命中→判定链，fire-and-forget
+        });
+        log('INFO', '🐕 看门狗已布防：监听按钮指纹迁移 (事件驱动)');
+    }
+    /** 边缘谓词：prev不在触发侧电平 && now在触发侧。单验证=脱离忙碌；双验证=迁入空闲∪可发送 */
+    function _watchdogEdgeHit(prevFp, nowFp) {
+        const c = cfgLoad();
+        const on = (fp) => {
+            if (c.verifyMode === 'double') {
+                const valid = [...new Set([...(c.sendBtnIdleFingerprints || []), ...(c.sendBtnSendableFingerprints || [])])];
+                return !!fp && valid.includes(fp);
+            }
+            // 单验证：元素缺失/无指纹均视为已脱离（与_waitForLLMFinish判定对齐）
+            return fp === null || fp === 'ELEMENT_MISSING' || fp === 'CONTAINER_MISSING' || !(c.sendBtnBusyFingerprints || []).includes(fp);
+        };
+        return !on(prevFp) && on(nowFp);
+    }
+    /**
+     * 防抖A：容器DOM静默确认。迁移到空闲后监听聊天容器，任意文本/结构变化重置计时，
+     * 静默满quietMs视为输出真正落定（防"按钮先空闲、最后token后落盘"的先触发竞态）。
+     * 事件驱动无上限（纯去抖），持续微动的页面会被无限推迟——属去抖固有代价，接受
+     */
+    function _watchdogQuietWait(quietMs) {
+        return new Promise(resolve => {
+            const c = cfgLoad();
+            const scope = document.querySelector(c.selChatContainer);
+            if (!scope) { resolve(); return; } // 容器丢失：跳过静默确认，后续门2自读兜底
+            let mo = null, timer = null;
+            const settle = () => { if (mo) mo.disconnect(); clearTimeout(timer); resolve(); };
+            mo = new MutationObserver(() => { clearTimeout(timer); timer = setTimeout(settle, quietMs); });
+            mo.observe(scope, { childList: true, subtree: true, characterData: true }); // 不监听attributes：滚动态class变化不刷计时
+            timer = setTimeout(settle, quietMs); // 首计时：静默可能本就已达标
+        });
+    }
+    /** 门1快速预筛：三重静默位任一为真即静默（判定链内多处复查共用） */
+    function _watchdogGate1() {
+        return _watchdogDisarmed || _watchdogActive || _suppressWatchdog || !cfgLoad().showWatchdog;
+    }
+    async function _watchdogTrigger() {
+        if (_watchdogJudging) return; // 在途互斥：判定链占据防抖窗口期间丢弃新迁移事件
+        if (_watchdogGate1()) return; // 门1预筛（廉价，防抖前先挡）
+        const c = cfgLoad();
+        const idleList = c.sendBtnIdleFingerprints || [];
+        if (idleList.length === 0) return; // 未校准（安装器已警告过，此处静默）
+        const fp = _getSendBtnFingerprint();
+        if (!fp || !idleList.includes(fp)) return; // 门4：触发侧电平失配（边缘检测与判定链之间的窗口期变化）
+        _watchdogJudging = true;
+        const epoch = _sessionEpoch; // 作废基准：停止/重初始化后在途链自弃
+        try {
+            // ── 防抖A：DOM静默确认（0=关）──
+            const quietMs = Math.max(0, parseInt(c.watchdogQuietMs) || 0);
+            if (quietMs > 0) await _watchdogQuietWait(quietMs);
+            if (epoch !== _sessionEpoch) return; // 苏醒守卫
+            if (_watchdogGate1()) return;        // 防抖A期间状态可能变化，复查门1
+            // ── 门2 成对指令判定：自读最后回答全文（与主流程游标坐标系彻底解耦）。
+            // 成对【cmd】...【/cmd】= 指令流程的地盘，让位。孤立闭标签/正文提及字面量不再误伤，
+            // 孤立开标签（流式截断）指令未执行 → 会叫（合理）──
+            const scope = document.querySelector(c.selChatContainer);
+            if (!scope) return;
+            const answers = scope.querySelectorAll(c.selAnswerItem);
+            if (answers.length === 0) return; // 无回答元素：无判定对象，不叫
+            const lastText = answers[answers.length - 1].textContent || '';
+            if (/【cmd】[\s\S]*?【\/cmd】/.test(lastText)) return;
+            // ── 门5 输入框非空（人工输入中/回执滞留/none已填）→ 等下个空闲窗口 ──
+            const input = document.querySelector(c.selInputBox);
+            if (!input) return;
+            const cur = (input.tagName === 'TEXTAREA' || input.tagName === 'INPUT') ? input.value : (input.textContent || '');
+            if (cur.trim()) return;
+            // ── 防抖B：复用收口链同款指纹验证（单双验证+waitDelayAfterDone）。
+            // 触发点已在空闲→正常时序即时通过、生效的是延时；异常时序（按钮先空闲）下真等待 ──
+            await _waitForLLMFinish();
+            if (epoch !== _sessionEpoch) return; // 苏醒守卫
+            if (_watchdogGate1()) return;        // 等待窗口复查（防抖B期间收口可能置suppress）
+            // ── 开叫：置位→填框→发送链（与收口链同序：可发送态等待+防抖延时+复用_executeSend）──
+            _watchdogActive = true;
+            log('INFO', '🐕 看门狗叫醒：本次回答未检测到指令，发送二次确认...');
+            _directInput(input, c.watchdogMsg || SITE_DEFAULTS.watchdogMsg);
+            input.dispatchEvent(new Event('input', { bubbles: true })); // 通知站点框架（激活发送按钮）
+            await _waitForSendable();
+            const debounceDelay = Math.max(0, parseInt(cfgLoad().sendDebounceDelay) || 0);
+            if (debounceDelay > 0) {
+                log('INFO', `⏳ 发送防抖延时 ${debounceDelay}ms...`);
+                await new Promise(r => setTimeout(r, debounceDelay));
+            }
+            if (epoch !== _sessionEpoch) { _watchdogActive = false; return; } // 发射前终检
+            if (_executeSend(input)) {
+                // 发送成功：active保持到新回答出现（主流程轮次切换复位）；期间busy指纹+active双挡重复叫
+                log('INFO', '🐕 叫醒消息已发出，等待回复（【double_check】解除武装 / 新指令恢复武装）');
+            } else {
+                // 发送失败：消息留在输入框供人工处理，复位周期（框非空天然挡重复叫）
+                log('WARN', '🐕 叫醒消息发送失败，已填入输入框等待人工发送');
+                _watchdogActive = false;
+            }
+        } finally {
+            _watchdogJudging = false;
+        }
+    }
+
     // 【修复R19】看门狗状态复位单出口:此前 6 处散装复位各自手写子集(全清/清4/清3/清2),
     // 每加一个状态字段要人肉同步 N 处,漏一处=幽灵状态。收敛后新字段只需在此函数声明。
     // opts.keepDisarmed: 轮次边界保留解除武装语义(double_check后新回答不叫,新指令出现才重新武装);
@@ -3022,46 +3163,6 @@
         if (!opts.keepDisarmed) _watchdogDisarmed = false; // 已解除武装——轮次边界保留
         if (opts.full) _watchdogWarned = false;  // 空闲态未校准一次性警告——仅会话终结级清
         if (opts.resetTick) _roundTicked = false; // 记忆tick防重——按场景
-    }
-
-    function _watchdogTrigger(answerText) {  // 【改·修复抢叫】签名加参：当前最后回答全文
-        // 三重静默门：已解除武装 / 叫醒周期进行中 / 收口发送抑制窗口
-        if (_watchdogDisarmed || _watchdogActive || _suppressWatchdog) return;
-        // 【新增·修复抢叫】全文指令判定（对齐设计原文"最后一个回答元素没有指令"）：
-        // 本回答只要出现过【/cmd】——哪怕已被游标消费——就归指令流程接管，
-        // 看门狗在本回答的整个生命周期内让位。旧判定只看游标之后有无闭合，
-        // 把"消费完"混淆成了"没有"，命令轮收尾mutation必然抢叫（日志实证：05.266→05.427）
-        if (answerText && answerText.includes('【/cmd】')) return;
-        const c = cfgLoad();
-        if (!c.showWatchdog) return;                        // 总开关（浮窗/面板均可切）
-        const idleList = c.sendBtnIdleFingerprints || [];
-        if (idleList.length === 0) {                        // 空闲态未校准：锁定不启用
-            if (!_watchdogWarned) {
-                _watchdogWarned = true;
-                log('WARN', '🐕 看门狗未校准空闲态指纹，已锁定不启用。校准完成后自动生效');
-            }
-            return;
-        }
-        const fp = _getSendBtnFingerprint();
-        if (!fp || !idleList.includes(fp)) return;          // 非空闲态不叫（"等LLM说完"由指纹天然完成）
-        const input = document.querySelector(c.selInputBox);
-        if (!input) return;
-        // 输入框非空（人工输入中/回执滞留/none模式已填）→ 跳过本轮，等下个空闲窗口
-        const cur = (input.tagName === 'TEXTAREA' || input.tagName === 'INPUT') ? input.value : (input.textContent || '');
-        if (cur.trim()) return;
-        // ── 开叫：同步完成 置位+填写+发送，"发送后→LLM进busy"的窗口由 _watchdogActive 挡重复叫 ──
-        _watchdogActive = true;
-        log('INFO', '🐕 看门狗叫醒：本次回答未检测到指令，发送二次确认...');
-        _directInput(input, c.watchdogMsg || SITE_DEFAULTS.watchdogMsg);
-        input.dispatchEvent(new Event('input', { bubbles: true }));  // 通知站点框架（激活发送按钮）
-        if (_executeSend(input)) {
-            // 发送成功：active 保持到新回答出现（轮次切换复位）；期间 busy/idle指纹 + active 三重挡
-            log('INFO', '🐕 叫醒消息已发出，等待回复（【double_check】解除武装 / 新指令恢复武装）');
-        } else {
-            // 发送失败：消息留在输入框供人工处理，复位周期（框非空天然挡重复叫）
-            log('WARN', '🐕 叫醒消息发送失败，已填入输入框等待人工发送');
-            _watchdogActive = false;
-        }
     }
 
     function _executeSend(input) {
@@ -3262,6 +3363,8 @@
                 const cb = _panel.querySelector('#ag-watchdog-toggle');
                 if (cb) cb.checked = next;
             }
+            // 【新增·看门狗解耦】浮窗开关即时挂/卸观察器（面板保存走initAgent重启，无需此步）
+            if (next) _installWatchdogObserver(); else _destroyWatchdogObserver();
             log('INFO', `🐕 看门狗已${next ? '开启' : '关闭'}`);
         };
         _toggleEl.onclick = (e) => e.stopPropagation();
@@ -3487,7 +3590,6 @@
             // 闸门：游标之后无新闭合 → 本批无新指令，直接返回（流式期间绝大多数 token 批次在此拦截，
             // 不再触发克隆/点按钮等昂贵操作）
             if (!rawText.includes('【/cmd】', _cmdScanCursor)) {
-                _watchdogTrigger(rawText);  // 【改·修复抢叫】传入回答全文，触发器自行判定"本回答是否出现过指令"
                 return;
             }
             log('INFO', `🔎 游标(${_cmdScanCursor})后检测到新【/cmd】闭合，进入提取流程 (len=${rawLen})`);
@@ -3620,6 +3722,7 @@
         // 【新增·看门狗/tick】状态全复位
         _resetWatchdogState({ full: true, resetTick: true });
         _initAutoSendToggle();
+        _installWatchdogObserver(); // 【新增·看门狗解耦】布防指纹迁移观察器（依赖校准/选择器，缺则静默跳过）
         const c = cfgLoad();
         const selector = c.selChatContainer;
         if (!selector) {
