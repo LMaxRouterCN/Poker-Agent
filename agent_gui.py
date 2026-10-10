@@ -1,7 +1,8 @@
 """
 PokerAgent - GUI 控制台
-用法：python agent_gui.py（不要和 agent_server.py 同时运行）
+用法：python agent_gui.py [-port N]（不要和 agent_server.py 同时运行）
 依赖：flask, flask-cors, werkzeug, numpy, sounddevice（与 agent_server.py 相同）
+支持运行中在左侧"服务"面板换口 → 重启后端实例（GUI 进程不动、不落盘）
 """
 import tkinter as tk
 import tkinter.font as tkfont
@@ -1331,12 +1332,13 @@ class ClickPlayer:
 class _ServerThread(threading.Thread):
     def __init__(self):
         super().__init__(daemon=True)
+        self._port = agent_server.PORT  # [port v3] 单一事实源：与 server 模块共用同一探测结果
         self.server = None
         self._ready = threading.Event()
 
     def run(self):
         try:
-            self.server = make_server('127.0.0.1', 9966, agent_server.app, threaded=True)
+            self.server = make_server('127.0.0.1', self._port, agent_server.app, threaded=True)
             self._ready.set()
             self.server.serve_forever()
         except Exception as e:
@@ -1487,6 +1489,37 @@ class AgentGUI:
         print('[Agent] 任务结束销毁残留进程: '
               + ('开（终止树内全部活口，构建冷启动换确定性）' if agent_server.EXEC_JOB_KILL_ON_CLOSE
                  else '关（daemon 保温构建快，残留进程脱离管辖）'))
+
+    # ========== [port v3] 运行时换口 ==========
+    def _validate_port_key(self, new_text):
+        """[port v3] 端口输入即时校验：仅放行数字与空串（与超时输入框同模式，不共用方法避免隐式耦合）"""
+        return new_text == '' or new_text.isdigit()
+
+    def _apply_port(self, event=None):
+        """[port v3] 应用新端口并重启后端（GUI 进程不动）。
+        校验链：非空整数 → 范围(1-65535) → 与当前值不同 → 预检占用。
+        预检失败/同值：旧服务分毫不动（拒绝式，无中间态）；预检通过才赋值 PORT 并走重启管线。
+        赋值后 bind 失败（TOCTOU 竞态）：PORT 保持新值（=期望端口），状态栏标红，可点"重启服务"重试。
+        换口后前端等外部客户端需手动改指新口（GUI 日志区走内存直连，不受影响）"""
+        s = self.ent_port.get().strip()
+        try:
+            port = int(s)
+        except ValueError:
+            messagebox.showwarning("端口未生效", f"端口为空或非法：\"{s}\"")
+            return
+        if not (1 <= port <= 65535):
+            messagebox.showwarning("端口未生效", f"端口 {port} 超出有效范围 (1-65535)")
+            return
+        if port == agent_server.PORT:
+            print(f'[Agent] 端口未变化（{port}），无需应用；重试启动请用"重启服务"按钮')
+            return
+        if not agent_server.port_free(port):
+            messagebox.showwarning("端口未生效", f"端口 {port} 已被占用，当前服务未受影响")
+            print(f'[Agent] 端口 {port} 已被占用，应用被拒绝（当前服务仍在 {agent_server.PORT}）')
+            return
+        print(f'[Agent] 端口 {agent_server.PORT} → {port}，正在重启后端...')
+        agent_server.PORT = port  # 赋值必须在重启前：_ServerThread.__init__ 从这里现读
+        self._restart_server(confirm=False)  # 应用按钮即显式意图，不二次确认
 
     # ========== 拦截弹窗策略 [新增] ==========
     def _validate_perm_timeout_key(self, new_text):
@@ -1832,7 +1865,7 @@ class AgentGUI:
         self.status_text = tk.Label(bar, text="服务运行中", bg=HEADER, fg=TXT2,
                                     font=FONT_MONO, anchor='w')
         self.status_text.pack(side=tk.LEFT)
-        self.port_text = tk.Label(bar, text="http://127.0.0.1:9966", bg=HEADER, fg=TXT2,
+        self.port_text = tk.Label(bar, text=f"http://127.0.0.1:{agent_server.PORT}", bg=HEADER, fg=TXT2,
                                   font=FONT_MONO, anchor='e')
         self.port_text.pack(side=tk.RIGHT, padx=10)
 
@@ -1854,6 +1887,16 @@ class AgentGUI:
         self._sep(f)
 
         tk.Label(f, text="🔧 服务", bg=PANEL, fg=TXT2, font=FONT_UI).pack(anchor='w', padx=16, pady=(2, 6))
+        # ── [port v3] 运行时换口：输入新端口 → 应用并重启后端（GUI 进程不重启、不落盘）──
+        tk.Label(f, text="监听端口", bg=PANEL, fg=TXT2, font=FONT_UI).pack(anchor='w', padx=16, pady=(2, 2))
+        vcmd_port = (self.root.register(self._validate_port_key), '%P')
+        self.ent_port = tk.Entry(f, width=8, bg=HEADER, fg=TXT, font=('Consolas', 10), bd=0,
+                                 insertbackground=TXT, highlightthickness=0, justify='center',
+                                 validate='key', validatecommand=vcmd_port)
+        self.ent_port.insert(0, str(agent_server.PORT))  # 初始显示当前生效口（argv 顺延后的实际值）
+        self.ent_port.pack(anchor='w', padx=20)
+        self.ent_port.bind('<Return>', self._apply_port)
+        self._btn(f, "应用端口并重启", self._apply_port).pack(fill=tk.X, padx=12, pady=(4, 2))
         self._btn(f, "重启服务", self._restart_server).pack(fill=tk.X, padx=12, pady=2)
         self._btn(f, "清空日志", self._clear_log).pack(fill=tk.X, padx=12, pady=2)
         # ── [新增·exec v2.1] Job Object 残留进程策略（对应 agent_server.EXEC_JOB_KILL_ON_CLOSE）──
@@ -2324,6 +2367,7 @@ class AgentGUI:
 
     # ========== 服务器管理 ==========
     def _start_server(self):
+        self.port_text.configure(text=f"http://127.0.0.1:{agent_server.PORT}")  # [port v3] 状态栏端口恒等 PORT
         try:
             self._server = _ServerThread()
             self._server.start()
@@ -2331,7 +2375,7 @@ class AgentGUI:
             if self._server._ready.is_set():
                 self.status_dot.configure(fg=GREEN)
                 self.status_text.configure(text="服务运行中")
-                print('[Agent] 服务已启动: http://127.0.0.1:9966')
+                print(f'[Agent] 服务已启动: http://127.0.0.1:{agent_server.PORT}')
                 print(f'[Agent] 工作目录: {agent_server.WORK_DIR}')
             else:
                 self.status_dot.configure(fg=YELLOW)
@@ -2340,8 +2384,9 @@ class AgentGUI:
             self.status_dot.configure(fg=RED)
             err = str(e).lower()
             if 'already in use' in err or '10048' in err:
-                self.status_text.configure(text="端口 9966 已被占用")
-                print('[Agent] 端口 9966 已被占用，请先关闭 agent_server.py')
+                self.status_text.configure(text=f"端口 {agent_server.PORT} 已被占用")
+                print(f'[Agent] 端口 {agent_server.PORT} 已被占用（顺延后仍冲突），'
+                      f'请检查多开实例，或在面板换口 / 用 -port 指定')
             else:
                 self.status_text.configure(text="启动失败")
                 print(f'[Agent] 启动失败: {e}')
@@ -2350,19 +2395,20 @@ class AgentGUI:
             self.status_text.configure(text="启动失败")
             print(f'[Agent] 启动失败: {e}')
 
-    def _restart_server(self):
-        if messagebox.askyesno("重启服务", "确定要重启 Agent 服务吗？"):
-            print('[Agent] 正在暴力重启服务...')
-            old_server = self._server
-            self._server = None
-            print('[Agent] 正在关闭旧服务...')
-            if old_server:
-                try:
-                    old_server.shutdown()
-                    print('[Agent] 旧服务已发送关闭信号')
-                except Exception as e:
-                    print(f'[Agent] 关闭旧服务时发生异常: {e}')
-            self._start_server()
+    def _restart_server(self, confirm=True):
+        if confirm and not messagebox.askyesno("重启服务", "确定要重启 Agent 服务吗？"):
+            return
+        print('[Agent] 正在暴力重启服务...')
+        old_server = self._server
+        self._server = None
+        print('[Agent] 正在关闭旧服务...')
+        if old_server:
+            try:
+                old_server.shutdown()
+                print('[Agent] 旧服务已发送关闭信号')
+            except Exception as e:
+                print(f'[Agent] 关闭旧服务时发生异常: {e}')
+        self._start_server()
 
     def _clear_log(self):
         self.log_canvas.clear()

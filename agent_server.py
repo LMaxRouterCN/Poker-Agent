@@ -1,7 +1,8 @@
 """
-PokerAgent - 本地接应服务 (SSE流式版) v52
-启动方式：python agent_server.py
-默认监听：http://127.0.0.1:9966
+PokerAgent - 本地接应服务 (SSE流式版) v53
+启动方式：python agent_server.py [-port N]
+默认监听：http://127.0.0.1:9966（默认口被占时自动向后顺延，探测上限见 _PORT_SCAN_SPAN）
+运行时可换口：GUI 面板赋值 agent_server.PORT 后重启后端实例即可（不重启 GUI、不落盘）
 """
 from flask import Flask, request, jsonify, Response
 from flask_cors import CORS
@@ -25,6 +26,7 @@ import codecs  # [exec v2.1] 增量解码器（多字节劈叉免疫）
 from collections import deque  # [新增] 跳过计划表用 FIFO 队列
 import json
 import sys
+import socket  # [port v2] 端口占用探测用
 
 app = Flask(__name__)
 CORS(app)
@@ -2992,6 +2994,79 @@ class _LogWriter:
 sys.stdout = _LogWriter(sys.stdout, 'out')
 sys.stderr = _LogWriter(sys.stderr, 'err')
 
+# ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+# [port v3] 端口单一事实源：argv 显式指定 > 默认 9966（默认口被占自动顺延）
+# 全文件禁止再出现硬码 9966，一切引用走 PORT 常量
+# [port v3] PORT 运行时可赋值换口（GUI 面板换口 → 重启后端，不重启 GUI），不落盘
+# ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+_PORT_DEFAULT = 9966   # 出厂默认端口（唯一允许字面量出现的地方）
+_PORT_SCAN_SPAN = 20   # 默认口被占时向后顺延的探测上限（9966~9985），全占则回落报错
+
+def _port_from_argv():
+    """[port v2] 解析命令行端口参数，支持三形态：-port N / --port N / -port=N。
+    非整数 / 越界(1-65535)一律 stderr 告警并按"未指定"处理（不阻断启动）。
+    跨进程语义：argv 在 import 时解析——gui 进程 import 本模块时共享同一 sys.argv，
+    故 `python agent_gui.py -port N` 同效；rt 进程 argv 不含 -port，回落默认不受扰"""
+    argv = sys.argv[1:]
+    val = None
+    i = 0
+    while i < len(argv):
+        a = argv[i]
+        if a in ('-port', '--port') and i + 1 < len(argv):
+            val = argv[i + 1]   # 空格分隔形态：取下一个参数
+            i += 2
+            continue
+        if a.startswith('-port=') or a.startswith('--port='):
+            val = a.split('=', 1)[1]   # 等号连接形态：就地切分
+        i += 1
+    if val is None:
+        return None   # argv 未指定端口
+    try:
+        port = int(val)
+    except ValueError:
+        print(f'[Agent] ⚠ 无效端口参数 "{val}"（非整数），已忽略，使用默认端口', file=sys.stderr)
+        return None
+    if not (1 <= port <= 65535):
+        print(f'[Agent] ⚠ 端口 {port} 超出有效范围(1-65535)，已忽略，使用默认端口', file=sys.stderr)
+        return None
+    return port
+
+def port_free(port):
+    """[port v2] 端口可用性探测：裸 bind 测试。
+    [port v3] 公开化：GUI 运行时换口的预检与本模块顺延探测共用同一实现。
+    非 Windows 显式带 SO_REUSEADDR——与 werkzeug 的 allow_reuse_address 行为对齐，
+    避免 TIME_WAIT 残留连接导致"刚关快启"误判顺延；
+    Windows 上 SO_REUSEADDR 语义激进（可重复绑定他人已占端口，占用会被误判为可用），
+    故保持裸 bind——误判方向只可能是"可用判为占用"（顺延一档，无害）。
+    探测与真实 bind 之间存在极小竞态窗口（TOCTOU），由启动阶段 10048 兜底分支收尾"""
+    with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as s:
+        if platform.system() != 'Windows':
+            s.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
+        try:
+            s.bind(('127.0.0.1', port))
+            return True
+        except OSError:
+            return False
+
+def _resolve_port():
+    """[port v2] 端口定版：
+    - 显式 -port 指定：用户意图声明，被占也不顺延（维持原行为：bind 失败报占用）
+    - 未指定（默认模式）：9966 被占（疑似多开）自动向后顺延至首个可用口
+    - 顺延窗内全占：告警回落默认口，走启动阶段 bind 失败的自然报错路径"""
+    explicit = _port_from_argv()
+    if explicit is not None:
+        return explicit
+    for port in range(_PORT_DEFAULT, _PORT_DEFAULT + _PORT_SCAN_SPAN):
+        if port_free(port):
+            if port != _PORT_DEFAULT:
+                print(f'[Agent] 端口 {_PORT_DEFAULT} 已被占用（疑似多开），已顺延至 {port}')
+            return port
+    print(f'[Agent] ⚠ 端口 {_PORT_DEFAULT}~{_PORT_DEFAULT + _PORT_SCAN_SPAN - 1} 全部被占用，'
+          f'回落默认口 {_PORT_DEFAULT}（启动将报占用错误）', file=sys.stderr)
+    return _PORT_DEFAULT
+
+PORT = _resolve_port()   # [port v3] 单一事实源：import 时定初值（argv/顺延）；GUI 运行时可赋值换口（重启后端生效），不落盘
+
 worker_thread = threading.Thread(target=worker_loop, daemon=True)
 worker_thread.start()
 
@@ -3273,9 +3348,9 @@ if __name__ == '__main__':
     _push_config()
     print(f'========================================')
     print(f'  PokerAgent 本地服务已启动 (SSE流式版)')
-    print(f'  监听地址：http://127.0.0.1:9966')
+    print(f'  监听地址：http://127.0.0.1:{PORT}')
     print(f'  工作目录：{WORK_DIR}')
     print(f'  帮助文档：{HELP_FILE}')
     print(f'  操作日志：{LOG_FILE}')
     print(f'========================================')
-    app.run(host='127.0.0.1', port=9966, debug=False, threaded=True)
+    app.run(host='127.0.0.1', port=PORT, debug=False, threaded=True)
