@@ -1997,12 +1997,43 @@ def execute_line_streaming(line, task_id):
         if err:
             return err
         try:
+            # [修改·备份] create 覆盖已有文件时，先把旧文件移入专属回收站（复用 delete 的回收站机制）
+            # 顺序保证：先挪旧文件、成功后才写新文件；挪动失败则整体中止，旧文件绝不丢失
+            _backup_moved = False                     # 本次 create 是否完成了覆盖备份
+            if os.path.isfile(filepath) and not _is_trash_path(filepath):
+                os.makedirs(TRASH_DIR, exist_ok=True)
+                _trash_path = _get_trash_path(filepath)
+                # 防覆盖：回收站已有同路径历史备份时中止（与 delete 行为对齐），
+                # 避免二次备份盖掉第一次的备份；先清理/恢复回收站残留才能继续
+                if os.path.exists(_trash_path):
+                    return (f'错误：回收站已存在该路径的历史备份 [{_trash_path}]，'
+                            f'本次覆盖被中止，原文件未改动。请先 restore 或清理后重试。')
+                os.makedirs(os.path.dirname(_trash_path), exist_ok=True)
+                shutil.move(filepath, _trash_path)    # 失败则走下方 except，旧文件已安全入站
+                _backup_moved = True                  # 移动成功即算备份完成（后续步骤失败可回滚）
+                # 记入 trash.log，供 restore 使用（与 delete 的日志格式完全一致）
+                with open(os.path.join(TRASH_DIR, 'trash.log'), 'a', encoding='utf-8') as f:
+                    f.write(f'{time.time()}|{filepath}\n')
+                log_action('DELETE', f'{filepath} -> 回收站（create 覆盖自动备份）')
             os.makedirs(os.path.dirname(filepath) or '.', exist_ok=True)
             with open(filepath, 'w', encoding='utf-8') as f:
                 f.write(content)
             log_action('CREATE', filepath)
+            if _backup_moved:
+                # 覆盖备份提示：带绝对路径，方便 agent/用户直接 restore 旧内容
+                return (f'已创建文件：{filepath}（{len(content)} 字符）。'
+                        f'注意：原文件已自动移入专属回收站，如需找回，'
+                        f'请使用 restore "{filepath}" 或 restore 最近')
             return f'已创建文件：{filepath}（{len(content)} 字符）'
         except Exception as e:
+            # [修改·备份] 写入阶段失败时回滚：把刚备份的旧文件挪回原位，避免原路径悬空
+            if _backup_moved:
+                try:
+                    shutil.move(_trash_path, filepath)
+                    log_action('RESTORE', f'{filepath} <- 回收站（create 写入失败自动回滚）')
+                except Exception:
+                    # 回滚失败的极端情况：明确告知旧文件位置，绝不静默吞状态
+                    return f'创建失败：{e}。注意：旧文件已移入回收站 [{_trash_path}] 且回滚失败，请手动还原。'
             return f'创建失败：{e}'
     elif cmd == 'read':
         if not arg.strip():
