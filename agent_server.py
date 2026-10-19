@@ -1241,7 +1241,7 @@ def execute_line_streaming(line, task_id):
         if '\x00' in arg:
             arg, block = arg.split('\x00', 1)
             arg = arg.strip()
-            block = block.strip('\n').replace('TICK3', '```')
+            block = block.strip('\n').replace('\\`', '`')   # 反斜杠转义还原
             # [修复·memory] 多代码块显式报错（原 dispatcher 静默丢弃后续块）
             if '\x00' in block:
                 return '错误：remember 只支持一个【code】代码块，请合并为单个代码块后重发。'
@@ -1262,7 +1262,7 @@ def execute_line_streaming(line, task_id):
         if '\x00' in raw_arg:
             raw_arg, mem_block = raw_arg.split('\x00', 1)
             raw_arg = raw_arg.strip()
-            mem_block = mem_block.strip('\n').replace('TICK3', '```')
+            mem_block = mem_block.strip('\n').replace('\\`', '`')   # 反斜杠转义还原
             # [修复·memory] 多代码块显式报错
             if '\x00' in mem_block:
                 return '错误：memory 指令只支持一个【code】代码块，请合并为单个代码块后重发。'
@@ -1542,7 +1542,7 @@ def execute_line_streaming(line, task_id):
             # [修复·memory] 多代码块显式报错（行号模式只允许 1 个内容块 = 共 2 段）
             if len(parts) > 2:
                 return '错误：replace 行号模式只支持一个【code】代码块（新文本），收到多个。'
-            new_text = parts[1].replace('TICK3', '```')
+            new_text = parts[1].replace('\\`', '`')   # 反斜杠转义还原
             old_text = ''
         else:
             if len(parts) < 3:
@@ -1550,8 +1550,8 @@ def execute_line_streaming(line, task_id):
             # [修复·memory] 多代码块显式报错（标准模式只允许 2 个内容块 = 共 3 段）
             if len(parts) > 3:
                 return '错误：replace 只支持两个【code】代码块（旧文本/新文本），收到多个。'
-            old_text = parts[1].replace('TICK3', '```')
-            new_text = parts[2].replace('TICK3', '```')
+            old_text = parts[1].replace('\\`', '`')   # 反斜杠转义还原
+            new_text = parts[2].replace('\\`', '`')   # 反斜杠转义还原
         ignore_case = '-i' in flags
         replace_all = '-a' in flags
         ignore_indent = '-s' in flags  # 忽略每行首尾空格和缩进
@@ -1682,7 +1682,7 @@ def execute_line_streaming(line, task_id):
                 if found_idx == -1:
                     return f'未找到定位文本：{pos_val}'
                 insert_idx = found_idx + 1 if pos_type == 'after' else found_idx
-            insert_text = insert_text.replace('TICK3', '`')
+            insert_text = insert_text.replace('\\`', '`')   # 反斜杠转义还原（旧版误替为单反引号，一并修正）
             if not insert_text.endswith('\n'):
                 insert_text += '\n'
             lines.insert(insert_idx, insert_text)
@@ -1992,7 +1992,7 @@ def execute_line_streaming(line, task_id):
             rest = ' '.join(p_args[1:]) if len(p_args) > 1 else ''
             filepath = safe_path(W, filepath_str)
             content = rest
-        content = content.replace('TICK3', '```')
+        content = content.replace('\\`', '`')   # 反斜杠转义还原
         err = _check_permission('create', filepath)
         if err:
             return err
@@ -2140,7 +2140,7 @@ def execute_line_streaming(line, task_id):
             rest = ' '.join(p_args[1:]) if len(p_args) > 1 else ''
             filepath = safe_path(W, filepath_str)
             content = rest
-        content = content.replace('TICK3', '```')
+        content = content.replace('\\`', '`')   # 反斜杠转义还原
         err = _check_permission('append', filepath)
         if err:
             return err
@@ -2329,11 +2329,12 @@ def execute_line_streaming(line, task_id):
         if not exec_enabled:
             return '错误：exec 指令已被管理员禁用。'
         # [新增] 代码块格式支持：exec 后跟【code】/```代码块时，代码块内容即要执行的命令
-        # 内联文本与代码块同时存在时以代码块为准（内联丢弃）；不做 TICK3 替换，保证命令逐字保真
+        # 内联文本与代码块同时存在时以代码块为准（内联丢弃）；[修改·转义] 代码块内容做反斜杠转义还原，原逐字保真豁免废止
         if '\x00' in arg:
             arg = arg.split('\x00', 1)[1]
             if not arg.strip():
                 return '错误：缺少命令。发送 @@help exec 获取指令详细用法'
+        arg = arg.replace('\\`', '`')   # [修改·转义] 反斜杠转义还原：写入内容中的 \` 还原为字面反引号（exec 纳入转义）
         # [新增] 危险命令拦截与弹窗确认
         # [修改] 补漏：新增 ri（Remove-Item 别名）、shred、remove-item 及 PowerShell 磁盘破坏性命令
         # （clear-disk / initialize-disk / remove-partition；format 的词边界已天然覆盖 Format-Volume）
@@ -3196,7 +3197,7 @@ def agent_exec():
     # 提取代码块的独立函数，仅认 【code】...【/code】 边界。
     # [协议说明] ``` 不作为边界：它是前端的 markdown 渲染记号，正常链路下
     # 前端渲染消费后不会到达后端；若仍出现在块内，一律视为字面内容（不剥离、不匹配）。
-    # LLM 侧约定：正文中需要字面 ``` 时用 TICK3 转义（前端不渲染转义序列）。
+    # LLM 侧约定：[修改·转义] 正文中需要字面反引号时用反斜杠转义（\`），写入类指令与 exec 代码块在后端自动还原；TICK3 已废弃。
     # [新增·防御] 第三返回值 blk_err：非 None = 存在未闭合的【code】（此时 blocks 恒为 None）。
     # 旧行为下未闭合块会静默吞掉其后所有行并入块内容（后续无关指令被整段并进块里误执行），
     # 现在检测到未闭合立即短路报错，主循环将其转为零执行的错误回执任务
