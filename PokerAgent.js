@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         PokerAgent
 // @namespace    http://tampermonkey.net/
-// @version      60
+// @version      61
 // @author       LMaxRouterCN
 // @description  PokerAgent的浏览器端核心脚本，提供元素选择、配置管理、调试日志等功能，支持多站点独立配置和自动发送功能。
 // @match        *://*/*
@@ -25,6 +25,11 @@
     /* ================================================================
      * 1. 存储与配置
      * ================================================================ */
+    // 【指纹V2】指纹公式版本号：指纹生成算法换代时递增。_migrateStore 检测到配置内版本号
+    // 与此不一致即清空存量指纹数组——旧公式产出的字符串在新公式下永不命中（哑弹），
+    // 留着会让 _waitForLLMFinish 立即误判"脱离忙碌态"提前放行。必须定义在 SITE_DEFAULTS 之前
+    const FINGERPRINT_VERSION = 2;
+
     const SITE_DEFAULTS = {
         apiUrl: 'http://127.0.0.1:9966/agent-exec',
         selChatContainer: '',
@@ -57,7 +62,8 @@
         watchdogMsg: '[agent] 唤醒并二次确认,未在此次回答内检测到指令,任务是否已完成?如果确认完成,请回复【double_check】.',  // 【新增·看门狗】叫醒消息文案
         watchdogQuietMs: 0, // 【新增·看门狗解耦】防抖A：迁移到空闲后监听聊天容器DOM静默确认的毫秒数，0=关
         memoryInjectTimeout: 3000,              // 【新增·记忆挪位】收口时拉取记忆的HTTP超时毫秒数
-        allowAnswerShrink: false                // 【新增·元素减少】是否允许回答元素减少（false=过滤/停机，true=维持旧行为）
+        allowAnswerShrink: false,               // 【新增·元素减少】是否允许回答元素减少（false=过滤/停机，true=维持旧行为）
+        fpVersion: FINGERPRINT_VERSION // 【指纹V2】默认版本随 SITE_DEFAULTS 分发：面板保存走 {...SITE_DEFAULTS} 展开构造 siteData，若缺此字段，保存动作会把迁移写入的版本号抹掉 → 下次加载重复清空 → 用户重校的指纹被面板保存回滚。此处是迁移闭环的关键一环，不可省
     };
 
     const DEFAULTS = {
@@ -120,6 +126,16 @@
             if (!cfg.sendBtnBusyFingerprints) cfg.sendBtnBusyFingerprints = [];
             if (!cfg.sendBtnIdleFingerprints) cfg.sendBtnIdleFingerprints = [];
             if (!cfg.sendBtnSendableFingerprints) cfg.sendBtnSendableFingerprints = [];
+            // 【指纹V2·迁移税】指纹公式换代（v1→v2 新增图标签名段）：版本不匹配即清空三个指纹数组，
+            // 回到未校准态——运行链按"未校准"语义安全降级（_waitForLLMFinish 直接放行+警告，看门狗不布防），
+            // 用户需重校一次。幂等：迁移只改内存缓存不回写存储，刷新前重复执行无害；
+            // 用户校准/保存后 fpVersion 随写盘固化，清空循环自然终止
+            if (cfg.fpVersion !== FINGERPRINT_VERSION) {
+                cfg.sendBtnBusyFingerprints = [];
+                cfg.sendBtnIdleFingerprints = [];
+                cfg.sendBtnSendableFingerprints = [];
+                cfg.fpVersion = FINGERPRINT_VERSION;
+            }
             if (cfg.sendDebounceDelay === undefined) cfg.sendDebounceDelay = 100;
             if (!cfg.verifyMode) cfg.verifyMode = 'single';
             if (cfg.verifyRetryTimes === undefined) cfg.verifyRetryTimes = 30;
@@ -166,6 +182,7 @@
             newStore.defaults.autoSendMode = newStore.defaults.autoSendByEnter ? 'enter' : 'click';
             delete newStore.defaults.autoSendByEnter;
         }
+        clearOld(newStore.defaults); // 【指纹V2·防御】老格式顶层字段被搬进 defaults 时绕过了 clearOld（既有边角）：顶层遗留的 v1 指纹会带病入库。统一让三条迁移出口都过 clearOld，顺带补齐此漏洞
         return newStore;
     }
 
@@ -1968,6 +1985,32 @@
         return rawText;
     }
 
+    /**
+     * 【指纹V2】后代图标签名：收集指定节点后代中前 3 个 path 的 d 属性 / use 的 href，
+     * 每个值截前 24 字符。设计动机：DeepSeek 等站点发送按钮的忙/闲两态（send↔stop）
+     * 在按钮本体 class/aria/disabled 上全同，唯一跨部署稳定的判别器是内部 SVG 图标切换。
+     * 双通道覆盖：path.d（内联 SVG）+ use.href（引用式图标）。24 字符对 path 坐标数据
+     * 判别力充足（两个图标的坐标串首字符即分叉）。只收语义稳定层（标签+属性数据），
+     * 不收 style/computed，避免 hover 抖动污染指纹。SVG 元素 tagName 保留小写、
+     * HTML 元素归一化为大写，统一 toLowerCase 处理
+     */
+    function _iconSignature(scope) {
+        if (!scope) return '';
+        const parts = [];
+        try {
+            const nodes = scope.querySelectorAll('path, use');
+            for (let i = 0; i < nodes.length && parts.length < 3; i++) {
+                const n = nodes[i];
+                // path 取几何数据 d；use 取引用目标（新旧两种写法都读）
+                const v = n.tagName.toLowerCase() === 'path'
+                    ? (n.getAttribute('d') || '')
+                    : (n.getAttribute('href') || n.getAttribute('xlink:href') || '');
+                if (v) parts.push(`${n.tagName.toLowerCase()}${v.slice(0, 24)}`);
+            }
+        } catch (e) { return ''; } // 签名收集失败按空串处理，不阻断指纹主链
+        return parts.join(';');
+    }
+
     function _getSendBtnFingerprint(selOverride) {
         // 【修复R6】可选选择器覆盖：校准时让"面板现填未保存"的选择器参与指纹计算（指纹与锚点必须同源，
         // 否则校准对象和判定对象脱节）。运行时路径不传，行为不变
@@ -1983,7 +2026,7 @@
                 const disabled = child.disabled ? '1' : '0';
                 const ariaDisabled = child.getAttribute('aria-disabled') || '';
                 const ariaLabel = child.getAttribute('aria-label') || '';
-                parts.push(`${tag}[${cls}][${text}][d:${disabled}][ad:${ariaDisabled}][al:${ariaLabel}]`);
+                parts.push(`${tag}[${cls}][${text}][d:${disabled}][ad:${ariaDisabled}][al:${ariaLabel}][ic:${_iconSignature(child)}]`); // 【指纹V2】每个直接子元素追加图标签名段[ic:...]，与按钮分支同步具备图标判别力
             }
             return `C:${parts.join('|')}`;
         }
@@ -1996,7 +2039,7 @@
         const disabled = el.disabled ? '1' : '0';
         const ariaDisabled = el.getAttribute('aria-disabled') || '';
         const ariaLabel = el.getAttribute('aria-label') || '';
-        return `${el.tagName}|${style}|${cls}|${innerTag}|${disabled}|${ariaDisabled}|${ariaLabel}`;
+        return `${el.tagName}|${style}|${cls}|${innerTag}|${disabled}|${ariaDisabled}|${ariaLabel}|${_iconSignature(el)}`; // 【指纹V2】末位追加后代图标签名段：忙/闲图标不同的站点（如 DeepSeek send↔stop）靠此段区分。即使签名为空也追加'|'，保证新旧公式产物字符串必不相同
     }
 
     /**
@@ -2047,7 +2090,7 @@
             directedStops = [];
             watchedEl = queryAnchor();
             if (!watchedEl) return; // 锚点暂缺：仅保底层值守；重现时结构mutation触发handler→自动重挂
-            make(watchedEl, { attributes: true, attributeFilter: ['class', 'style', 'disabled', 'aria-disabled', 'aria-label'], childList: true, characterData: true, subtree: true }, directedStops);
+            make(watchedEl, { attributes: true, childList: true, characterData: true, subtree: true }, directedStops); // 【指纹V2】摘除attributeFilter白名单：SVG path 的 d 属性（忙/闲图标切换的真信号，可能是原地改值而非换节点）不在旧白名单内，白名单存在即失明。改为全属性监听：按钮子树规模有限开销可忽略；hover 抖动的 class 变化旧白名单本就监听，风险面无扩大
             if (watchedEl.parentElement) make(watchedEl.parentElement, { childList: true }, directedStops); // 兜底本体被整体替换
         }
 
