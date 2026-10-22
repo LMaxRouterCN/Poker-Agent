@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         PokerAgent
 // @namespace    http://tampermonkey.net/
-// @version      61
+// @version      62
 // @author       LMaxRouterCN
 // @description  PokerAgent的浏览器端核心脚本，提供元素选择、配置管理、调试日志等功能，支持多站点独立配置和自动发送功能。
 // @match        *://*/*
@@ -591,6 +591,27 @@
         'code-copy-button': '代码复制按钮'
     };
 
+    /* 【scope模式】类型→运行时坐标系映射（单一定义，拾取预览与确认落盘共用）：
+     * code-content 运行时在"最后一个回答元素"内查询 → scope 选择器 = selAnswerItem；
+     * code-copy-button 运行时 _findCopyButton 首查在"代码块"内 → scope 选择器 = selCodeContentElement。
+     * 坐标系同构由构造保证：生成端与消费端共用同一基准，克隆树失配从根源消灭 */
+    const SCOPE_TYPE_MAP = {
+        'code-content': { key: 'selAnswerItem', label: 'AI回答元素' },
+        'code-copy-button': { key: 'selCodeContentElement', label: '代码内容元素' }
+    };
+    /* 【scope模式】拾取预览辅助：按类型解析目标的运行时作用域元素。
+     * 弱语义（任何缺失静默返回 null，调用方回退全局预览）——与 _confirmSelection 的
+     * 强语义（缺失报错拒绝）刻意分离：预览失败只是显示降级，落盘失败必须是硬错误 */
+    function _pickScopeOf(type, el) {
+        const def = SCOPE_TYPE_MAP[type];
+        if (!def) return null;
+        const scopeSel = cfgLoad()[def.key];
+        if (!scopeSel) return null;
+        let s = null;
+        try { s = el.closest(scopeSel); } catch (_) { return null; }
+        return (s && s !== el && s.contains(el)) ? s : null;
+    }
+
     function _isPureHashClass(c) {
         if (/^[a-f0-9]{5,}$/i.test(c)) return true;
         if (/^(css|sc|emotion|styled)-[a-z0-9]{4,}$/i.test(c)) return true;
@@ -601,31 +622,43 @@
         return c.replace(/[_-][a-f0-9]{5,8}$/i, '');
     }
 
-    function genSelector(el) {
+    function genSelector(el, scopeEl) {
         if (!el || el === document.body || el === document.documentElement) return '';
-        if (el.id && !/\d/.test(el.id)) {
-            const sel = '#' + CSS.escape(el.id);
+        // 【scope模式】第二参数可选：传入且严格包含 el 时启用相对模式。
+        // 坐标基准 document → scopeEl；唯一性"全文档唯一" → "scope内命中且包含目标"。
+        // 无效 scope（不包含/等于自身）静默回退全局模式——调用方前置校验保证正常路径不触达
+        const scoped = !!(scopeEl && scopeEl.contains(el) && scopeEl !== el);
+        const Q = scoped ? scopeEl : document; // 查询基准：相对模式以 scope 为根，全局模式维持 document
+        // 【scope模式】唯一性判据单出口（原五处散落的 document.querySelectorAll(sel).length===1 收敛于此）：
+        // 全局模式：恰好命中 1 个（旧语义分毫不变）
+        // scope模式：命中≥1 且目标在命中集合内——一个回答含多个代码块天经地义，
+        // 关键约束是"不误伤目标之外的元素"（如把回答标题认作代码块），而非全局计数
+        const uniqueIn = (sel) => {
             try {
-                if (document.querySelectorAll(sel).length === 1) return sel;
-            } catch (_) {
-            }
+                const hits = Q.querySelectorAll(sel);
+                if (hits.length === 0) return false;
+                return scoped ? [...hits].includes(el) : hits.length === 1;
+            } catch (_) { return false; }
+        };
+        // id/data-*/role 捷径：全局模式原样保留；scope模式跳过——
+        // 回答内流式元素的 id 多为框架生成值（数字/哈希），比 nth-child 更脆，
+        // 且 scope 内 class 组合通常已足够定位，id 捷径在此坐标系无正向价值只有失效风险
+        if (!scoped && el.id && !/\d/.test(el.id)) {
+            const sel = '#' + CSS.escape(el.id);
+            if (uniqueIn(sel)) return sel;
         }
-        for (const attr of ['data-testid', 'data-test-id', 'data-role', 'data-cy']) {
-            const val = el.getAttribute(attr);
-            if (val) {
-                const sel = `${el.tagName.toLowerCase()}[${attr}="${CSS.escape(val)}"]`;
-                try {
-                    if (document.querySelectorAll(sel).length === 1) return sel;
-                } catch (_) {
+        if (!scoped) {
+            for (const attr of ['data-testid', 'data-test-id', 'data-role', 'data-cy']) {
+                const val = el.getAttribute(attr);
+                if (val) {
+                    const sel = `${el.tagName.toLowerCase()}[${attr}="${CSS.escape(val)}"]`;
+                    if (uniqueIn(sel)) return sel;
                 }
             }
-        }
-        const role = el.getAttribute('role');
-        if (role) {
-            const sel = `${el.tagName.toLowerCase()}[role="${CSS.escape(role)}"]`;
-            try {
-                if (document.querySelectorAll(sel).length === 1) return sel;
-            } catch (_) {
+            const role = el.getAttribute('role');
+            if (role) {
+                const sel = `${el.tagName.toLowerCase()}[role="${CSS.escape(role)}"]`;
+                if (uniqueIn(sel)) return sel;
             }
         }
         if (el.className && typeof el.className === 'string') {
@@ -633,28 +666,25 @@
             const cleanCls = allCls.filter(c => !_isPureHashClass(c) && !/^(_|-{2})/.test(c) && !/^(is|has|can|should)/.test(c) && !/[_-][a-f0-9]{5,8}$/i.test(c));
             if (cleanCls.length) {
                 const sel = `${el.tagName.toLowerCase()}.${cleanCls.map(c => CSS.escape(c)).join('.')}`;
-                try {
-                    if (document.querySelectorAll(sel).length === 1) return sel;
-                } catch (_) {
-                }
+                if (uniqueIn(sel)) return sel;
             }
             const hashCls = allCls.filter(c => !_isPureHashClass(c) && !/^(_|-{2})/.test(c) && !/^(is|has|can|should)/.test(c) && /[_-][a-f0-9]{5,8}$/i.test(c));
             if (hashCls.length) {
                 const stripped = hashCls.map(c => _stripClassHash(c)).filter(s => s.length >= 3);
                 if (stripped.length) {
                     const sel = `${el.tagName.toLowerCase()}${stripped.map(s => `[class*="${CSS.escape(s)}"]`).join('')}`;
-                    try {
-                        if (document.querySelectorAll(sel).length === 1) return sel;
-                    } catch (_) {
-                    }
+                    if (uniqueIn(sel)) return sel;
                 }
             }
         }
+        // 祖链路径兜底：scope模式的爬升边界从 body 收紧为 scopeEl——
+        // 物理上禁止产出跨出作用域的路径段（虚拟列表 nth-child、容器层级等回答外坐标全部绝迹）
         const segs = [];
         let cur = el;
-        while (cur && cur !== document.body && cur !== document.documentElement && segs.length < 5) {
+        const boundary = scoped ? scopeEl : document.body;
+        while (cur && cur !== boundary && cur !== document.documentElement && segs.length < 5) {
             let seg = cur.tagName.toLowerCase();
-            if (cur.id && !/\d/.test(cur.id)) {
+            if (!scoped && cur.id && !/\d/.test(cur.id)) {
                 segs.unshift('#' + CSS.escape(cur.id));
                 break;
             }
@@ -672,10 +702,9 @@
             cur = cur.parentElement;
         }
         const sel = segs.join(' > ');
-        try {
-            if (document.querySelectorAll(sel).length === 1) return sel;
-        } catch (_) {
-        }
+        if (uniqueIn(sel)) return sel;
+        // 尽力而为兜底（旧版同款行为）：校验不过仍返回。scope模式下祖链必然在边界内，
+        // 绝不会是"跨回答绝对路径"，此兜底的风险面已收窄
         return sel;
     }
 
@@ -776,7 +805,10 @@
             left: (r.left - 2) + 'px', top: (r.top - 2) + 'px',
             width: (r.width + 4) + 'px', height: (r.height + 4) + 'px'
         });
-        const sel = genSelector(el);
+        // 【scope模式】预览与最终保存结果同构：scope类类型按运行时坐标系生成预览，
+        // 避免"面板提示显示A、确认后保存B"的认知失调；scope不可得时回退全局预览
+        const previewScope = _pickScopeOf(_pickType, el);
+        const sel = previewScope ? genSelector(el, previewScope) : genSelector(el);
         const digest = _getElementDigest(el);
         const tag = el.tagName.toLowerCase();
         const digestStr = digest !== tag ? ` <span style="color:#888">${esc(digest)}</span>` : '';
@@ -1009,7 +1041,26 @@
             pickerExit();
             return;
         }
-        const sel = genSelector(el);
+        // 【scope模式】强语义校验：scope类类型缺失前置配置或目标不在坐标系内 → 硬错误拒绝落盘，
+        // 让死配置死在配置时刻而非实战时刻。与 _pickScopeOf 的弱语义（预览静默回退）刻意分离
+        const scopeDef = SCOPE_TYPE_MAP[_pickType];
+        let scopeEl = null;
+        if (scopeDef) {
+            const scopeSel = cfgLoad()[scopeDef.key];
+            if (!scopeSel) {
+                log('ERR', `请先配置[${scopeDef.label}]选择器，再选取${TYPE_LABEL[_pickType]}（运行时依赖此坐标系）`);
+                pickerExit();
+                return;
+            }
+            scopeEl = el.closest(scopeSel);
+            if (!scopeEl || scopeEl === el) {
+                log('ERR', `所选目标不在任何[${scopeDef.label}](${scopeSel})内部，请检查该选择器或重新选取`);
+                pickerExit();
+                return;
+            }
+            log('INFO', `作用域已锚定: ${scopeDef.label}`);
+        }
+        const sel = genSelector(el, scopeEl);
         if (!sel) {
             log('ERR', '无法生成选择器');
             return;
@@ -1262,15 +1313,24 @@
         });
         ['chat', 'input', 'send', 'send-container', 'answer', 'code-content', 'code-copy-btn'].forEach(t => {
             const key = t === 'chat' ? 'selChatContainer' : t === 'input' ? 'selInputBox' : t === 'send' ? 'selSendButton' : t === 'send-container' ? 'selSendButtonContainer' : t === 'answer' ? 'selAnswerItem' : t === 'code-content' ? 'selCodeContentElement' : 'selCodeCopyButton';
+            // 【scope模式】坐标类型映射：code-content 以最后回答为坐标系，code-copy-btn 以最后代码块为坐标系
+            const scopeType = t === 'code-content' ? 'answer' : (t === 'code-copy-btn' ? 'code' : undefined);
+            // 【scope模式】统一刷新出口 + 依赖联动：回答元素/代码内容元素是下游选择器的坐标系，
+            // 自身变化必须级联刷新下游显示，否则下游计数基于过期坐标系产生误导
+            const refreshMatch = (val) => {
+                _showMatch(val, `ag-m-${t}`, scopeType);
+                if (t === 'answer') _showMatch(_panel.querySelector('#ag-s-code-content').value.trim(), 'ag-m-code-content', 'answer');
+                if (t === 'answer' || t === 'code-content') _showMatch(_panel.querySelector('#ag-s-code-copy-btn').value.trim(), 'ag-m-code-copy-btn', 'code');
+            };
             _panel.querySelector(`#ag-s-${t}`).addEventListener('input', function () {
-                _showMatch(this.value.trim(), `ag-m-${t}`);
+                refreshMatch(this.value.trim());
                 if (t === 'send' || t === 'send-container') {
                     const sendVal = _panel.querySelector('#ag-s-send').value.trim();
                     const containerVal = _panel.querySelector('#ag-s-send-container').value.trim();
                     _panel.querySelector('#ag-calibrate-field').style.display = (sendVal || containerVal) ? 'block' : 'none';
                 }
             });
-            _showMatch(editCfg[key], `ag-m-${t}`);
+            refreshMatch(editCfg[key]);
         });
         _renderRules(editCfg.textCleanRules || []);
         _panel.querySelector('#ag-add-rule').onclick = () => {
@@ -1344,20 +1404,35 @@
         };
     }
 
-    function _showMatch(sel, id) {
+    /* 【scope模式】scopeType: undefined=全文档计数(旧语义)；'answer'=最后回答内计数；
+     * 'code'=最后回答内最后一个代码块内计数——与运行时消费坐标系对齐，
+     * 面板"匹配 N 个"从全文档噪声变为运行时真实命中 */
+    function _showMatch(sel, id, scopeType) {
         const el = _panel.querySelector('#' + id);
-        if (!sel) {
-            el.innerHTML = '<div class="ag-match ag-m-none">未设置</div>';
+        if (!sel) { el.innerHTML = '<div class="ag-match ag-m-none">未设置</div>'; return; }
+        if (!scopeType) {
+            try {
+                const n = document.querySelectorAll(sel).length;
+                el.innerHTML = n === 0 ? '<div class="ag-match ag-m-fail">✘ 未匹配</div>' : n === 1 ? '<div class="ag-match ag-m-ok">✔ 精确匹配 1 个</div>' : `<div class="ag-match ag-m-ok">✔ 匹配 ${n} 个</div>`;
+            } catch (_) { el.innerHTML = '<div class="ag-match ag-m-fail">✘ 语法错误</div>'; }
             return;
         }
-        try {
-            const n = document.querySelectorAll(sel).length;
-            el.innerHTML = n === 0 ? '<div class="ag-match ag-m-fail">✘ 未匹配</div>'
-                : n === 1 ? '<div class="ag-match ag-m-ok">✔ 精确匹配 1 个</div>'
-                    : `<div class="ag-match ag-m-ok">✔ 匹配 ${n} 个</div>`;
-        } catch (_) {
-            el.innerHTML = '<div class="ag-match ag-m-fail">✘ 语法错误</div>';
+        // scope模式：复刻运行时定位链（最后回答 → [最后代码块] → 计数），数据源全取面板实时输入，
+        // 复用 5.5 节 _buildLiveTestCfg/_locateLastAnswer/_queryAllSafe（function 声明提升，无顺序问题）
+        const c = _buildLiveTestCfg();
+        const loc = _locateLastAnswer(c);
+        if (loc.err) { el.innerHTML = `<div class="ag-match ag-m-fail">✘ ${esc(loc.err)}</div>`; return; }
+        let base = loc.el;
+        if (scopeType === 'code') {
+            if (!c.selCodeContentElement) { el.innerHTML = '<div class="ag-match ag-m-fail">✘ 先配置代码内容元素（本项的坐标系）</div>'; return; }
+            const blocks = _queryAllSafe(base, c.selCodeContentElement);
+            if (!blocks || blocks.length === 0) { el.innerHTML = '<div class="ag-match ag-m-fail">✘ 回答内无代码块</div>'; return; }
+            base = blocks[blocks.length - 1];
         }
+        try {
+            const n = base.querySelectorAll(sel).length;
+            el.innerHTML = n === 0 ? '<div class="ag-match ag-m-fail">✘ 坐标系内未命中（实战将走DOM兜底）</div>' : `<div class="ag-match ag-m-ok">✔ 坐标系内命中 ${n} 个</div>`;
+        } catch (_) { el.innerHTML = '<div class="ag-match ag-m-fail">✘ 语法错误</div>'; }
     }
 
     /* ================================================================
