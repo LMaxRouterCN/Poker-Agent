@@ -11,7 +11,10 @@
     "selChatContainer": "#chat-message-container",
     "selInputBox": "textarea.message-input-textarea",
     "selSendButton": "div.chat-prompt-send-button",
+    "selSendButtonContainer": "",
     "selAnswerItem": "div.qwen-markdown",
+    "selCodeContentElement": "",
+    "selCodeCopyButton": "",
     "cleanIgnoreClassKeywords": "thinking,reasoning,probe,deepseek-reason",
     "cleanRemoveButtonLike": true,
     "cleanRemovePre": true,
@@ -38,29 +41,27 @@
         "enabled": true
       }
     ],
+    "codeTrimStart": 0,
+    "codeTrimEnd": 0,
     "sendBtnBusyFingerprints": [],
     "sendBtnIdleFingerprints": [],
-    "verifyMode": "single",
+    "sendBtnSendableFingerprints": [],
+    "sendDebounceDelay": 997,
+    "copyInterceptTimeout": 800,
+    "verifyMode": "double",
+    "verifyRetryTimes": 30,
+    "verifyRetryInterval": 1000,
     "waitDelayAfterDone": 500,
     "showAutoSendToggle": true,
     "autoSendTogglePos": "right",
-    "autoSendMode": "click",
-    "selCodeContentElement": "",
-    "sendBtnSendableFingerprints": [],
-    "sendDebounceDelay": 100,
-    "codeTrimStart": 0,
-    "codeTrimEnd": 0,
-    "selSendButtonContainer": "",
-    "selCodeCopyButton": "",
+    "autoSendMode": "none",
     "memoryInjectFrequency": 1,
-    "verifyRetryTimes": 30,
-    "verifyRetryInterval": 1000,
-    "copyInterceptTimeout": 800,
     "showWatchdog": false,
     "watchdogMsg": "[agent] 唤醒并二次确认,未在此次回答内检测到指令,任务是否已完成?如果确认完成,请回复【double_check】.",
+    "watchdogQuietMs": 500,
     "memoryInjectTimeout": 3000,
     "allowAnswerShrink": false,
-    "watchdogQuietMs": 0
+    "fpVersion": 2
   },
   "perSite": {
     "https://chatglm.cn/": {
@@ -79,13 +80,13 @@
       "codeTrimStart": 0,
       "codeTrimEnd": 0,
       "sendBtnBusyFingerprints": [
-        "DIV||enter is-main-chat searching|DIV|0||"
+        "DIV||enter is-main-chat searching|DIV|0|||"
       ],
       "sendBtnIdleFingerprints": [
-        "DIV||enter is-main-chat|DIV|0||"
+        "DIV||enter is-main-chat|DIV|0|||"
       ],
       "sendBtnSendableFingerprints": [
-        "DIV||enter is-main-chat m-three-row|DIV|0||"
+        "DIV||enter is-main-chat m-three-row|DIV|0|||"
       ],
       "sendDebounceDelay": 1000,
       "copyInterceptTimeout": 800,
@@ -95,47 +96,56 @@
       "waitDelayAfterDone": 1000,
       "showAutoSendToggle": true,
       "autoSendTogglePos": "top",
-      "autoSendMode": "enter",
+      "autoSendMode": "none",
       "memoryInjectFrequency": 1,
       "showWatchdog": true,
       "watchdogMsg": "[agent] 唤醒并二次确认,未在此次回答内检测到指令,任务是否已完成?如果确认完成,请回复【double_check】.",
       "watchdogQuietMs": 500,
       "memoryInjectTimeout": 3000,
-      "allowAnswerShrink": false
+      "allowAnswerShrink": false,
+      "fpVersion": 2
     },
     "https://chat.deepseek.com/": {
       "apiUrl": "http://127.0.0.1:9966/agent-exec",
-      "selChatContainer": "div.ds-virtual-list-items",
+      "selChatContainer": "div.ds-virtual-list.ds-virtual-list--printable.ds-scroll-area.ds-scroll-area--show-on-focus-within.ds-scroll-area--enabled",
       "selInputBox": "textarea.ds-scroll-area.ds-scroll-area--show-on-focus-within.ds-scroll-area--enabled",
-      "selSendButton": "div:nth-child(2) > div:nth-child(2) > div > div.ds-button.ds-button--primary.ds-button--filled > div.ds-button__background",
+      "selSendButton": "div.ds-button.ds-button--primary.ds-button--filled.ds-button--circle.ds-button--m.ds-button--icon-relative-m",
+      "selSendButtonContainer": "",
       "selAnswerItem": "div.ds-markdown.ds-assistant-message-main-content",
-      "cleanIgnoreClassKeywords": "thinking,reasoning,probe,deepseek-reason",
+      "selCodeContentElement": "div.md-code-block",
+      "selCodeCopyButton": ".ds-button:has(path[d^=\"M6.14929\"])",
+      "cleanIgnoreClassKeywords": "thinking,reasoning,probe,deepseek-reason,ds-button__background,md-code-block-banner-wrap",
       "cleanRemoveButtonLike": true,
-      "cleanRemovePre": true,
-      "sendBtnBusyFingerprints": [],
-      "sendBtnIdleFingerprints": [],
-      "verifyMode": "single",
-      "waitDelayAfterDone": 500,
-      "showAutoSendToggle": true,
-      "autoSendTogglePos": "right",
-      "autoSendMode": "none",
+      "cleanRemovePre": false,
       "textCleanRules": [],
-      "selCodeContentElement": "",
-      "sendBtnSendableFingerprints": [],
-      "sendDebounceDelay": 100,
       "codeTrimStart": 0,
       "codeTrimEnd": 0,
-      "selSendButtonContainer": "",
-      "selCodeCopyButton": "",
-      "memoryInjectFrequency": 1,
+      "sendBtnBusyFingerprints": [
+        "DIV|--dsl-button-height: 34px;|ds-button ds-button--primary ds-button--filled ds-button--circle ds-button--m ds-button--icon-relative-m ds-button--disabled _52c986b bd74640a|DIV|0|||pathM34,18 C34,9.163444 26.8",
+        "DIV|--dsl-button-height: 34px;|ds-button ds-button--primary ds-button--filled ds-button--circle ds-button--m ds-button--icon-relative-m _52c986b|DIV|0|||pathM2 4.88C2 3.68009 2 3.08"
+      ],
+      "sendBtnIdleFingerprints": [
+        "DIV|--dsl-button-height: 34px;|ds-button ds-button--primary ds-button--filled ds-button--circle ds-button--m ds-button--icon-relative-m ds-button--disabled _52c986b bd74640a|DIV|0|||pathM8.3125 0.980206C8.66767"
+      ],
+      "sendBtnSendableFingerprints": [
+        "DIV|--dsl-button-height: 34px;|ds-button ds-button--primary ds-button--filled ds-button--circle ds-button--m ds-button--icon-relative-m _52c986b|DIV|0|||pathM8.3125 0.980206C8.66767"
+      ],
+      "sendDebounceDelay": 1000,
+      "copyInterceptTimeout": 800,
+      "verifyMode": "double",
       "verifyRetryTimes": 30,
       "verifyRetryInterval": 1000,
-      "copyInterceptTimeout": 800,
+      "waitDelayAfterDone": 500,
+      "showAutoSendToggle": true,
+      "autoSendTogglePos": "top",
+      "autoSendMode": "none",
+      "memoryInjectFrequency": 2,
       "showWatchdog": false,
       "watchdogMsg": "[agent] 唤醒并二次确认,未在此次回答内检测到指令,任务是否已完成?如果确认完成,请回复【double_check】.",
+      "watchdogQuietMs": 500,
       "memoryInjectTimeout": 3000,
       "allowAnswerShrink": false,
-      "watchdogQuietMs": 0
+      "fpVersion": 2
     },
     "https://www.kimi.com/": {
       "apiUrl": "http://127.0.0.1:9966/agent-exec",
@@ -169,7 +179,8 @@
       "watchdogMsg": "[agent] 唤醒并二次确认,未在此次回答内检测到指令,任务是否已完成?如果确认完成,请回复【double_check】.",
       "memoryInjectTimeout": 3000,
       "allowAnswerShrink": false,
-      "watchdogQuietMs": 0
+      "watchdogQuietMs": 0,
+      "fpVersion": 2
     },
     "https://chat.qwen.ai/": {
       "apiUrl": "http://127.0.0.1:9966/agent-exec",
@@ -194,16 +205,9 @@
       ],
       "codeTrimStart": 0,
       "codeTrimEnd": 0,
-      "sendBtnBusyFingerprints": [
-        "C:BUTTON[stop-button.disabled][][d:1][ad:][al:停止]",
-        "C:BUTTON[stop-button][][d:0][ad:][al:停止]"
-      ],
-      "sendBtnIdleFingerprints": [
-        "C:BUTTON[send-button.disabled][][d:1][ad:][al:发送]"
-      ],
-      "sendBtnSendableFingerprints": [
-        "C:BUTTON[send-button][][d:0][ad:][al:发送]"
-      ],
+      "sendBtnBusyFingerprints": [],
+      "sendBtnIdleFingerprints": [],
+      "sendBtnSendableFingerprints": [],
       "sendDebounceDelay": 1000,
       "verifyMode": "double",
       "waitDelayAfterDone": 1000,
@@ -218,7 +222,8 @@
       "watchdogMsg": "[agent] 唤醒并二次确认,未在此次回答内检测到指令,任务是否已完成?如果确认完成,请回复【double_check】.",
       "memoryInjectTimeout": 3000,
       "allowAnswerShrink": false,
-      "watchdogQuietMs": 0
+      "watchdogQuietMs": 0,
+      "fpVersion": 2
     }
   }
 }
